@@ -25,13 +25,14 @@
     - `frontend/components/ui/` (shadcn base components)
   - Completed: 29-Mar-2026 — Next.js 14 App Router scaffold with Tailwind CSS (CSS variables, Claude-inspired palette), shadcn/ui Button (cva variants) and Card (Header/Title/Description/Content/Footer), lib/utils.ts (cn helper), landing page with data-testid attributes and 3 feature cards; 26/26 structural tests pass; E2E Playwright spec written (task2-homepage.spec.ts, runs via playwright.config.ts webServer); no XSS vectors or secrets in committed files
 
-- [ ] Task 3: Scaffold NestJS backend with PostgreSQL via Prisma (P0)
+- [x] Task 3: Scaffold NestJS backend with PostgreSQL via Prisma (P0)
   - Acceptance: `npm run start:dev` starts on port 4000; `/health` endpoint returns `{ status: "ok" }`; `npx prisma db push` creates tables without error
   - Files:
     - `backend/src/main.ts`
     - `backend/src/app.module.ts`
     - `backend/prisma/schema.prisma` (Prd, PrdSection models)
     - `backend/.env.example`
+  - Completed: 29-Mar-2026 — NestJS App Router with ConfigModule (global), ValidationPipe (whitelist+forbidNonWhitelisted), CORS from env, global /api prefix; health endpoint GET /api/health returns {status:"ok",timestamp}; Prisma schema with postgresql provider, Prd and PrdSection models (CUID ids, Json content field for flexible per-section data, cascading deletes, unique prdId+sectionNumber); PrismaService extends PrismaClient with lifecycle hooks; 25/25 structural tests pass; unit specs for AppService and AppController; no hardcoded secrets
 
 - [ ] Task 4: Scaffold Python FastAPI AI service (P0)
   - Acceptance: `uvicorn main:app` starts on port 5000; `POST /suggest` endpoint accepts `{ section, field, context }` and returns `{ suggestion: "..." }` using OpenAI GPT-4.5; API key loaded from env var `OPENAI_API_KEY`

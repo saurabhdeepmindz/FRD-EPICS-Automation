@@ -1,0 +1,67 @@
+// Prisma schema for PRD Generator
+// Provider: postgresql
+// Run: npx prisma db push  (dev)
+//      npx prisma migrate dev --name <name>  (migration)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum PrdStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  BASELINED
+}
+
+enum SectionStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETE
+}
+
+// ─── PRD document (one row per PRD) ──────────────────────────────────────────
+
+model Prd {
+  id          String    @id @default(cuid())
+  prdCode     String    @unique         // e.g. PRD-LSM001
+  productName String
+  version     String    @default("1.0")
+  status      PrdStatus @default(DRAFT)
+  author      String?
+  reviewedBy  String?
+  approvedBy  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  sections    PrdSection[]
+
+  @@map("prds")
+}
+
+// ─── PRD section (one row per section per PRD) ────────────────────────────────
+
+model PrdSection {
+  id            String        @id @default(cuid())
+  prdId         String
+  sectionNumber Int           // 1–22
+  sectionName   String
+  status        SectionStatus @default(NOT_STARTED)
+  content       Json          @default("{}")  // flexible JSON per section schema
+  aiSuggested   Boolean       @default(false) // true if any field was AI-filled
+  completedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  prd           Prd           @relation(fields: [prdId], references: [id], onDelete: Cascade)
+
+  @@unique([prdId, sectionNumber])
+  @@map("prd_sections")
+}
