@@ -16,13 +16,14 @@
     - `ProjectSourceCode/README.md`
   - Completed: 29-Mar-2026 — Scaffolded all 3 service dirs with package.json/requirements.txt, Dockerfiles, .env.example; docker-compose.yml wires all 4 services (postgres, backend, ai-service, frontend); .gitignore excludes all .env secrets; 16/16 structural tests pass; no hardcoded secrets in committed files
 
-- [ ] Task 2: Scaffold Next.js 14 frontend with Tailwind CSS + shadcn/ui (P0)
+- [x] Task 2: Scaffold Next.js 14 frontend with Tailwind CSS + shadcn/ui (P0)
   - Acceptance: `npm run dev` starts on port 3000; Tailwind classes render; shadcn/ui Button and Card components render correctly; app is responsive at 320px, 768px, 1280px
   - Files:
     - `frontend/app/layout.tsx`
     - `frontend/app/page.tsx`
     - `frontend/tailwind.config.ts`
     - `frontend/components/ui/` (shadcn base components)
+  - Completed: 29-Mar-2026 — Next.js 14 App Router scaffold with Tailwind CSS (CSS variables, Claude-inspired palette), shadcn/ui Button (cva variants) and Card (Header/Title/Description/Content/Footer), lib/utils.ts (cn helper), landing page with data-testid attributes and 3 feature cards; 26/26 structural tests pass; E2E Playwright spec written (task2-homepage.spec.ts, runs via playwright.config.ts webServer); no XSS vectors or secrets in committed files
 
 - [ ] Task 3: Scaffold NestJS backend with PostgreSQL via Prisma (P0)
   - Acceptance: `npm run start:dev` starts on port 4000; `/health` endpoint returns `{ status: "ok" }`; `npx prisma db push` creates tables without error
