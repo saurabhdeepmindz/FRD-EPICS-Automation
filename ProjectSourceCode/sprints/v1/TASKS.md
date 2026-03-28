@@ -1,12 +1,12 @@
 # Sprint v1 — Tasks: PRD Generator Web Application
 
-## Status: Not Started
+## Status: In Progress
 
 ---
 
 ## P0 — Foundation (Must Have)
 
-- [ ] Task 1: Initialise monorepo project structure (P0)
+- [x] Task 1: Initialise monorepo project structure (P0)
   - Acceptance: Folder structure exists with `frontend/`, `backend/`, `ai-service/`; root `docker-compose.yml` starts all three services; `README.md` documents how to run locally
   - Files:
     - `ProjectSourceCode/frontend/` (Next.js 14 app)
@@ -14,6 +14,7 @@
     - `ProjectSourceCode/ai-service/` (Python FastAPI)
     - `ProjectSourceCode/docker-compose.yml`
     - `ProjectSourceCode/README.md`
+  - Completed: 29-Mar-2026 — Scaffolded all 3 service dirs with package.json/requirements.txt, Dockerfiles, .env.example; docker-compose.yml wires all 4 services (postgres, backend, ai-service, frontend); .gitignore excludes all .env secrets; 16/16 structural tests pass; no hardcoded secrets in committed files
 
 - [ ] Task 2: Scaffold Next.js 14 frontend with Tailwind CSS + shadcn/ui (P0)
   - Acceptance: `npm run dev` starts on port 3000; Tailwind classes render; shadcn/ui Button and Card components render correctly; app is responsive at 320px, 768px, 1280px

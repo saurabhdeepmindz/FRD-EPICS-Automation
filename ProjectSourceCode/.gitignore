@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Build output
+.next/
+dist/
+build/
+*.egg-info/
+
+# Environment files — NEVER commit real secrets
+.env
+.env.local
+.env.production
+.env.staging
+# .env.example files ARE committed (no secrets, just keys list)
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+tests/screenshots/*.png
+coverage/
+.nyc_output/
+
+# Docker
+*.env.docker
+
+# Prisma migrations (commit these — they are source of truth for DB schema)
+# !backend/prisma/migrations/
