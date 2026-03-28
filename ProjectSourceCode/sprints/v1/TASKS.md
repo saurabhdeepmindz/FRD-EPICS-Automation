@@ -34,13 +34,14 @@
     - `backend/.env.example`
   - Completed: 29-Mar-2026 — NestJS App Router with ConfigModule (global), ValidationPipe (whitelist+forbidNonWhitelisted), CORS from env, global /api prefix; health endpoint GET /api/health returns {status:"ok",timestamp}; Prisma schema with postgresql provider, Prd and PrdSection models (CUID ids, Json content field for flexible per-section data, cascading deletes, unique prdId+sectionNumber); PrismaService extends PrismaClient with lifecycle hooks; 25/25 structural tests pass; unit specs for AppService and AppController; no hardcoded secrets
 
-- [ ] Task 4: Scaffold Python FastAPI AI service (P0)
+- [x] Task 4: Scaffold Python FastAPI AI service (P0)
   - Acceptance: `uvicorn main:app` starts on port 5000; `POST /suggest` endpoint accepts `{ section, field, context }` and returns `{ suggestion: "..." }` using OpenAI GPT-4.5; API key loaded from env var `OPENAI_API_KEY`
   - Files:
     - `ai-service/main.py`
     - `ai-service/requirements.txt`
     - `ai-service/prompts/section_prompts.py` (per-section prompt templates)
     - `ai-service/.env.example`
+  - Completed: 29-Mar-2026 — FastAPI app with GET /health and POST /suggest; Pydantic v2 request/response models with field validation (section 1-22, field non-empty); OpenAI AsyncClient injected via Depends (key never in route handler); CORS restricted to CORS_ORIGINS env var; per-section system prompts for all 22 PRD sections + DEFAULT_PROMPT fallback; pydantic-settings config (lru_cache); structured error handling (401/429/502 for OpenAI errors); 27/27 structural tests pass; 11 pytest unit tests with mocked OpenAI; no hardcoded secrets or injection risks
 
 - [ ] Task 5: Build PRD data model and CRUD API in NestJS (P0)
   - Acceptance: REST endpoints working — `POST /prd` (create), `GET /prd/:id` (fetch), `PUT /prd/:id/section/:sectionNum` (update section), `GET /prd/:id/completion` (returns completion status per section); all tested via Postman
