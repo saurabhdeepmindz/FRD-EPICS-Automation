@@ -43,14 +43,18 @@
     - `ai-service/.env.example`
   - Completed: 29-Mar-2026 — FastAPI app with GET /health and POST /suggest; Pydantic v2 request/response models with field validation (section 1-22, field non-empty); OpenAI AsyncClient injected via Depends (key never in route handler); CORS restricted to CORS_ORIGINS env var; per-section system prompts for all 22 PRD sections + DEFAULT_PROMPT fallback; pydantic-settings config (lru_cache); structured error handling (401/429/502 for OpenAI errors); 27/27 structural tests pass; 11 pytest unit tests with mocked OpenAI; no hardcoded secrets or injection risks
 
-- [ ] Task 5: Build PRD data model and CRUD API in NestJS (P0)
+- [x] Task 5: Build PRD data model and CRUD API in NestJS (P0)
   - Acceptance: REST endpoints working — `POST /prd` (create), `GET /prd/:id` (fetch), `PUT /prd/:id/section/:sectionNum` (update section), `GET /prd/:id/completion` (returns completion status per section); all tested via Postman
   - Files:
     - `backend/src/prd/prd.controller.ts`
     - `backend/src/prd/prd.service.ts`
     - `backend/src/prd/prd.module.ts`
-    - `backend/src/prd/dto/`
-    - `backend/prisma/schema.prisma` (updated with all 22 section fields)
+    - `backend/src/prd/dto/create-prd.dto.ts`
+    - `backend/src/prd/dto/update-section.dto.ts`
+    - `backend/src/prd/prd.service.spec.ts`
+    - `backend/src/prd/prd.controller.spec.ts`
+    - `backend/src/app.module.ts` (PrdModule registered)
+  - Completed: 29-Mar-2026 — Full CRUD REST API: POST/GET/PUT/DELETE for PRDs + section-level PUT + completion GET; PrdService with 6 methods auto-marks sections COMPLETE when content is non-empty; PrdModule wired into AppModule; 28/28 structural tests pass; unit specs for service (8 cases) and controller (6 cases)
 
 - [ ] Task 6: Build left sidebar navigation + top stepper component (P0)
   - Acceptance: Left sidebar lists all 22 PRD sections; active section highlighted; completed sections show a ✓ badge; top stepper shows 22 steps with filled/empty/active states; clicking sidebar item or stepper step navigates to that section; stepper and sidebar stay in sync
