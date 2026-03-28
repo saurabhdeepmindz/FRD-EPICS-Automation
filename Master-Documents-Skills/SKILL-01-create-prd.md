@@ -77,7 +77,9 @@ Open `Master-Documents/PRD-Template.md`. Fill each section in order, section by 
 11. **Section 10** — Non-Functional Requirements (Security, Performance, Scalability, Availability, Compliance, Maintainability, Audit)
 12. **Section 11–19** — Technology, DevOps, UI/UX, Branding, Compliance, Testing, Deliverables, Receivables, Environment
 13. **Section 20** — High-Level Timelines
-14. **Revision History** — Initial entry
+14. **Section 21** — Success Criteria (business KPIs + technical/operational targets + hypercare/go-live readiness gate)
+15. **Section 22** — Miscellaneous Requirements (raw input log with verbatim customer inputs, structured MISC table with EPIC trace, migration tracker)
+16. **Revision History** — Initial entry
 
 > **Rule:** Do NOT leave any section blank. If information is unknown, write:
 > `TBD — [reason / who will provide this]`
@@ -107,7 +109,9 @@ Re-run `Master-Documents/PRD-Template-Checklist.md` against the draft PRD.
 
 ## Output Checklist (Definition of Done)
 
-- [ ] All 20 PRD sections populated (no blank sections)
+- [ ] All 22 PRD sections populated (no blank sections)
+- [ ] Success Criteria (Section 21) are measurable, time-bound, and agreed with the customer
+- [ ] Miscellaneous Requirements (Section 22) are all classified, owned, and EPIC-traced
 - [ ] PRD-Template-Checklist passes with zero open gaps
 - [ ] Functional modules and features are numbered and traceable
 - [ ] NFRs are defined with measurable targets

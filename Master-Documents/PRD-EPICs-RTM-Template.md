@@ -54,9 +54,10 @@ Total EPICs     : [N]
 | 2 | Integration Requirement → EPIC Traceability |
 | 3 | NFR → EPIC Traceability |
 | 4 | Compliance Requirement → EPIC Traceability |
-| 5 | RTM Summary — EPICs per PRD Section |
-| 6 | RTM Summary — PRD Feature Coverage per EPIC |
-| 7 | Coverage Gap Analysis |
+| 5 | Miscellaneous Requirement → EPIC Traceability |
+| 6 | RTM Summary — EPICs per PRD Section |
+| 7 | RTM Summary — PRD Feature Coverage per EPIC |
+| 8 | Coverage Gap Analysis |
 | — | Column Definitions |
 | — | Usage Notes |
 | — | Revision History |
@@ -145,7 +146,29 @@ Total EPICs     : [N]
 
 ---
 
-## 5. RTM Summary — EPICs per PRD Section
+## 5. Miscellaneous Requirement → EPIC Traceability
+
+> **Guideline:**
+>
+> - Each MISC item from PRD Section 22 that carries functional, NFR, compliance, or branding
+>   impact must be mapped to the EPIC(s) it affects.
+> - Items that are still "Pending Migration" to another PRD section must still be mapped here
+>   to ensure they are not lost from the backlog while migration is in progress.
+> - Items classified as "Permanent — No Section Fit" must appear here as the only RTM entry.
+> - Use the MISC-ID from PRD Section 22 as the Feature ID. Once migrated and re-identified
+>   (e.g., FR-026), update this row to point to the new ID and mark the MISC row as Superseded.
+
+| Sr No | PRD Section No | MISC ID | Requirement Summary | Classification | Source | EPIC ID | EPIC Name | Phase | Priority | User Story ID(s) | Migration Status | Status |
+|-------|----------------|---------|---------------------|----------------|--------|---------|-----------|-------|----------|------------------|-----------------|--------|
+| 1 | 22 | MISC-001 | Maker-checker workflow for account limit changes > ₹5 lakhs | Functional Requirement | Customer email 20-Mar-2026 | EPIC-005 | Identity & Access Management | Phase 1 | High | TBD | Pending → Section 6 (FR-026) | Mapped |
+| 2 | 22 | MISC-002 | PDF documents must embed unique QR code for authenticity verification | Functional Requirement | Customer email 20-Mar-2026 | EPIC-002 | Document Upload & Verification | Phase 1 | High | TBD | Pending → Section 6 (FR-027) | Mapped |
+| 3 | 22 | MISC-003 | Product name on all screens/emails/PDFs must be 'FinOnboard Pro' | Branding Standard | Customer email 20-Mar-2026 | ALL Frontend EPICs | ALL Frontend EPICs | Phase 1 | Medium | TBD | Pending → Section 14 | Mapped |
+| 4 | 22 | MISC-004 | Arabic (RTL) language support required within 6 months of go-live | Architectural Risk / Assumption | Customer email 20-Mar-2026 | EPIC-001, ALL Frontend | Customer Registration, ALL Frontend | Phase 2 TBD | Low | TBD | Pending → Section 4A (Assumption) + HLD | Decision Pending |
+| 5 | 22 | MISC-[XXX] | [Requirement summary from raw input log] | [Functional / NFR / Compliance / Branding] | [Source] | EPIC-[XXX] | [EPIC Name] | Phase [X] | H/M/L | TBD | [Pending / Permanent / Superseded by FR-XXX] | Mapped |
+
+---
+
+## 6. RTM Summary — EPICs per PRD Section
 
 > **Guideline:** Shows how many EPICs each PRD section drives. A section with zero EPICs
 > is either non-functional (and intentionally excluded — e.g., Section 1 Overview) or a gap.
@@ -173,6 +196,8 @@ Total EPICs     : [N]
 | 18 | Receivables | 0 | — (customer inputs; blocking specific EPICs noted in Gap Analysis) |
 | 19 | Environment | 0 | — (infrastructure; platform-wide) |
 | 20 | High-Level Timelines | 0 | — (milestones; phasing reflected in EPIC Phase column) |
+| 21 | Success Criteria | 0 | — (outcome indicators; traced to EPICs and NFRs but not mapped as discrete features) |
+| 22 | Miscellaneous Requirements | [N] | EPIC-[XXX], EPIC-[XXX], … (MISC items mapped in RTM Section 5) |
 
 ---
 
@@ -403,20 +428,22 @@ Total EPICs     : 7
 | 18 | Receivables | 0 | — (noted in Gap Analysis where blocking specific EPICs) |
 | 19 | Environment | 0 | — (infrastructure; platform-wide) |
 | 20 | High-Level Timelines | 0 | — (milestones; phasing reflected in EPIC Phase column) |
+| 21 | Success Criteria | 0 | — (outcome indicators; referenced by all EPICs but not mapped as discrete features) |
+| 22 | Miscellaneous Requirements | 4 | EPIC-005, EPIC-002, ALL Frontend EPICs, EPIC-001 (MISC-001 to MISC-004; see RTM Section 5) |
 
 ---
 
 ## 6. RTM Summary — PRD Feature Coverage per EPIC
 
-| EPIC ID | EPIC Name | Phase | PRD Features (FR) | Integrations (INT) | NFRs | Compliance (COMP) | Total PRD Items | User Stories |
-|---------|-----------|-------|-------------------|--------------------|------|-------------------|-----------------|--------------|
-| EPIC-001 | Customer Registration & KYC Verification | Phase 1 | 11 (FR-001 to FR-011) | 2 (INT-003, INT-008) | 5 (NFR-SEC-002, NFR-PERF-001, NFR-PERF-002, NFR-AUDIT-001, NFR-AUDIT-005) | 2 (COMP-001, COMP-003) | 20 | US-001, US-002, US-003 |
-| EPIC-002 | Document Upload & Verification | Phase 1 | 7 (FR-012 to FR-018) | 3 (INT-001, INT-005, INT-008) | 6 (NFR-SEC-002, NFR-PERF-001, NFR-PERF-003, NFR-PERF-004, NFR-AVAIL-004, NFR-AUDIT-001) | 1 (COMP-002) | 17 | US-005, US-006 |
-| EPIC-003 | Account Provisioning | Phase 1 | 4 (FR-019 to FR-022) | 2 (INT-002, INT-008) | 3 (NFR-PERF-001, NFR-AVAIL-004, NFR-AUDIT-001) | 0 | 9 | US-007 |
-| EPIC-004 | Notification & Communication Hub | Phase 1 | 2 (FR-023, FR-024) | 2 (INT-003, INT-004) | 1 (NFR-PERF-001) | 0 | 5 | US-008 |
-| EPIC-005 | Identity & Access Management | Phase 1 | 0 | 2 (INT-006, INT-008) | 2 (NFR-SEC-003, NFR-SEC-004) | 1 (COMP-001) | 5 | TBD |
-| EPIC-006 | Operations Exception Dashboard & Reporting | Phase 2 | 0 | 1 (INT-007) | 1 (NFR-PERF-001) | 0 | 2 | TBD |
-| EPIC-007 | Admin Configuration Panel | Phase 2 | 0 | 0 | 0 | 0 | 0 | TBD |
+| EPIC ID | EPIC Name | Phase | PRD Features (FR) | Integrations (INT) | NFRs | Compliance (COMP) | MISC Items | Total PRD Items | User Stories |
+|---------|-----------|-------|-------------------|--------------------|------|-------------------|------------|-----------------|--------------|
+| EPIC-001 | Customer Registration & KYC Verification | Phase 1 | 11 (FR-001 to FR-011) | 2 (INT-003, INT-008) | 5 (NFR-SEC-002, NFR-PERF-001, NFR-PERF-002, NFR-AUDIT-001, NFR-AUDIT-005) | 2 (COMP-001, COMP-003) | 1 (MISC-004) | 21 | US-001, US-002, US-003 |
+| EPIC-002 | Document Upload & Verification | Phase 1 | 7 (FR-012 to FR-018) | 3 (INT-001, INT-005, INT-008) | 6 (NFR-SEC-002, NFR-PERF-001, NFR-PERF-003, NFR-PERF-004, NFR-AVAIL-004, NFR-AUDIT-001) | 1 (COMP-002) | 1 (MISC-002) | 18 | US-005, US-006 |
+| EPIC-003 | Account Provisioning | Phase 1 | 4 (FR-019 to FR-022) | 2 (INT-002, INT-008) | 3 (NFR-PERF-001, NFR-AVAIL-004, NFR-AUDIT-001) | 0 | 0 | 9 | US-007 |
+| EPIC-004 | Notification & Communication Hub | Phase 1 | 2 (FR-023, FR-024) | 2 (INT-003, INT-004) | 1 (NFR-PERF-001) | 0 | 0 | 5 | US-008 |
+| EPIC-005 | Identity & Access Management | Phase 1 | 0 | 2 (INT-006, INT-008) | 2 (NFR-SEC-003, NFR-SEC-004) | 1 (COMP-001) | 1 (MISC-001) | 6 | TBD |
+| EPIC-006 | Operations Exception Dashboard & Reporting | Phase 2 | 0 | 1 (INT-007) | 1 (NFR-PERF-001) | 0 | 0 | 2 | TBD |
+| EPIC-007 | Admin Configuration Panel | Phase 2 | 0 | 0 | 0 | 0 | 0 | 0 | TBD |
 
 > **Note on EPIC-005, EPIC-006, EPIC-007:** These EPICs are driven by the High-Level Scope
 > (PRD Section 2) and Actor requirements (PRD Section 5) rather than individually numbered FR-XXX

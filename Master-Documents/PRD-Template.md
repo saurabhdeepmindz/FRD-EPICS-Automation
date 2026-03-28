@@ -58,6 +58,8 @@ Status          : [ Draft | Under Review | Approved | Baselined ]
 | 18 | Receivables |
 | 19 | Environment |
 | 20 | High-Level Timelines |
+| 21 | Success Criteria |
+| 22 | Miscellaneous Requirements |
 | — | Revision History |
 
 ---
@@ -1389,6 +1391,143 @@ TECHNOLOGY STACK
   Sprint Planning    : First Monday of next sprint
   Release Cadence    : End of every 2 sprints (bi-weekly release to QA)
                        End of every 4 sprints (release to Staging)
+```
+
+---
+
+## 21. Success Criteria
+
+> **Guideline:** This section defines the measurable, time-bound indicators that confirm the
+> product has achieved its intended business and operational objectives. Success Criteria are
+> different from functional requirements — they answer the question *"How do we know the product
+> is working as intended for the business?"*
+>
+> Each criterion must be:
+>
+> - **Measurable** — a specific number, percentage, or threshold (not vague aspirational language)
+> - **Time-bound** — when it must be achieved (e.g., 30 days post go-live, end of Phase 1)
+> - **Owned** — someone is accountable for measuring and reporting it
+> - **Traceable** — maps to at least one EPIC or functional area that delivers it
+>
+> Success Criteria drive post-go-live monitoring dashboards, KPI reporting, and hypercare
+> sign-off decisions. They must be agreed with the customer before the PRD is baselined.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+21A. BUSINESS SUCCESS CRITERIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+| SC-ID  | Success Criterion                              | Target / Threshold         | Measurement Method                      | Measurement Window       | Owner              | Related EPIC(s)          |
+|--------|------------------------------------------------|----------------------------|-----------------------------------------|--------------------------|--------------------|--------------------------|
+| SC-001 | Customer onboarding end-to-end completion rate | ≥ 85% of initiated journeys complete within 24 hrs | Analytics funnel: Initiated → KYC Submitted → Account Provisioned | 30 days post go-live     | Product Owner      | EPIC-001, EPIC-002, EPIC-003 |
+| SC-002 | KYC document rejection rate                    | ≤ 10% rejection on first submission | Rejection event count / total KYC submissions | 30 days post go-live     | Operations Lead    | EPIC-002               |
+| SC-003 | Average onboarding time (start to account live)| ≤ 15 minutes for a digital-complete customer | Timestamp: Registration Start → Account Provisioned event | 60 days post go-live     | Product Owner      | EPIC-001, EPIC-002, EPIC-003 |
+| SC-004 | Customer support ticket volume (onboarding related) | < 5% of onboarded customers raise a support ticket within 7 days | CRM ticket count tagged "Onboarding" / total customers onboarded | 30 days post go-live     | CX / Ops Lead      | EPIC-001, EPIC-002, EPIC-004 |
+| SC-005 | [Add additional business success criterion]    | [Define measurable target]  | [Define how it will be measured]       | [Define when]            | [Owner]            | [EPIC ID(s)]            |
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+21B. OPERATIONAL / TECHNICAL SUCCESS CRITERIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+| SC-ID  | Success Criterion                              | Target / Threshold         | Measurement Method                      | Measurement Window       | Owner              | Related NFR / EPIC       |
+|--------|------------------------------------------------|----------------------------|-----------------------------------------|--------------------------|--------------------|--------------------------|
+| SC-T01 | Platform availability (uptime)                 | ≥ 99.5% during business hours | AWS CloudWatch availability alarm     | 30 days post go-live     | DevOps / SRE       | NFR-AVAIL-001, ALL EPICs |
+| SC-T02 | KYC submission API response time               | p95 ≤ 3 seconds under normal load | APM (Datadog / CloudWatch) p95 latency | 30 days post go-live     | Dev Lead           | NFR-PERF-002, EPIC-002  |
+| SC-T03 | Zero critical security vulnerabilities at go-live | 0 Critical / 0 High findings in PenTest sign-off | PenTest report — final results       | Before Phase 1 go-live   | Security Lead      | COMP-005, EPIC-001       |
+| SC-T04 | Automated test coverage                        | ≥ 80% code coverage for all backend services | SonarQube / coverage report          | Before each release      | Dev Lead           | ALL EPICs               |
+| SC-T05 | [Add additional technical success criterion]   | [Define measurable target]  | [Define how it will be measured]       | [Define when]            | [Owner]            | [NFR / EPIC ID(s)]      |
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+21C. HYPERCARE / GO-LIVE READINESS GATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  The following must be confirmed before hypercare period is closed and the product
+  is formally handed over to operations:
+
+  1. All SC-T criteria measured and met (or formally accepted deviations documented).
+  2. Baseline measurement recorded for all SC-001 to SC-005 criteria (Day 0 baselines).
+  3. Monitoring dashboards live and reviewed with the operations team.
+  4. Hypercare sign-off obtained from: [Customer Name], [Delivery Manager], [Tech Lead].
+```
+
+---
+
+## 22. Miscellaneous Requirements
+
+> **Guideline:** This section is a structured catch-all for requirements, directives, and
+> constraints that do not fit cleanly into any other PRD section. Common sources include:
+>
+> - **Raw customer emails or meeting notes** — pasted verbatim and then structured
+> - **One-off mandates** from legal, security, or executive stakeholders
+> - **Platform-wide standards** that apply broadly but have no single section home
+> - **Ad-hoc constraints** that emerged after the initial scope was agreed
+> - **Pending classification items** — requirements discovered late, awaiting placement
+>
+> **How to use this section:**
+>
+> 1. Paste the raw customer or stakeholder input under **22A. Raw Input Log** (verbatim).
+> 2. Decompose and classify each item under **22B. Structured Miscellaneous Requirements**.
+> 3. For each item, determine if it should ultimately be migrated to a formal PRD section
+>    (e.g., a security requirement belongs in Section 10, a compliance item in Section 15).
+>    Flag it as "Pending Migration" or "Permanent — No Section Fit".
+> 4. Every requirement here must still trace to at least one EPIC. Use the MISC-ID prefix.
+>
+> **Rule:** This section must NOT be used to park requirements that deliberately avoid
+> formal review. Every MISC item must be reviewed, owned, and traced before the PRD is baselined.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+22A. RAW INPUT LOG  (verbatim copy-paste from customer communications)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ── Example: Email received from [Customer Name], 20-Mar-2026 ──────────────────
+
+  "Just to flag a few things we discussed with the board last week that need to
+  go into the system somewhere:
+
+  1. We need the system to support a 'maker-checker' workflow for any account
+     limit change above ₹5 lakhs — this was a compliance decision and is not
+     negotiable. The checker must be a different person from the maker.
+
+  2. All PDF documents generated by the system (e.g., welcome letters, consent
+     receipts) must carry a unique QR code that links to a verification portal
+     where anyone can confirm authenticity. Legal said this is required for court
+     admissibility.
+
+  3. The product name on all customer-facing screens, emails, and PDFs must read
+     'FinOnboard Pro' — NOT the internal codename 'Project Kestrel'. Marketing
+     confirmed this last Tuesday.
+
+  4. We haven't decided yet, but there's a chance we might need Arabic (RTL)
+     language support within 6 months of go-live. Please flag if this has
+     architectural implications so we can decide before sprint 0 ends."
+
+  ── End of raw input ───────────────────────────────────────────────────────────
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+22B. STRUCTURED MISCELLANEOUS REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+| MISC-ID  | Requirement Summary                                  | Source (Person / Meeting / Date)            | Classification                          | Migration Target Section   | Owner             | Related EPIC(s)          | Status                   |
+|----------|------------------------------------------------------|---------------------------------------------|------------------------------------------|----------------------------|-------------------|--------------------------|--------------------------|
+| MISC-001 | Maker-checker workflow required for any account limit change above ₹5 lakhs; maker and checker must be different users | Customer email — 20-Mar-2026 | Functional Requirement (Workflow / Auth) | Migrate → Section 6 (new module: Workflow Controls) | Business Analyst | EPIC-005 (IAM), EPIC-003 (Account Provisioning) | Pending Migration |
+| MISC-002 | All system-generated PDFs (welcome letters, consent receipts) must embed a unique QR code linking to a document authenticity verification portal | Customer email — 20-Mar-2026 | Functional Requirement (Document Generation) | Migrate → Section 6 (Document Generation module) | Business Analyst | EPIC-002 (Document Handling) | Pending Migration |
+| MISC-003 | Product name on all customer-facing screens, emails, and PDFs must be 'FinOnboard Pro' — not the internal codename | Customer email — 20-Mar-2026 | Branding / Content Standard              | Migrate → Section 14 (Branding Requirements) | Product Owner   | ALL Frontend EPICs       | Pending Migration        |
+| MISC-004 | Possible Arabic (RTL) language support within 6 months of go-live — architectural decision required before Sprint 0 ends | Customer email — 20-Mar-2026 | Assumption / Architectural Risk          | Add to Section 4A (Assumptions) + flag in HLD | Solution Architect | EPIC-001, ALL Frontend EPICs | Decision Pending — Escalated to Architect |
+| MISC-005 | [Paste or summarise raw requirement here]            | [Source — email / meeting / date]           | [Functional / NFR / Compliance / Branding / Other] | [Target section or Permanent — No Section Fit] | [Owner] | [EPIC ID(s)]             | [Pending Migration / Permanent / Closed] |
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+22C. MIGRATION TRACKER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Track items that have been formally moved from this section to their correct
+  home section. Once migrated, the MISC item can be marked Closed with a pointer.
+
+  MISC-001 → Migrated to FR-026 in Section 6.3 (Workflow Controls module) on DD-MMM-YYYY
+  MISC-002 → Migrated to FR-027 in Section 6.2 (Document Upload & Generation module) on DD-MMM-YYYY
+  MISC-003 → Migrated to Section 14 (Branding — product naming standard) on DD-MMM-YYYY
+  MISC-004 → Decision pending — flagged in Sprint 0 architecture session; outcome to be recorded here
+  [MISC-XXX → Migrated / Closed / Cancelled with reason]
 ```
 
 ---

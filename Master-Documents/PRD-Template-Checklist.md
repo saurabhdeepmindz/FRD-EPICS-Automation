@@ -619,6 +619,75 @@ Overall Status  : [ NOT READY | READY WITH COMMENTS | BASELINED ]
 
 ---
 
+## SECTION 21 — Success Criteria
+
+> Verifies that the product has defined clear, measurable, and time-bound indicators of success.
+> These must be agreed with the customer before the PRD is baselined — they are the primary
+> post-go-live accountability instrument.
+
+### 21A. Business Success Criteria
+
+| # | Checklist Item | Status | Notes / Comments |
+|---|----------------|--------|------------------|
+| 21a.1 | At least 3 business success criteria are defined (not left as placeholder rows) | `[ ]` | |
+| 21a.2 | Each criterion has a specific measurable target — no vague language like "improved" or "better" | `[ ]` | |
+| 21a.3 | Each criterion has a defined measurement window (e.g., "30 days post go-live") | `[ ]` | |
+| 21a.4 | Each criterion has an assigned owner who is accountable for measurement and reporting | `[ ]` | |
+| 21a.5 | Each criterion is traceable to at least one EPIC or functional area | `[ ]` | |
+| 21a.6 | Business success criteria have been reviewed and agreed by the customer / sponsor | `[ ]` | |
+
+### 21B. Operational / Technical Success Criteria
+
+| # | Checklist Item | Status | Notes / Comments |
+|---|----------------|--------|------------------|
+| 21b.1 | At least 2 technical success criteria are defined (uptime, performance, or security) | `[ ]` | |
+| 21b.2 | Each technical criterion maps to a corresponding NFR in Section 10 or a compliance item in Section 15 | `[ ]` | |
+| 21b.3 | Measurement method is defined for each technical criterion (e.g., APM tool, test report) | `[ ]` | |
+
+### 21C. Hypercare / Go-Live Readiness Gate
+
+| # | Checklist Item | Status | Notes / Comments |
+|---|----------------|--------|------------------|
+| 21c.1 | Hypercare gate conditions are listed (what must be confirmed before hypercare closes) | `[ ]` | |
+| 21c.2 | Hypercare sign-off owners are named (customer, delivery manager, tech lead) | `[ ]` | |
+
+---
+
+## SECTION 22 — Miscellaneous Requirements
+
+> Verifies that ad-hoc, late-arriving, or unclassified requirements are captured, owned,
+> and traced before the PRD is baselined. No requirement — regardless of source — should
+> be undocumented or untraceable.
+
+### 22A. Raw Input Log
+
+| # | Checklist Item | Status | Notes / Comments |
+|---|----------------|--------|------------------|
+| 22a.1 | Every verbatim customer input (emails, meeting notes, WhatsApp messages with requirements) that does not fit another section is logged here | `[ ]` | |
+| 22a.2 | Each raw input entry is attributed to a source (person, meeting, date) | `[ ]` | |
+| 22a.3 | No raw input entry is left without a corresponding structured row in Section 22B | `[ ]` | |
+
+### 22B. Structured Miscellaneous Requirements
+
+| # | Checklist Item | Status | Notes / Comments |
+|---|----------------|--------|------------------|
+| 22b.1 | Every MISC item has a unique MISC-ID assigned | `[ ]` | |
+| 22b.2 | Each MISC item has a classification (Functional / NFR / Compliance / Branding / Other) | `[ ]` | |
+| 22b.3 | Each MISC item has a migration target — either a PRD section it will move to, or "Permanent — No Section Fit" | `[ ]` | |
+| 22b.4 | Each MISC item is traced to at least one EPIC | `[ ]` | |
+| 22b.5 | Each MISC item has an assigned owner | `[ ]` | |
+| 22b.6 | No MISC item has status "Decision Pending" without an escalation record and a decision-by date | `[ ]` | |
+
+### 22C. Migration Tracker
+
+| # | Checklist Item | Status | Notes / Comments |
+|---|----------------|--------|------------------|
+| 22c.1 | All MISC items marked "Pending Migration" have a target migration date | `[ ]` | |
+| 22c.2 | Items that have been migrated to their target section are marked Closed with a cross-reference pointer | `[ ]` | |
+| 22c.3 | At PRD baseline, zero MISC items remain as "Pending Migration" — all are either Closed (migrated) or confirmed "Permanent — No Section Fit" | `[ ]` | |
+
+---
+
 ## CROSS-SECTION CONSISTENCY CHECKS
 
 > Run these after all individual section checks are complete. These validate that sections
@@ -646,6 +715,8 @@ Overall Status  : [ NOT READY | READY WITH COMMENTS | BASELINED ]
 | CC.18 | The sprint cadence in Section 20C is consistent with the delivery timeline in Section 20A (enough sprints to deliver Phase 1 scope) | `[ ]` | |
 | CC.19 | Hard deadline milestones in Section 20 are reflected as Timeline constraints in Section 4B | `[ ]` | |
 | CC.20 | No assumption in Section 4A is also listed as a confirmed fact elsewhere in the PRD | `[ ]` | |
+| CC.21 | All Success Criteria in Section 21 are traceable to at least one EPIC, NFR, or functional requirement — no orphaned success criteria exist | `[ ]` | |
+| CC.22 | Every MISC item in Section 22 that has been classified as Functional / NFR / Compliance / Branding has been either migrated to its target PRD section OR formally accepted as "Permanent — No Section Fit" — no unresolved items remain at baseline | `[ ]` | |
 
 ---
 
@@ -666,7 +737,7 @@ Overall Status  : [ NOT READY | READY WITH COMMENTS | BASELINED ]
 | G.8 | High-Level Scope (Section 2) and Out of Scope (Section 3) have been formally agreed with the customer | `[ ]` | |
 | G.9 | All Assumptions (Section 4A) have been shared with and acknowledged by the relevant owners | `[ ]` | |
 | G.10 | All Receivables (Section 18) have been shared with the customer with required-by dates acknowledged | `[ ]` | |
-| G.11 | All 20 Cross-Section Consistency Checks (CC.1–CC.20) are passed | `[ ]` | |
+| G.11 | All 22 Cross-Section Consistency Checks (CC.1–CC.22) are passed | `[ ]` | |
 | G.12 | No section in the PRD contradicts any other section | `[ ]` | |
 | G.13 | The PRD is sufficient to begin BRD, FRD, and EPIC decomposition without ambiguity | `[ ]` | |
 | G.14 | PRD status is updated to "Baselined" after this checklist is fully passed | `[ ]` | |
@@ -721,6 +792,8 @@ Open Items / Comments:
 | 18 | Receivables | ★ | ★ | — | ★ |
 | 19 | Environment | — | — | ★ | — |
 | 20 | High-Level Timelines | ★ | ★ | — | ★ |
+| 21 | Success Criteria | ★ | ★ | — | ★ |
+| 22 | Miscellaneous Requirements | ★ | ★ | ★ | ★ |
 | RH | Revision History | ★ | — | — | — |
 | CC | Cross-Section Consistency | ★ | ★ | ★ | — |
 | G | Final Readiness Gate | ★ | ★ | ★ | ★ |
