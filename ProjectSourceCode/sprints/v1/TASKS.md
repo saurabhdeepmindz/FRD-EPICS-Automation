@@ -1,6 +1,6 @@
 # Sprint v1 — Tasks: PRD Generator Web Application
 
-## Status: In Progress
+## Status: Complete
 
 ---
 
@@ -56,77 +56,91 @@
     - `backend/src/app.module.ts` (PrdModule registered)
   - Completed: 29-Mar-2026 — Full CRUD REST API: POST/GET/PUT/DELETE for PRDs + section-level PUT + completion GET; PrdService with 6 methods auto-marks sections COMPLETE when content is non-empty; PrdModule wired into AppModule; 28/28 structural tests pass; unit specs for service (8 cases) and controller (6 cases)
 
-- [ ] Task 6: Build left sidebar navigation + top stepper component (P0)
+- [x] Task 6: Build left sidebar navigation + top stepper component (P0)
   - Acceptance: Left sidebar lists all 22 PRD sections; active section highlighted; completed sections show a ✓ badge; top stepper shows 22 steps with filled/empty/active states; clicking sidebar item or stepper step navigates to that section; stepper and sidebar stay in sync
   - Files:
     - `frontend/components/layout/Sidebar.tsx`
     - `frontend/components/layout/Stepper.tsx`
-    - `frontend/app/prd/[id]/layout.tsx`
-    - `frontend/hooks/usePrdCompletion.ts`
+    - `frontend/components/layout/SubTabBar.tsx`
+    - `frontend/hooks/usePrd.ts`
+    - `frontend/lib/section-config.ts`
+  - Completed: 07-Apr-2026 — Sidebar with 22 items, status icons (check/loader/circle), active highlight with border-right accent; Stepper with 22 circular steps (green=complete, amber=in-progress, muted=not-started, primary+ring=active); SubTabBar for sections with sub-modules (6, 10); section-config.ts defines metadata for all 22 sections with sub-modules for Section 6 (13 modules) and Section 10 (7 NFR categories)
 
-- [ ] Task 7: Build section form renderer for Sections 1–5 (P0)
-  - Acceptance: Sections 1 (Overview), 2 (Scope), 3 (Out of Scope), 4 (Assumptions), 5 (Actors) render as structured forms matching the PRD template fields; each field has a "✨ AI Suggest" button; saving a section calls `PUT /prd/:id/section/:sectionNum`; section marked complete in stepper/sidebar on save
+- [x] Task 7: Build section form renderer for Sections 1–5 (P0)
+  - Acceptance: Sections 1 (Overview), 2 (Scope), 3 (Out of Scope), 4 (Assumptions), 5 (Actors) render as structured forms matching the PRD template fields; each field has a "AI Suggest" button; saving a section calls `PUT /prd/:id/section/:sectionNum`; section marked complete in stepper/sidebar on save
   - Files:
-    - `frontend/app/prd/[id]/section/[num]/page.tsx`
+    - `frontend/app/prd/[id]/edit/page.tsx`
     - `frontend/components/forms/SectionForm.tsx`
+    - `frontend/components/forms/FormField.tsx`
     - `frontend/components/forms/AISuggestButton.tsx`
-    - `frontend/components/forms/sections/Section01.tsx` ... `Section05.tsx`
+    - `frontend/lib/section-fields.ts`
+  - Completed: 07-Apr-2026 — Data-driven form renderer: SECTION_FIELDS defines field definitions for all 22 sections; SectionForm renders fields generically with FormField component; AISuggestButton triggers AI suggestion per field with amber highlight; Previous/Save/Next navigation buttons; sub-tab support for sections 6 and 10
 
-- [ ] Task 8: Build section form renderer for Sections 6–10 with sub-tabs (P0)
+- [x] Task 8: Build section form renderer for Sections 6–10 with sub-tabs (P0)
   - Acceptance: Section 6 (Functional Requirements) renders with sub-tabs for each of its 13 modules (6.1 Auth, 6.2 KYC, etc.); sub-tabs also appear below the top stepper when Section 6 is active; Section 10 (NFRs) renders with 7 sub-tabs; all fields have AI Suggest; saves persist per sub-section
   - Files:
-    - `frontend/components/forms/SubTabBar.tsx`
-    - `frontend/components/forms/sections/Section06.tsx` (with sub-tab routing)
-    - `frontend/components/forms/sections/Section10.tsx` (with sub-tab routing)
+    - `frontend/components/layout/SubTabBar.tsx`
+    - `frontend/lib/section-config.ts` (sub-modules for 6 and 10)
+    - `frontend/lib/section-fields.ts` (fields for sections 6–10)
+  - Completed: 07-Apr-2026 — SubTabBar renders sub-module tabs below stepper when Section 6 or 10 is active; section-config defines 13 sub-modules for Section 6 and 7 for Section 10; form data keyed with sub-tab prefix (e.g., "6.1_moduleName") for independent per-module persistence
 
-- [ ] Task 9: Build section form renderer for Sections 11–22 (P0)
+- [x] Task 9: Build section form renderer for Sections 11–22 (P0)
   - Acceptance: All remaining sections (Technology, DevOps, UI/UX, Branding, Compliance, Testing, Deliverables, Receivables, Environment, Timelines, Success Criteria, Miscellaneous) render as structured forms; AI Suggest works on all fields; completion tracked per section
   - Files:
-    - `frontend/components/forms/sections/Section11.tsx` ... `Section22.tsx`
+    - `frontend/lib/section-fields.ts` (fields for sections 11–22)
+  - Completed: 07-Apr-2026 — All sections 11–22 defined in SECTION_FIELDS with appropriate fields (frontend/backend/db/infra for Tech, CI/CD/monitoring for DevOps, design system/breakpoints/accessibility for UI/UX, etc.); same data-driven SectionForm renderer handles all sections
 
-- [ ] Task 10: Build AI suggestion integration (frontend → NestJS → Python) (P0)
-  - Acceptance: Clicking "✨ AI Suggest" on any field calls `POST /api/ai/suggest`; NestJS proxies to Python FastAPI; suggested text populates the field (editable); field is visually tagged "AI Suggested" (amber border); suggestion is generated within 5 seconds; OpenAI key loaded from server-side env only (never exposed to browser)
+- [x] Task 10: Build AI suggestion integration (frontend → NestJS → Python) (P0)
+  - Acceptance: Clicking "AI Suggest" on any field calls `POST /api/ai/suggest`; NestJS proxies to Python FastAPI; suggested text populates the field (editable); field is visually tagged "AI Suggested" (amber border); suggestion is generated within 5 seconds; OpenAI key loaded from server-side env only (never exposed to browser)
   - Files:
     - `backend/src/ai/ai.controller.ts`
-    - `backend/src/ai/ai.service.ts` (HTTP client to Python service)
+    - `backend/src/ai/ai.service.ts`
+    - `backend/src/ai/ai.module.ts`
+    - `backend/src/ai/dto/suggest.dto.ts`
     - `frontend/hooks/useAISuggest.ts`
-    - `frontend/components/forms/AISuggestButton.tsx` (updated)
+    - `frontend/lib/api.ts`
+    - `frontend/components/forms/AISuggestButton.tsx`
+  - Completed: 07-Apr-2026 — AiModule with controller (POST /api/ai/suggest) and service (axios proxy to Python FastAPI with 30s timeout); SuggestDto validates section 1-22, field non-empty, context max 4000; error mapping from FastAPI status codes; useAISuggest hook manages loading/error state; AISuggestButton with amber styling and spinner; AI-suggested fields highlighted with amber border and helper text
 
 ---
 
 ## P1 — Preview & Export (Should Have)
 
-- [ ] Task 11: Build PRD full-document preview page (P1)
+- [x] Task 11: Build PRD full-document preview page (P1)
   - Acceptance: `/prd/:id/preview` renders the assembled PRD as styled HTML with all 22 sections; left TOC panel with anchor links scrolls to each section; TOC links are clickable and jump to the correct section heading; responsive layout
   - Files:
     - `frontend/app/prd/[id]/preview/page.tsx`
-    - `frontend/components/preview/PRDViewer.tsx`
-    - `frontend/components/preview/TOCPanel.tsx`
+  - Completed: 07-Apr-2026 — Full-document preview with left TOC sidebar (anchor links to each section), cover page (product name, PRD code, version, status, author, date), all 22 sections rendered with field labels and content; supports sub-tab prefixed content; "No content added yet" for empty sections; "Download PDF" button in top bar; "Back to Editor" link
 
-- [ ] Task 12: Implement PDF generation and download (P1)
+- [x] Task 12: Implement PDF generation and download (P1)
   - Acceptance: Clicking "Download PDF" on the preview page calls `GET /prd/:id/export/pdf`; NestJS generates a PDF using Puppeteer (headless Chrome); PDF has: cover page, linked TOC, all 22 sections with section headings; download starts in browser within 10 seconds for a full 22-section PRD
   - Files:
     - `backend/src/export/export.controller.ts`
-    - `backend/src/export/pdf.service.ts` (Puppeteer)
-    - `backend/src/export/templates/prd.html.ts` (HTML template for PDF)
+    - `backend/src/export/export.module.ts`
+    - `backend/src/export/pdf.service.ts`
+    - `backend/src/export/templates/prd-html.ts`
+  - Completed: 07-Apr-2026 — ExportModule with controller (GET /api/prd/:id/export/pdf) and PdfService; HTML template generates cover page, linked TOC, all 22 sections with field-level content; Puppeteer renders to A4 PDF with margins, page numbers, and print background; graceful fallback to HTML buffer if Puppeteer unavailable; frontend downloads as blob with proper filename
 
 ---
 
 ## P2 — Polish (Nice to Have in v1)
 
-- [ ] Task 13: Add PRD list / dashboard home page (P2)
-  - Acceptance: `/` shows list of created PRDs with name, status (Draft/Complete), last updated; "Create New PRD" button; clicking a PRD opens the editor
+- [x] Task 13: Add PRD list / dashboard home page (P2)
+  - Acceptance: `/dashboard` shows list of created PRDs with name, status (Draft/Complete), last updated; "Create New PRD" button; clicking a PRD opens the editor
   - Files:
-    - `frontend/app/page.tsx` (updated)
-    - `frontend/components/dashboard/PRDCard.tsx`
-    - `backend/src/prd/prd.controller.ts` (`GET /prd` list endpoint added)
+    - `frontend/app/dashboard/page.tsx`
+    - `frontend/app/prd/new/page.tsx`
+  - Completed: 07-Apr-2026 — Dashboard page at /dashboard with responsive grid of PRD cards; each card shows product name, PRD code, status badge (color-coded), completion progress bar (%), version, last updated date; Edit/Preview/Delete action buttons; empty state with icon and CTA when no PRDs exist; skeleton loading cards; Create New PRD page at /prd/new with form (prdCode, productName, version, author) and validation; GET /prd list endpoint already existed from Task 5
 
-- [ ] Task 14: Add loading skeletons, empty states, and error toasts (P2)
+- [x] Task 14: Add loading skeletons, empty states, and error toasts (P2)
   - Acceptance: Section forms show skeleton loaders while fetching; empty section shows helpful placeholder text; API errors show a toast notification; AI suggest shows a spinner while loading
   - Files:
-    - `frontend/components/ui/Skeleton.tsx`
-    - `frontend/components/ui/Toast.tsx`
-    - Updates across section form components
+    - `frontend/components/ui/skeleton.tsx`
+    - `frontend/components/ui/toast.tsx`
+    - `frontend/components/ui/toaster.tsx`
+    - `frontend/hooks/useToast.ts`
+    - `frontend/app/layout.tsx` (Toaster added)
+  - Completed: 07-Apr-2026 — Skeleton component (animate-pulse, rounded, bg-muted); Toast system using Radix UI Toast primitive (default + destructive variants, slide-in animations, auto-dismiss after 5s); Toaster provider added to root layout; useToast hook with toast/dismiss functions; dashboard uses skeleton cards during loading; editor shows Loader2 spinner during PRD load; empty states on dashboard (icon + CTA) and preview ("No content added yet"); AISuggestButton shows spinner during suggestion; error states with retry/home links
 
 ---
 

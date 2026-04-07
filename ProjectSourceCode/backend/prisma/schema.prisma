@@ -36,12 +36,19 @@ model Prd {
   version     String    @default("1.0")
   status      PrdStatus @default(DRAFT)
   author      String?
+  clientName  String?
+  submittedBy String?
+  clientLogo  String?           // base64 data-URI or file path
+  sourceText  String?   @db.Text  // original input text used to generate PRD
+  sourceFileName String?          // original uploaded file name (if any)
+  sourceFileData String? @db.Text // original file stored as base64 (Phase 1: local DB, Phase 2: S3 URL)
   reviewedBy  String?
   approvedBy  String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   sections    PrdSection[]
+  auditLogs   PrdAuditLog[]
 
   @@map("prds")
 }
@@ -64,4 +71,36 @@ model PrdSection {
 
   @@unique([prdId, sectionNumber])
   @@map("prd_sections")
+}
+
+// ─── Audit trail (one row per field change) ───────────────────────────────
+
+enum ChangeType {
+  CREATED
+  MODIFIED
+  AI_GENERATED
+  AI_MODIFIED
+}
+
+enum ChangeSource {
+  AI
+  MANUAL
+}
+
+model PrdAuditLog {
+  id            String       @id @default(cuid())
+  prdId         String
+  sectionNumber Int
+  fieldKey      String       // e.g. "productName", "6.1_features[0].description"
+  changeType    ChangeType
+  source        ChangeSource
+  previousValue String?      @db.Text
+  newValue      String?      @db.Text
+  version       String       // e.g. "1.0", "1.1"
+  createdAt     DateTime     @default(now())
+
+  prd           Prd          @relation(fields: [prdId], references: [id], onDelete: Cascade)
+
+  @@index([prdId, createdAt])
+  @@map("prd_audit_logs")
 }

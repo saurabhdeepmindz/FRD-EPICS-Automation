@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 1024
     OPENAI_TEMPERATURE: float = 0.4   # lower = more deterministic PRD suggestions
 
+    # Speech-to-Text (STT) — pluggable provider
+    # Supported: "whisper" (OpenAI), "deepgram", "assemblyai", "elevenlabs", "cartesia"
+    STT_PROVIDER: str = "whisper"
+    STT_API_KEY: str = ""           # Leave empty to reuse OPENAI_API_KEY for Whisper
+    STT_MODEL: str = "whisper-1"    # Whisper: "whisper-1", Deepgram: "nova-2", etc.
+    STT_LANGUAGE: str = "en"        # ISO 639-1 language code
+
     # Service
     PORT: int = 5000
     CORS_ORIGINS: str = "http://localhost:4000"

@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files (optional — uncomment to track)
+# package-lock.json
+
+# Claude local settings
+.claude/settings.local.json
+
+# Prisma
+*.db
+*.db-journal
+
+# Temporary
+*.tmp
+*.log
+
+# TypeScript build info
+tsconfig.tsbuildinfo

@@ -20,4 +20,27 @@ export class CreatePrdDto {
   @IsOptional()
   @MaxLength(100)
   author?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  clientName?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  submittedBy?: string;
+
+  @IsString()
+  @IsOptional()
+  sourceText?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  sourceFileName?: string;
+
+  @IsString()
+  @IsOptional()
+  sourceFileData?: string;
 }
