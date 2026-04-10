@@ -104,3 +104,246 @@ model PrdAuditLog {
   @@index([prdId, createdAt])
   @@map("prd_audit_logs")
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BA AUTOMATION TOOL — New models (additive only — existing models untouched)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── BA Project ──────────────────────────────────────────────────────────────
+
+enum BaProjectStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model BaProject {
+  id          String          @id @default(uuid())
+  name        String
+  projectCode String          @unique
+  description String?
+  status      BaProjectStatus @default(ACTIVE)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  modules     BaModule[]
+  rtmRows     BaRtmRow[]
+
+  @@map("ba_projects")
+}
+
+// ─── BA Module ───────────────────────────────────────────────────────────────
+
+enum BaModuleStatus {
+  DRAFT
+  SCREENS_UPLOADED
+  ANALYSIS_COMPLETE
+  FRD_COMPLETE
+  EPICS_COMPLETE
+  STORIES_COMPLETE
+  SUBTASKS_COMPLETE
+  APPROVED
+}
+
+model BaModule {
+  id              String         @id @default(uuid())
+  projectId       String
+  project         BaProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  moduleId        String         // e.g. MOD-01
+  moduleName      String
+  packageName     String
+  moduleStatus    BaModuleStatus @default(DRAFT)
+  processedAt     DateTime?
+  approvedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  screens          BaScreen[]
+  flows            BaClickThroughFlow[]
+  skillExecutions  BaSkillExecution[]
+  artifacts        BaArtifact[]
+  tbdFutureEntries BaTbdFutureEntry[]
+
+  @@unique([projectId, moduleId])
+  @@map("ba_modules")
+}
+
+// ─── BA Screen ───────────────────────────────────────────────────────────────
+
+model BaScreen {
+  id                  String   @id @default(uuid())
+  moduleDbId          String
+  module              BaModule @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  screenId            String   // e.g. SCR-01
+  screenTitle         String
+  screenType          String?  // Dashboard / Form / List / Detail / Modal / Navigation / Other
+  fileData            String   @db.Text // base64 image data (Phase 1: DB, Phase 2: S3 URL)
+  fileName            String   // original file name
+  mimeType            String   // image/png, image/jpeg, etc.
+  displayOrder        Int      @default(0)
+  textDescription     String?  @db.Text
+  audioFileData       String?  @db.Text // base64 audio (Phase 1)
+  audioTranscript     String?  @db.Text
+  transcriptReviewed  Boolean  @default(false)
+  aiFormattedTranscript String? @db.Text  // AI-polished version of transcript
+  aiTranscriptReviewed  Boolean @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([moduleDbId, screenId])
+  @@map("ba_screens")
+}
+
+// ─── BA Click-Through Flow ───────────────────────────────────────────────────
+
+model BaClickThroughFlow {
+  id          String   @id @default(uuid())
+  moduleDbId  String
+  module      BaModule @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  flowName    String
+  steps       Json     // Array of { screenId, triggerLabel, outcome }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("ba_click_through_flows")
+}
+
+// ─── BA Skill Execution ──────────────────────────────────────────────────────
+
+enum BaExecutionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  AWAITING_REVIEW
+  APPROVED
+  FAILED
+}
+
+model BaSkillExecution {
+  id              String            @id @default(uuid())
+  moduleDbId      String
+  module          BaModule          @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  skillName       String            // SKILL-00, SKILL-01-S, SKILL-02-S, SKILL-04, SKILL-05
+  status          BaExecutionStatus @default(PENDING)
+  contextPacket   Json?             // assembled context sent to AI
+  rawOutput       String?           @db.Text
+  humanDocument   String?           @db.Text  // markdown output
+  handoffPacket   Json?             // compressed JSON for next skill
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime          @default(now())
+
+  @@index([moduleDbId, skillName])
+  @@map("ba_skill_executions")
+}
+
+// ─── BA Artifact ─────────────────────────────────────────────────────────────
+
+enum BaArtifactType {
+  SCREEN_ANALYSIS
+  FRD
+  EPIC
+  USER_STORY
+  SUBTASK
+  PRD
+  RTM
+}
+
+enum BaArtifactStatus {
+  DRAFT
+  CONFIRMED_PARTIAL
+  CONFIRMED
+  APPROVED
+}
+
+model BaArtifact {
+  id           String           @id @default(uuid())
+  moduleDbId   String
+  module       BaModule         @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  artifactType BaArtifactType
+  artifactId   String           // e.g. FRD-MOD-02, EPIC-02, US-013
+  status       BaArtifactStatus @default(DRAFT)
+  approvedAt   DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  sections     BaArtifactSection[]
+
+  @@map("ba_artifacts")
+}
+
+model BaArtifactSection {
+  id              String     @id @default(uuid())
+  artifactId      String
+  artifact        BaArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  sectionKey      String     // e.g. "businessContext", "integrationDomains"
+  sectionLabel    String     // human-readable label
+  aiGenerated     Boolean    @default(true)
+  content         String     @db.Text
+  editedContent   String?    @db.Text  // human-edited version
+  isHumanModified Boolean    @default(false)
+  isLocked        Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("ba_artifact_sections")
+}
+
+// ─── BA TBD-Future Registry ──────────────────────────────────────────────────
+
+model BaTbdFutureEntry {
+  id                 String   @id @default(uuid())
+  moduleDbId         String
+  module             BaModule @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  registryId         String   // e.g. TBD-001
+  integrationName    String
+  classification     String   // INTERNAL-TBD-Future or EXTERNAL-TBD-Future
+  referencedModule   String?  // MOD-XX
+  assumedInterface   String   @db.Text
+  resolutionTrigger  String
+  appearsInFeatures  String[] // Array of Feature IDs
+  isResolved         Boolean  @default(false)
+  resolvedAt         DateTime?
+  resolvedInterface  String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("ba_tbd_future_entries")
+}
+
+// ─── BA RTM Row ──────────────────────────────────────────────────────────────
+
+model BaRtmRow {
+  id                String    @id @default(uuid())
+  projectId         String
+  project           BaProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  moduleId          String    // MOD-XX
+  moduleName        String
+  packageName       String
+  featureId         String
+  featureName       String
+  featureStatus     String
+  priority          String
+  screenRef         String
+  epicId            String?
+  epicName          String?
+  storyId           String?
+  storyName         String?
+  storyType         String?   // Frontend / Backend / Integration
+  storyStatus       String?
+  primaryClass      String?
+  sourceFile        String?
+  subtaskId         String?
+  subtaskTeam       String?   // FE / BE / IN / QA
+  methodName        String?
+  testCaseIds       String[]
+  integrationStatus String?
+  tbdFutureRef      String?
+  tbdResolved       Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([projectId, moduleId])
+  @@map("ba_rtm_rows")
+}

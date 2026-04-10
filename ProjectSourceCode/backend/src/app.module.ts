@@ -8,6 +8,7 @@ import { AiModule } from './ai/ai.module';
 import { ExportModule } from './export/export.module';
 import { UploadModule } from './upload/upload.module';
 import { SettingsModule } from './settings/settings.module';
+import { BaToolModule } from './ba-tool/ba-tool.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SettingsModule } from './settings/settings.module';
     ExportModule,
     UploadModule,
     SettingsModule,
+    BaToolModule,
   ],
   controllers: [AppController],
   providers: [AppService],

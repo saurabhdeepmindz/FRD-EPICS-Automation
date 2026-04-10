@@ -329,3 +329,137 @@ async def transcribe(
     logger.info("Transcribed %d chars via %s", len(text), settings.STT_PROVIDER)
 
     return TranscribeResponse(text=text, provider=settings.STT_PROVIDER)
+
+
+# ─── BA Tool: AI Format Transcript ─────────────────────────────────────────
+
+class FormatTranscriptRequest(BaseModel):
+    transcript: str = Field(..., min_length=1, max_length=30000)
+    screenTitle: str = Field(default="", max_length=200)
+    screenType: str = Field(default="", max_length=50)
+
+
+class FormatTranscriptResponse(BaseModel):
+    formattedText: str
+
+
+FORMAT_TRANSCRIPT_PROMPT = """You are a senior business analyst. You receive a raw audio transcript
+where a BA described a Figma screen verbally. Your job is to rewrite it into a clean, professional,
+structured screen description suitable for a Functional Requirements Document (FRD).
+
+RULES:
+- Organise into clear sections: Screen Purpose, Primary Actor, Key Capabilities, UI Components, Business Rules, Navigation
+- Use bullet points for lists
+- Remove filler words, repetitions, and verbal hesitations (um, uh, like, you know, so basically)
+- Correct grammar and punctuation
+- Keep all factual content — do NOT invent information not in the transcript
+- Use professional BA terminology (e.g., "The system shall..." for requirements)
+- If the transcript mentions actors, fields, buttons, or flows — preserve them precisely
+- Keep it concise but comprehensive — aim for 200-400 words
+- Output plain text (no markdown headers, no code blocks)
+"""
+
+
+@app.post("/ba/format-transcript", response_model=FormatTranscriptResponse, tags=["ba"])
+async def format_transcript(
+    body: FormatTranscriptRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> FormatTranscriptResponse:
+    """
+    Reformat a raw audio transcript into professional BA documentation.
+    """
+    context = f"Screen: {body.screenTitle}" if body.screenTitle else ""
+    if body.screenType:
+        context += f" (Type: {body.screenType})"
+
+    user_msg = f"{context}\n\nRaw transcript:\n{body.transcript}" if context else body.transcript
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": FORMAT_TRANSCRIPT_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=2048,
+            temperature=0.3,
+        )
+    except openai.OpenAIError as exc:
+        logger.error("Format transcript error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"AI formatting failed: {exc}") from exc
+
+    formatted = (response.choices[0].message.content or "").strip()
+    logger.info("Formatted transcript: %d → %d chars", len(body.transcript), len(formatted))
+
+    return FormatTranscriptResponse(formattedText=formatted)
+
+
+# ─── BA Tool: Skill Execution endpoint ──────────────────────────────────────
+
+class BaExecuteSkillRequest(BaseModel):
+    systemPrompt: str = Field(..., description="Full skill file content as system prompt")
+    textContent: str = Field(..., description="Assembled context text")
+    images: list[dict] | None = Field(default=None, description="Base64 images for vision (SKILL-00)")
+
+
+class BaExecuteSkillResponse(BaseModel):
+    output: str
+
+
+@app.post("/ba/execute-skill", response_model=BaExecuteSkillResponse, tags=["ba"])
+async def ba_execute_skill(
+    body: BaExecuteSkillRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> BaExecuteSkillResponse:
+    """
+    Execute a BA automation skill with the given system prompt and context.
+    Supports vision (images) for SKILL-00 screen analysis.
+    """
+    # Build user message content
+    user_content: list[dict] = []
+
+    # Add images if provided (for SKILL-00)
+    if body.images:
+        for img in body.images:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{img['source']['media_type']};base64,{img['source']['data']}",
+                },
+            })
+
+    # Add text content
+    user_content.append({"type": "text", "text": body.textContent})
+
+    logger.info(
+        "BA skill execution: %d chars text, %d images",
+        len(body.textContent),
+        len(body.images) if body.images else 0,
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": body.systemPrompt},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=16384,
+            temperature=0.3,
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"AI service error: {exc}") from exc
+
+    output = (response.choices[0].message.content or "").strip()
+    logger.info("BA skill output: %d chars", len(output))
+
+    return BaExecuteSkillResponse(output=output)
