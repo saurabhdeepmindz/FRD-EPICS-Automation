@@ -91,8 +91,11 @@ function containsFeatureBlocks(content: string): boolean {
 function extractFeatures(content: string): ParsedFeature[] {
   const features: ParsedFeature[] = [];
 
-  // Strategy 1: Look for #### F-XX-XX or **F-XX-XX** patterns as block separators
-  const featureRegex = /(?:#{1,4}\s+\*{0,2})(F-\d+-\d+)[:\s]*(?:\*{0,2})\s*(.+?)(?:\*{0,2})\s*\n([\s\S]*?)(?=(?:#{1,4}\s+\*{0,2}F-\d+-\d+|$))/gi;
+  // Strategy 1: Look for #### **F-XX-XX: Name** patterns (bold-wrapped feature headings)
+  // Handles: #### **F-01-01: Assign Tasks from Dashboard**
+  //          #### F-01-01: Assign Tasks
+  //          #### **F-01-01** — Assign Tasks
+  const featureRegex = /#{1,4}\s+\*{0,2}(F-\d+-\d+)[:\s—-]+\s*(.+?)\*{0,2}\s*\n([\s\S]*?)(?=#{1,4}\s+\*{0,2}F-\d+-\d+|---\s*\n\s*#{1,4}\s+\*{0,2}F-|$)/gi;
 
   let match: RegExpExecArray | null;
   while ((match = featureRegex.exec(content)) !== null) {
@@ -158,35 +161,42 @@ function parseFeatureBlock(featureId: string, featureName: string, block: string
   return {
     featureId,
     featureName,
-    description: extractField(block, ['description', 'feature description']),
-    priority: extractField(block, ['priority', 'moscow']),
-    status: extractField(block, ['status', 'feature status']) || 'CONFIRMED',
-    screenRef: extractField(block, ['screen', 'screen reference', 'screen ref']),
-    trigger: extractField(block, ['trigger']),
-    preConditions: extractField(block, ['pre-condition', 'precondition', 'prerequisite']),
-    postConditions: extractField(block, ['post-condition', 'postcondition']),
-    businessRules: extractField(block, ['business rule', 'rule']),
-    validations: extractField(block, ['validation']),
-    integrationSignals: extractField(block, ['integration', 'signal']),
-    acceptanceCriteria: extractField(block, ['acceptance criteria', 'acceptance', 'criteria']),
+    description: extractField(block, ['Feature Description', 'Description', 'feature description']),
+    priority: extractField(block, ['Priority', 'MoSCoW', 'priority']),
+    status: extractField(block, ['Status', 'Feature Status', 'status']) || 'CONFIRMED',
+    screenRef: extractField(block, ['Screen Reference', 'Screen Ref', 'Screen', 'screen']),
+    trigger: extractField(block, ['Trigger', 'trigger']),
+    preConditions: extractField(block, ['Pre-conditions', 'Pre-condition', 'Preconditions', 'Prerequisites']),
+    postConditions: extractField(block, ['Post-conditions', 'Post-condition', 'Postconditions']),
+    businessRules: extractField(block, ['Business Rules', 'Business Rule', 'Rules']),
+    validations: extractField(block, ['Validations', 'Validation']),
+    integrationSignals: extractField(block, ['Integration Signals', 'Integration', 'Integrations']),
+    acceptanceCriteria: extractField(block, ['Acceptance Criteria', 'Acceptance']),
     rawBlock: block,
   };
 }
 
 function extractField(block: string, labels: string[]): string {
-  for (const label of labels) {
-    // Try "Label: value" pattern (single line)
-    const singleLineRegex = new RegExp(`(?:^|\\n)\\s*\\*{0,2}${label}\\*{0,2}\\s*[:\\-]\\s*(.+)`, 'im');
-    const singleMatch = block.match(singleLineRegex);
-    if (singleMatch) return singleMatch[1].trim();
+  const lines = block.split('\n');
+  const lowerLabels = labels.map((l) => l.toLowerCase());
 
-    // Try multi-line: "Label:\n  content until next label or end"
-    const multiRegex = new RegExp(
-      `(?:^|\\n)\\s*\\*{0,2}${label}\\*{0,2}\\s*[:\\-]\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\*{0,2}[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\s*\\*{0,2}\\s*[:\\-]|$)`,
-      'im',
-    );
-    const multiMatch = block.match(multiRegex);
-    if (multiMatch) return multiMatch[1].trim();
+  for (const line of lines) {
+    // Strip markdown formatting to get clean label: value
+    // Handles: "- **Feature Description:** value", "**Label:** value", "Label: value"
+    const cleaned = line.replace(/^\s*[-*]*\s*/, '').replace(/\*{1,2}/g, '').trim();
+    const colonIdx = cleaned.indexOf(':');
+    if (colonIdx < 1) continue;
+
+    const lineLabel = cleaned.substring(0, colonIdx).trim().toLowerCase();
+    const lineValue = cleaned.substring(colonIdx + 1).trim();
+
+    if (!lineValue) continue;
+
+    for (const target of lowerLabels) {
+      if (lineLabel === target || lineLabel.includes(target) || target.includes(lineLabel)) {
+        return lineValue;
+      }
+    }
   }
   return '';
 }

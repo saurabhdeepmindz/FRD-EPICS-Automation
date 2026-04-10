@@ -12,6 +12,8 @@ import {
 } from '@/lib/ba-api';
 import type { TreeNodeId } from './ArtifactTree';
 import { FrdArtifactView } from './FrdArtifactView';
+import { EpicArtifactView } from './EpicArtifactView';
+import { UserStoryArtifactView } from './UserStoryArtifactView';
 import { Edit3, Save, X, Sparkles, User, Lock, FileText, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -67,6 +69,24 @@ export function ArtifactContentPanel({
       );
     }
 
+    // EPIC artifacts use the structured EPIC view
+    if (artifact.artifactType === 'EPIC') {
+      return (
+        <div className="p-6 overflow-y-auto h-full">
+          <EpicArtifactView artifact={artifact} />
+        </div>
+      );
+    }
+
+    // User Story artifacts use the structured story view
+    if (artifact.artifactType === 'USER_STORY') {
+      return (
+        <div className="p-6 overflow-y-auto h-full">
+          <UserStoryArtifactView artifact={artifact} />
+        </div>
+      );
+    }
+
     // All other artifacts use generic section cards
     return (
       <div className="p-6 space-y-4 overflow-y-auto h-full">
@@ -81,6 +101,16 @@ export function ArtifactContentPanel({
   // Section-level — show single section focused
   if (activeNode.type === 'section' && activeNode.sectionId) {
     const artifact = artifacts.find((a) => a.id === activeNode.artifactId);
+
+    // FRD feature click (F-XX-XX) — route to FRD view with active feature
+    if (artifact?.artifactType === 'FRD' && activeNode.sectionId.startsWith('F-')) {
+      return (
+        <div className="p-6 overflow-y-auto h-full">
+          <FrdArtifactView artifact={artifact} activeFeatureId={activeNode.sectionId} />
+        </div>
+      );
+    }
+
     const section = artifact?.sections.find((s) => s.id === activeNode.sectionId);
     if (!section) return <EmptyState message="Section not found" />;
     return (
