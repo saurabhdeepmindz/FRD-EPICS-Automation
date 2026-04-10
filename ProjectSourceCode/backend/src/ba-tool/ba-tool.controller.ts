@@ -208,4 +208,42 @@ export class BaToolController {
       body.reviewed ?? false,
     );
   }
+
+  // ─── SubTask CRUD ──────────────────────────────────────────────────────
+
+  /** GET /api/ba/modules/:id/subtasks — list SubTasks for a module */
+  @Get('modules/:id/subtasks')
+  listSubTasks(@Param('id') moduleDbId: string) {
+    return this.baToolService.listSubTasks(moduleDbId);
+  }
+
+  /** GET /api/ba/subtasks/:id — get full SubTask with all sections */
+  @Get('subtasks/:id')
+  getSubTask(@Param('id') subtaskDbId: string) {
+    return this.baToolService.getSubTask(subtaskDbId);
+  }
+
+  /** PUT /api/ba/subtasks/:id/sections/:sectionKey — edit a SubTask section */
+  @Put('subtasks/:id/sections/:sectionKey')
+  updateSubTaskSection(
+    @Param('id') subtaskDbId: string,
+    @Param('sectionKey') sectionKey: string,
+    @Body() body: { editedContent: string },
+  ) {
+    return this.baToolService.updateSubTaskSection(subtaskDbId, sectionKey, body.editedContent);
+  }
+
+  /** POST /api/ba/subtasks/:id/approve — approve a SubTask */
+  @Post('subtasks/:id/approve')
+  approveSubTask(@Param('id') subtaskDbId: string) {
+    return this.baToolService.approveSubTask(subtaskDbId);
+  }
+
+  // ─── Sprint Sequencing ─────────────────────────────────────────────────
+
+  /** GET /api/ba/modules/:id/sprint-sequence — get dependency-ordered SubTask sequence */
+  @Get('modules/:id/sprint-sequence')
+  getSprintSequence(@Param('id') moduleDbId: string) {
+    return this.baToolService.getSprintSequence(moduleDbId);
+  }
 }

@@ -10,8 +10,10 @@ import { ClickThroughBuilder } from '@/components/ba-tool/ClickThroughBuilder';
 import { SkillExecutionPanel } from '@/components/ba-tool/SkillExecutionPanel';
 import { ArtifactTree, type TreeNodeId } from '@/components/ba-tool/ArtifactTree';
 import { ArtifactContentPanel } from '@/components/ba-tool/ArtifactContentPanel';
+import { SubTaskList } from '@/components/ba-tool/SubTaskList';
+import { SprintSequenceView } from '@/components/ba-tool/SprintSequenceView';
 import { useSkillExecution } from '@/hooks/useSkillExecution';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, ListChecks, GitBranch } from 'lucide-react';
 import Link from 'next/link';
 
 const STEP_TO_SKILL: Record<number, string> = {
@@ -63,8 +65,8 @@ export default function BaModuleWorkspacePage() {
     if (!mod) return;
     const statusToStep: Record<string, number> = {
       DRAFT: 0,
-      SCREENS_UPLOADED: 1,
-      ANALYSIS_COMPLETE: 2,
+      SCREENS_UPLOADED: 0,        // stay on upload step — user still adding descriptions
+      ANALYSIS_COMPLETE: 2,       // SKILL-00 done → ready for SKILL-01-S
       FRD_COMPLETE: 3,
       EPICS_COMPLETE: 4,
       STORIES_COMPLETE: 5,
@@ -152,6 +154,19 @@ export default function BaModuleWorkspacePage() {
             <span className="text-xs text-muted-foreground font-mono">({mod.packageName})</span>
           </div>
         </div>
+        {/* SubTask / Sprint tabs — visible when subtasks exist */}
+        {(mod.moduleStatus === 'SUBTASKS_COMPLETE' || mod.moduleStatus === 'APPROVED') && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant={activeStep === 6 ? 'default' : 'outline'} onClick={() => setActiveStep(6)}>
+              <ListChecks className="h-3.5 w-3.5 mr-1" />
+              SubTasks
+            </Button>
+            <Button size="sm" variant={activeStep === 7 ? 'default' : 'outline'} onClick={() => setActiveStep(7)}>
+              <GitBranch className="h-3.5 w-3.5 mr-1" />
+              Sprint Sequence
+            </Button>
+          </div>
+        )}
       </header>
 
       {/* Skill Stepper */}
@@ -260,6 +275,20 @@ export default function BaModuleWorkspacePage() {
                   onRetry={startSkill}
                   onModuleReload={load}
                 />
+              )}
+
+              {/* ═══ Step 6: SubTask List ═══ */}
+              {activeStep === 6 && (
+                <div className="max-w-5xl mx-auto">
+                  <SubTaskList moduleDbId={mod.id} projectId={projectId} />
+                </div>
+              )}
+
+              {/* ═══ Step 7: Sprint Sequencing ═══ */}
+              {activeStep === 7 && (
+                <div className="max-w-6xl mx-auto">
+                  <SprintSequenceView moduleDbId={mod.id} projectId={projectId} />
+                </div>
               )}
             </div>
           )}

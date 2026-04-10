@@ -265,7 +265,7 @@ export default function BaProjectWorkspacePage() {
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-2xl font-bold text-green-600">
-                      {project.modules.filter((m) => m.moduleStatus === 'APPROVED').length}
+                      {project.modules.filter((m) => m.moduleStatus === 'APPROVED' || m.moduleStatus === 'SUBTASKS_COMPLETE').length}
                     </p>
                     <p className="text-xs text-muted-foreground">Approved</p>
                   </CardContent>
@@ -273,7 +273,7 @@ export default function BaProjectWorkspacePage() {
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-2xl font-bold text-amber-600">
-                      {project.modules.filter((m) => m.moduleStatus !== 'APPROVED' && m.moduleStatus !== 'DRAFT').length}
+                      {project.modules.filter((m) => m.moduleStatus !== 'APPROVED' && m.moduleStatus !== 'SUBTASKS_COMPLETE' && m.moduleStatus !== 'DRAFT').length}
                     </p>
                     <p className="text-xs text-muted-foreground">In Progress</p>
                   </CardContent>

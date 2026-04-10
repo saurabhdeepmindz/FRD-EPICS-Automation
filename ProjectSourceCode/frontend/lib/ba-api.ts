@@ -418,6 +418,87 @@ export const MODULE_STATUS_COLORS: Record<BaModuleStatus, string> = {
 
 export const SKILL_NAMES = ['SKILL-00', 'SKILL-01-S', 'SKILL-02-S', 'SKILL-04', 'SKILL-05'] as const;
 
+// ─── SubTasks ────────────────────────────────────────────────────────────────
+
+export interface BaSubTask {
+  id: string;
+  subtaskId: string;
+  subtaskName: string;
+  subtaskType: string | null;
+  team: string | null;
+  userStoryId: string | null;
+  epicId: string | null;
+  featureId: string | null;
+  moduleId: string | null;
+  packageName: string | null;
+  assignedTo: string | null;
+  estimatedEffort: string | null;
+  prerequisites: string[];
+  status: 'DRAFT' | 'APPROVED' | 'IMPLEMENTED';
+  priority: string | null;
+  tbdFutureRefs: string[];
+  sourceFileName: string | null;
+  className: string | null;
+  methodName: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  sections?: BaSubTaskSection[];
+}
+
+export interface BaSubTaskSection {
+  id: string;
+  sectionNumber: number;
+  sectionKey: string;
+  sectionLabel: string;
+  aiContent: string;
+  editedContent: string | null;
+  isHumanModified: boolean;
+}
+
+export interface SprintSequence {
+  priorities: { P0: string[]; P1: string[]; P2: string[]; P3: string[] };
+  dependencies: { from: string; to: string }[];
+  subtasks: (BaSubTask & { computedPriority: string })[];
+}
+
+export async function listBaSubTasks(moduleDbId: string): Promise<BaSubTask[]> {
+  const { data } = await api.get<BaSubTask[]>(`/ba/modules/${moduleDbId}/subtasks`);
+  return data;
+}
+
+export async function getBaSubTask(subtaskDbId: string): Promise<BaSubTask> {
+  const { data } = await api.get<BaSubTask>(`/ba/subtasks/${subtaskDbId}`);
+  return data;
+}
+
+export async function updateBaSubTaskSection(
+  subtaskDbId: string,
+  sectionKey: string,
+  editedContent: string,
+): Promise<BaSubTaskSection> {
+  const { data } = await api.put<BaSubTaskSection>(`/ba/subtasks/${subtaskDbId}/sections/${sectionKey}`, { editedContent });
+  return data;
+}
+
+export async function approveBaSubTask(subtaskDbId: string): Promise<BaSubTask> {
+  const { data } = await api.post<BaSubTask>(`/ba/subtasks/${subtaskDbId}/approve`);
+  return data;
+}
+
+export async function getSprintSequence(moduleDbId: string): Promise<SprintSequence> {
+  const { data } = await api.get<SprintSequence>(`/ba/modules/${moduleDbId}/sprint-sequence`);
+  return data;
+}
+
+// ─── Status helpers ──────────────────────────────────────────────────────────
+
+export const TEAM_COLORS: Record<string, string> = {
+  FE: 'bg-blue-100 text-blue-700',
+  BE: 'bg-purple-100 text-purple-700',
+  IN: 'bg-orange-100 text-orange-700',
+  QA: 'bg-green-100 text-green-700',
+};
+
 export const SKILL_LABELS: Record<string, string> = {
   'SKILL-00': 'Screen Analysis',
   'SKILL-01-S': 'FRD Generation',

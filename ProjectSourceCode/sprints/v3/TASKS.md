@@ -1,13 +1,13 @@
 # Sprint v3 — Tasks: BA Tool SubTask Generation, Viewing, and Code-Gen Readiness
 
-## Status: Pending
+## Status: Complete
 
 ---
 
 ## P0 — Database Schema & SubTask Parsing (Must Have — BE First)
 
 - [x] Task 1: Add BaSubTask and BaSubTaskSection Prisma models (P0-BE)
-  - Completed: 2026-04-10 — Added SubTaskStatus enum, BaSubTask (22 fields), BaSubTaskSection (9 fields), relations to BaModule + BaArtifact, unique constraints, indexes. Tables created: ba_subtasks, ba_subtask_sections. Tests: 3 passed.
+  - Completed: 2026-04-10 — Added SubTaskStatus enum, BaSubTask (22 fields), BaSubTaskSection (9 fields), relations to BaModule + BaArtifact. Tests: 3 passed.
   - SubTask: Schema foundation for structured SubTask storage
   - Acceptance: Prisma schema includes `BaSubTask` model with header fields (subtaskId, subtaskName, subtaskType, userStoryId, epicId, featureId, moduleId, packageName, assignedTo, estimatedEffort, prerequisites, status, priority, tbdFutureRefs, sourceFileName, className, methodName) and `BaSubTaskSection` model with fields (sectionNumber 1-24, sectionKey, sectionLabel, aiContent, editedContent, isHumanModified); `SubTaskStatus` enum (DRAFT, APPROVED, IMPLEMENTED); foreign keys to BaModule and BaArtifact; migration runs cleanly
   - Algorithm:
@@ -19,7 +19,7 @@
   - Files:
     - `backend/prisma/schema.prisma`
 
-- [ ] Task 2: Implement SKILL-05 output parser in BaSkillOrchestratorService (P0-BE)
+- [x] Task 2: Implement SKILL-05 output parser in BaSkillOrchestratorService (P0-BE)
   - SubTask: Parse raw SKILL-05 markdown into structured BaSubTask + BaSubTaskSection records
   - Acceptance: `parseSkill05Output(rawMarkdown, moduleDbId, artifactDbId)` correctly splits raw output by `## ST-` headings; extracts all 24 section values per SubTask; stores header fields (SubTask ID, Name, Type, User Story ID, EPIC ID, Feature ID, Module ID, Package Name, Assigned To, Effort, Prerequisites, TBD-Future Refs, Source File, Class Name, Method Name); stores each section as a `BaSubTaskSection` record; handles both structured (table header) and freeform SubTask formats; QA SubTasks (ST-*-QA-*) are parsed with reduced section count
   - Algorithm:
@@ -35,7 +35,7 @@
     - `backend/src/ba-tool/ba-skill-orchestrator.service.ts`
     - `backend/src/ba-tool/subtask-parser.service.ts` (new — dedicated parsing logic)
 
-- [ ] Task 3: Auto-extract TBD-Future entries from parsed SubTasks (P0-BE)
+- [x] Task 3: Auto-extract TBD-Future entries from parsed SubTasks (P0-BE)
   - SubTask: Extract TBD-Future references from Section 15 (Integration Points) and register them in BaTbdFutureEntry
   - Acceptance: When SKILL-05 completes and SubTasks are parsed, any Integration Point with `Status: TBD-Future` is auto-registered in the TBD-Future Registry; entry includes registryId (TBD-NNN), integrationName (Called Class), classification, referencedModule, stub guidance; duplicate entries (same registryId + moduleDbId) are skipped; extracted entries appear in `/ba-tool/project/[id]/tbd-registry`
   - Algorithm:
@@ -48,7 +48,7 @@
   - Files:
     - `backend/src/ba-tool/ba-skill-orchestrator.service.ts`
 
-- [ ] Task 4: Auto-extend RTM with SubTask IDs and Test Case IDs (P0-BE)
+- [x] Task 4: Auto-extend RTM with SubTask IDs and Test Case IDs (P0-BE)
   - SubTask: When SKILL-05 completes, extend existing RTM rows with SubTask IDs (from Section 1) and Test Case IDs (from Section 22)
   - Acceptance: RTM rows matching the same moduleId + featureId get SubTask IDs appended; Test Case IDs from Section 22 are added to RTM testCaseIds column; RTM view at `/ba-tool/project/[id]/rtm` shows SubTask and Test Case columns populated; no duplicate entries
   - Algorithm:
@@ -61,7 +61,7 @@
   - Files:
     - `backend/src/ba-tool/ba-skill-orchestrator.service.ts`
 
-- [ ] Task 5: Wire SKILL-05 completion to SubTask parser + TBD + RTM pipeline (P0-BE)
+- [x] Task 5: Wire SKILL-05 completion to SubTask parser + TBD + RTM pipeline (P0-BE)
   - SubTask: Connect the existing skill execution pipeline so that when SKILL-05 completes, it triggers SubTask parsing, TBD extraction, and RTM extension
   - Acceptance: After SKILL-05 `createArtifactFromOutput()` completes, `parseSkill05Output()` is called; then `extractTbdEntries()` runs; then `extendRtmWithSubTasks()` runs; all three steps are wrapped in a try-catch so that a parsing failure does not block the skill execution from completing; execution record is updated with parsed SubTask count in metadata
   - Algorithm:
@@ -78,7 +78,7 @@
 
 ## P0 — SubTask API Endpoints (Must Have — BE)
 
-- [ ] Task 6: Add SubTask CRUD API endpoints to BaToolController (P0-BE)
+- [x] Task 6: Add SubTask CRUD API endpoints to BaToolController (P0-BE)
   - SubTask: REST endpoints for listing, viewing, editing, and approving SubTasks
   - Acceptance: `GET /api/ba/modules/:id/subtasks` returns list of SubTasks with header fields (no section content); `GET /api/ba/subtasks/:id` returns full SubTask with all sections; `PUT /api/ba/subtasks/:id/sections/:sectionKey` accepts `{ editedContent }` and sets isHumanModified=true; `POST /api/ba/subtasks/:id/approve` sets status=APPROVED; all endpoints validate input and return proper error codes
   - Algorithm:
@@ -91,7 +91,7 @@
     - `backend/src/ba-tool/ba-tool.service.ts`
     - `backend/src/ba-tool/dto/update-subtask-section.dto.ts` (new)
 
-- [ ] Task 7: Add Sprint Sequencing API endpoint (P0-BE)
+- [x] Task 7: Add Sprint Sequencing API endpoint (P0-BE)
   - SubTask: Endpoint that returns the dependency-ordered SubTask sequence for a module
   - Acceptance: `GET /api/ba/modules/:id/sprint-sequence` returns `{ priorities: { P0: [...], P1: [...], P2: [...], P3: [...] }, dependencies: [{ from, to }] }`; priority is derived from SubTask prerequisites and Section 22 Sprint Sequencing data; SubTasks with no prerequisites are P0; SubTasks depending on P0 are P1; and so on; dependency edges are computed from prerequisites field
   - Algorithm:
@@ -109,7 +109,7 @@
 
 ## P1 — Frontend SubTask Views (Should Have — FE)
 
-- [ ] Task 8: Build SubTask list panel in module detail page (P1-FE)
+- [x] Task 8: Build SubTask list panel in module detail page (P1-FE)
   - SubTask: Display list of SubTasks for a module with summary cards
   - Acceptance: Module detail page at `/ba-tool/project/[id]/module/[moduleId]` shows a new "SubTasks" tab (alongside existing Screens, Artifacts, Flows tabs); each SubTask card shows: SubTask ID, Name, Type badge (BE/QA/IN), User Story ID, Estimated Effort, Status badge (DRAFT/APPROVED), priority badge (P0-P3); clicking a card navigates to SubTask detail page; empty state shows "Run SKILL-05 to generate SubTasks"; list is sortable by priority or SubTask ID
   - Files:
@@ -117,7 +117,7 @@
     - `frontend/components/ba-tool/SubTaskList.tsx` (new)
     - `frontend/components/ba-tool/SubTaskCard.tsx` (new)
 
-- [ ] Task 9: Build SubTask detail page with 24-section structured view (P1-FE)
+- [x] Task 9: Build SubTask detail page with 24-section structured view (P1-FE)
   - SubTask: Full SubTask detail page rendering all 24 sections in a structured layout
   - Acceptance: `/ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]` renders SubTask header (ID, Name, Type, User Story, EPIC, Feature, Module, Package, Assigned To, Effort, Prerequisites, TBD-Future Refs); renders each of 24 sections as a collapsible panel with section label and content; Algorithm section (14) renders as numbered steps; Validations section (13) renders as a table; Integration Points section (15) highlights TBD-Future entries with warning badge; Traceability Header section (19) renders as code block; Project Structure section (20) renders as directory tree; sections with human edits show "Modified" badge; Approve button at top sets status to APPROVED
   - Files:
@@ -125,7 +125,7 @@
     - `frontend/components/ba-tool/SubTaskDetailView.tsx` (new)
     - `frontend/components/ba-tool/SubTaskSectionPanel.tsx` (new)
 
-- [ ] Task 10: Build Sprint Sequencing view with dependency graph (P1-FE)
+- [x] Task 10: Build Sprint Sequencing view with dependency graph (P1-FE)
   - SubTask: Visual representation of SubTask execution order grouped by priority level
   - Acceptance: Module detail page has a "Sprint Sequence" tab that shows SubTasks grouped in P0/P1/P2/P3 columns (or rows); dependency arrows connect prerequisite SubTasks to dependent ones; each SubTask node shows ID, Name, Type badge, and status; clicking a node navigates to SubTask detail; the view uses the `/api/ba/modules/:id/sprint-sequence` endpoint; empty state shows "No SubTasks generated yet"
   - Files:
@@ -136,7 +136,7 @@
 
 ## P2 — Export & Polish (Nice to Have)
 
-- [ ] Task 11: Add SubTask export endpoint (markdown + JSON) (P2-BE)
+- [x] Task 11: Add SubTask export endpoint (markdown + JSON) (P2-BE)
   - SubTask: Export all SubTasks for a project or module as structured markdown or JSON
   - Acceptance: `GET /api/ba/projects/:id/export/subtasks?format=md` returns a single markdown file with all SubTasks grouped by module, following the SubTask-Template format; `GET /api/ba/projects/:id/export/subtasks?format=json` returns a JSON array of SubTasks with all sections (using editedContent if available, else aiContent); human-modified sections are flagged in JSON output; markdown output includes full traceability headers and Sprint Sequencing section
   - Algorithm:
@@ -149,7 +149,7 @@
     - `backend/src/ba-tool/ba-export.service.ts`
     - `backend/src/ba-tool/ba-tool.controller.ts`
 
-- [ ] Task 12: Add inline section editor to SubTask detail page (P2-FE)
+- [x] Task 12: Add inline section editor to SubTask detail page (P2-FE)
   - SubTask: Enable editing of individual SubTask sections from the detail page
   - Acceptance: Each section panel in SubTask detail view has an "Edit" button; clicking Edit replaces the section content with a textarea pre-filled with current content (editedContent or aiContent); Save calls `PUT /api/ba/subtasks/:id/sections/:sectionKey`; Cancel discards changes; after save, section shows "Modified" badge; original AI content is preserved and viewable via "View Original" toggle
   - Files:

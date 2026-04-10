@@ -124,6 +124,7 @@ function ScreenCard({ screen, onChanged }: { screen: BaScreen; onChanged: () => 
   const [activeTab, setActiveTab] = useState<'text' | 'audio' | 'ai-formatted'>('text');
   const [textDesc, setTextDesc] = useState(screen.textDescription ?? '');
   const [savingText, setSavingText] = useState(false);
+  const [textSaved, setTextSaved] = useState(!!screen.textDescription);
   const [transcript, setTranscript] = useState(screen.audioTranscript ?? '');
   const [recording, setRecording] = useState(false);
   const [aiFormatted, setAiFormatted] = useState(screen.aiFormattedTranscript ?? '');
@@ -131,7 +132,7 @@ function ScreenCard({ screen, onChanged }: { screen: BaScreen; onChanged: () => 
   const [savingAiTranscript, setSavingAiTranscript] = useState(false);
 
   // Sync local state when screen prop updates (after parent reload)
-  useEffect(() => { setTextDesc(screen.textDescription ?? ''); }, [screen.textDescription]);
+  useEffect(() => { setTextDesc(screen.textDescription ?? ''); setTextSaved(!!screen.textDescription); }, [screen.textDescription]);
   useEffect(() => { setTranscript(screen.audioTranscript ?? ''); }, [screen.audioTranscript]);
   useEffect(() => { setAiFormatted(screen.aiFormattedTranscript ?? ''); }, [screen.aiFormattedTranscript]);
   const [transcribing, setTranscribing] = useState(false);
@@ -143,6 +144,7 @@ function ScreenCard({ screen, onChanged }: { screen: BaScreen; onChanged: () => 
     setSavingText(true);
     try {
       await updateBaScreen(screen.id, { textDescription: textDesc });
+      setTextSaved(true);
       onChanged();
     } catch {
       alert('Failed to save description');
@@ -391,16 +393,27 @@ function ScreenCard({ screen, onChanged }: { screen: BaScreen; onChanged: () => 
               <div className="space-y-3">
                 <textarea
                   value={textDesc}
-                  onChange={(e) => setTextDesc(e.target.value)}
+                  onChange={(e) => { setTextDesc(e.target.value); setTextSaved(false); }}
                   rows={5}
                   placeholder="Describe this screen — who uses it, what it does, what business problem it solves. Include anything the image doesn't show."
                   className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background resize-y focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground">{textDesc.length.toLocaleString()} characters</span>
-                  <Button size="sm" onClick={handleSaveText} disabled={savingText}>
-                    {savingText ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Check className="h-3.5 w-3.5 mr-1" />}
-                    Save Description
+                  <Button
+                    size="sm"
+                    onClick={handleSaveText}
+                    disabled={savingText || textSaved}
+                    variant={textSaved ? 'outline' : 'default'}
+                    className={textSaved ? 'text-green-600 border-green-300 bg-green-50 hover:bg-green-50 cursor-default' : ''}
+                  >
+                    {savingText ? (
+                      <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Saving...</>
+                    ) : textSaved ? (
+                      <><Check className="h-3.5 w-3.5 mr-1" /> Saved</>
+                    ) : (
+                      <><Check className="h-3.5 w-3.5 mr-1" /> Save Description</>
+                    )}
                   </Button>
                 </div>
               </div>

@@ -266,4 +266,122 @@ export class BaToolService {
       data: { aiFormattedTranscript: text, aiTranscriptReviewed: reviewed },
     });
   }
+
+  // ─── SubTask CRUD ──────────────────────────────────────────────────────
+
+  async listSubTasks(moduleDbId: string) {
+    return this.prisma.baSubTask.findMany({
+      where: { moduleDbId },
+      orderBy: { subtaskId: 'asc' },
+      select: {
+        id: true, subtaskId: true, subtaskName: true, subtaskType: true, team: true,
+        userStoryId: true, epicId: true, featureId: true, moduleId: true, packageName: true,
+        assignedTo: true, estimatedEffort: true, prerequisites: true, status: true,
+        priority: true, tbdFutureRefs: true, sourceFileName: true, className: true,
+        methodName: true, approvedAt: true, createdAt: true,
+      },
+    });
+  }
+
+  async getSubTask(subtaskDbId: string) {
+    const st = await this.prisma.baSubTask.findUnique({
+      where: { id: subtaskDbId },
+      include: { sections: { orderBy: { sectionNumber: 'asc' } } },
+    });
+    if (!st) throw new NotFoundException(`SubTask ${subtaskDbId} not found`);
+    return st;
+  }
+
+  async updateSubTaskSection(subtaskDbId: string, sectionKey: string, editedContent: string) {
+    const section = await this.prisma.baSubTaskSection.findFirst({
+      where: { subtaskDbId, sectionKey },
+    });
+    if (!section) throw new NotFoundException(`Section ${sectionKey} not found on SubTask ${subtaskDbId}`);
+    return this.prisma.baSubTaskSection.update({
+      where: { id: section.id },
+      data: { editedContent, isHumanModified: true },
+    });
+  }
+
+  async approveSubTask(subtaskDbId: string) {
+    const st = await this.prisma.baSubTask.findUnique({ where: { id: subtaskDbId } });
+    if (!st) throw new NotFoundException(`SubTask ${subtaskDbId} not found`);
+    return this.prisma.baSubTask.update({
+      where: { id: subtaskDbId },
+      data: { status: 'APPROVED', approvedAt: new Date() },
+    });
+  }
+
+  // ─── Sprint Sequencing (Task 7) ────────────────────────────────────────
+
+  async getSprintSequence(moduleDbId: string) {
+    const subtasks = await this.prisma.baSubTask.findMany({
+      where: { moduleDbId },
+      orderBy: { subtaskId: 'asc' },
+      select: {
+        id: true, subtaskId: true, subtaskName: true, team: true, status: true,
+        priority: true, prerequisites: true, className: true, methodName: true,
+      },
+    });
+
+    // Build dependency graph
+    const stMap = new Map(subtasks.map((st) => [st.subtaskId, st]));
+    const dependencies: { from: string; to: string }[] = [];
+
+    for (const st of subtasks) {
+      for (const prereq of st.prerequisites) {
+        if (stMap.has(prereq)) {
+          dependencies.push({ from: prereq, to: st.subtaskId });
+        }
+      }
+    }
+
+    // Compute priority levels from topology if not explicitly set
+    const levels: Record<string, string[]> = { P0: [], P1: [], P2: [], P3: [] };
+    const resolved = new Set<string>();
+
+    // P0: no prerequisites
+    for (const st of subtasks) {
+      if (st.prerequisites.length === 0 || st.prerequisites.every((p) => !stMap.has(p))) {
+        levels.P0.push(st.subtaskId);
+        resolved.add(st.subtaskId);
+      }
+    }
+
+    // P1: depends only on P0
+    for (const st of subtasks) {
+      if (resolved.has(st.subtaskId)) continue;
+      if (st.prerequisites.every((p) => resolved.has(p) || !stMap.has(p))) {
+        levels.P1.push(st.subtaskId);
+      }
+    }
+    for (const id of levels.P1) resolved.add(id);
+
+    // P2: depends on P0+P1
+    for (const st of subtasks) {
+      if (resolved.has(st.subtaskId)) continue;
+      if (st.prerequisites.every((p) => resolved.has(p) || !stMap.has(p))) {
+        levels.P2.push(st.subtaskId);
+      }
+    }
+    for (const id of levels.P2) resolved.add(id);
+
+    // P3: everything else
+    for (const st of subtasks) {
+      if (!resolved.has(st.subtaskId)) {
+        levels.P3.push(st.subtaskId);
+      }
+    }
+
+    return {
+      priorities: levels,
+      dependencies,
+      subtasks: subtasks.map((st) => ({
+        ...st,
+        computedPriority: levels.P0.includes(st.subtaskId) ? 'P0'
+          : levels.P1.includes(st.subtaskId) ? 'P1'
+          : levels.P2.includes(st.subtaskId) ? 'P2' : 'P3',
+      })),
+    };
+  }
 }

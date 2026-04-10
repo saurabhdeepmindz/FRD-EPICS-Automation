@@ -1,11 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BaExecutionStatus } from '@prisma/client';
-import archiver from 'archiver';
 import { PassThrough } from 'stream';
 
 @Injectable()
 export class BaExportService {
+  private readonly logger = new Logger(BaExportService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async generateExportZip(projectId: string): Promise<{ stream: PassThrough; fileName: string }> {
@@ -31,7 +32,9 @@ export class BaExportService {
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
 
     const passThrough = new PassThrough();
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const archiverFn = require('archiver');
+    const archive = archiverFn('zip', { zlib: { level: 9 } });
     archive.pipe(passThrough);
 
     const prefix = `${project.projectCode}-ba-artifacts`;
@@ -243,6 +246,78 @@ export class BaExportService {
       'SKILL-05': 'SubTasks',
     };
     return map[skillName] ?? skillName;
+  }
+
+  // ─── SubTask export (Task 11) ──────────────────────────────────────────
+
+  async exportSubTasks(projectId: string, format: 'md' | 'json'): Promise<{ content: string; contentType: string; fileName: string }> {
+    const subtasks = await this.prisma.baSubTask.findMany({
+      where: { module: { projectId } },
+      include: { sections: { orderBy: { sectionNumber: 'asc' } }, module: true },
+      orderBy: [{ moduleDbId: 'asc' }, { subtaskId: 'asc' }],
+    });
+
+    if (format === 'json') {
+      const jsonData = subtasks.map((st) => ({
+        subtaskId: st.subtaskId,
+        subtaskName: st.subtaskName,
+        team: st.team,
+        userStoryId: st.userStoryId,
+        epicId: st.epicId,
+        featureId: st.featureId,
+        moduleId: st.moduleId,
+        packageName: st.packageName,
+        className: st.className,
+        methodName: st.methodName,
+        sourceFileName: st.sourceFileName,
+        status: st.status,
+        priority: st.priority,
+        prerequisites: st.prerequisites,
+        tbdFutureRefs: st.tbdFutureRefs,
+        sections: st.sections.map((s) => ({
+          sectionNumber: s.sectionNumber,
+          sectionKey: s.sectionKey,
+          sectionLabel: s.sectionLabel,
+          content: s.isHumanModified && s.editedContent ? s.editedContent : s.aiContent,
+          isModified: s.isHumanModified,
+        })),
+      }));
+      return {
+        content: JSON.stringify(jsonData, null, 2),
+        contentType: 'application/json',
+        fileName: 'subtasks-export.json',
+      };
+    }
+
+    // Markdown format
+    let md = '# SubTasks Export\n\n';
+    let currentModule = '';
+    for (const st of subtasks) {
+      if (st.module.moduleId !== currentModule) {
+        currentModule = st.module.moduleId;
+        md += `\n---\n\n# Module: ${st.module.moduleId} — ${st.module.moduleName}\n\n`;
+      }
+
+      md += `## ${st.subtaskId} — ${st.subtaskName}\n\n`;
+      md += `| Field | Value |\n|-------|-------|\n`;
+      md += `| Team | ${st.team ?? '—'} |\n`;
+      md += `| User Story | ${st.userStoryId ?? '—'} |\n`;
+      md += `| EPIC | ${st.epicId ?? '—'} |\n`;
+      md += `| Feature | ${st.featureId ?? '—'} |\n`;
+      md += `| Class | ${st.className ?? '—'} |\n`;
+      md += `| Method | ${st.methodName ?? '—'} |\n`;
+      md += `| File | ${st.sourceFileName ?? '—'} |\n`;
+      md += `| Status | ${st.status} |\n`;
+      md += `| Priority | ${st.priority ?? '—'} |\n\n`;
+
+      for (const s of st.sections) {
+        const content = s.isHumanModified && s.editedContent ? s.editedContent : s.aiContent;
+        md += `#### Section ${s.sectionNumber} — ${s.sectionLabel}${s.isHumanModified ? ' *(Modified)*' : ''}\n\n`;
+        md += `${content}\n\n`;
+      }
+    }
+
+    return { content: md, contentType: 'text/markdown', fileName: 'subtasks-export.md' };
   }
 }
 

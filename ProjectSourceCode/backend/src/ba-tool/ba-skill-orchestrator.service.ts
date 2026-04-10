@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BaExecutionStatus, BaModuleStatus, BaArtifactType, BaArtifactStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SubTaskParserService } from './subtask-parser.service';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -53,6 +54,7 @@ export class BaSkillOrchestratorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly subtaskParser: SubTaskParserService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
     // Skill files are at project root Master-Documents-Skills/ or Screen-FRD-EPICS-Automation-Skills/
@@ -148,9 +150,33 @@ export class BaSkillOrchestratorService {
       });
 
       // 6. Create artifact records
-      await this.createArtifactFromOutput(moduleDbId, skillName, humanDocument, handoffPacket);
+      const artifact = await this.createArtifactFromOutput(moduleDbId, skillName, humanDocument, handoffPacket);
 
-      // 7. Update module status
+      // 7. SKILL-05 post-processing: parse SubTasks, extract TBD, extend RTM
+      if (skillName === 'SKILL-05') {
+        try {
+          const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId }, include: { project: true } });
+          const artifactId = artifact?.id ?? null;
+
+          // 7a. Parse SubTasks into structured records
+          const subtaskIds = await this.subtaskParser.parseAndStore(humanDocument, moduleDbId, artifactId);
+          this.logger.log(`Parsed ${subtaskIds.length} SubTasks for module ${moduleDbId}`);
+
+          // 7b. Extract TBD-Future entries from parsed SubTasks
+          await this.extractTbdFromSubTasks(moduleDbId);
+
+          // 7c. Extend RTM with SubTask IDs and Test Case IDs
+          if (mod?.projectId) {
+            await this.extendRtmWithSubTasks(moduleDbId, mod.projectId);
+          }
+        } catch (pipelineErr: unknown) {
+          const pMsg = pipelineErr instanceof Error ? pipelineErr.message : 'Unknown';
+          this.logger.warn(`SKILL-05 post-processing partial failure: ${pMsg}`);
+          // Don't fail the execution — raw output is preserved
+        }
+      }
+
+      // 8. Update module status
       await this.prisma.baModule.update({
         where: { id: moduleDbId },
         data: { moduleStatus: SKILL_STATUS_MAP[skillName], processedAt: new Date() },
@@ -435,10 +461,10 @@ export class BaSkillOrchestratorService {
     skillName: SkillName,
     humanDocument: string,
     handoffPacket: Record<string, unknown> | null,
-  ): Promise<void> {
+  ): Promise<{ id: string } | null> {
     const artifactType = SKILL_ARTIFACT_MAP[skillName];
     const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
-    if (!mod) return;
+    if (!mod) return null;
 
     const artifactId = `${artifactType}-${mod.moduleId}`;
 
@@ -464,6 +490,120 @@ export class BaSkillOrchestratorService {
         },
       });
     }
+
+    return { id: artifact.id };
+  }
+
+  // ─── SKILL-05 post-processing: TBD extraction + RTM extension ──────────
+
+  private async extractTbdFromSubTasks(moduleDbId: string): Promise<void> {
+    const subtasks = await this.prisma.baSubTask.findMany({
+      where: { moduleDbId },
+      include: { sections: { where: { sectionKey: 'integration_points' } } },
+    });
+
+    let newCount = 0;
+    for (const st of subtasks) {
+      const integSection = st.sections[0];
+      if (!integSection) continue;
+
+      const content = integSection.aiContent;
+      // Find TBD-Future patterns
+      const tbdMatches = content.matchAll(/TBD-Future\s*Ref[:\s]+(TBD-\d+)/gi);
+      for (const match of tbdMatches) {
+        const registryId = match[1];
+        // Check if already exists
+        const existing = await this.prisma.baTbdFutureEntry.findFirst({
+          where: { moduleDbId, registryId },
+        });
+        if (existing) continue;
+
+        // Extract integration name
+        const nameMatch = content.match(/Called\s*Class[:\s]+(\w+)/i);
+        const moduleMatch = content.match(/Referenced\s*Module[:\s]+(MOD-\d+)/i);
+
+        await this.prisma.baTbdFutureEntry.create({
+          data: {
+            moduleDbId,
+            registryId,
+            integrationName: nameMatch?.[1] ?? 'Unknown',
+            classification: moduleMatch ? 'INTERNAL-TBD-Future' : 'EXTERNAL-TBD-Future',
+            referencedModule: moduleMatch?.[1] ?? null,
+            assumedInterface: content.substring(0, 500),
+            resolutionTrigger: `${moduleMatch?.[1] ?? 'Referenced module'} approved`,
+            appearsInFeatures: st.featureId ? [st.featureId] : [],
+          },
+        });
+        newCount++;
+      }
+    }
+    if (newCount > 0) this.logger.log(`Extracted ${newCount} TBD-Future entries from SubTasks`);
+  }
+
+  private async extendRtmWithSubTasks(moduleDbId: string, projectId: string): Promise<void> {
+    const subtasks = await this.prisma.baSubTask.findMany({
+      where: { moduleDbId },
+      include: { sections: { where: { sectionKey: { in: ['end_to_end_flow', 'test_case_ids'] } } } },
+    });
+
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) return;
+
+    let updated = 0;
+    for (const st of subtasks) {
+      if (!st.featureId) continue;
+
+      // Find matching RTM row
+      const rtmRow = await this.prisma.baRtmRow.findFirst({
+        where: { projectId, moduleId: mod.moduleId, featureId: st.featureId },
+      });
+
+      if (rtmRow) {
+        // Extract test case IDs from section content
+        const testSection = st.sections.find((s) => s.sectionKey === 'end_to_end_flow' || s.sectionKey === 'test_case_ids');
+        const testCaseIds: string[] = [];
+        if (testSection) {
+          const tcMatches = testSection.aiContent.matchAll(/TC-[A-Za-z0-9-]+/g);
+          for (const m of tcMatches) testCaseIds.push(m[0]);
+        }
+
+        await this.prisma.baRtmRow.update({
+          where: { id: rtmRow.id },
+          data: {
+            subtaskId: st.subtaskId,
+            subtaskTeam: st.team,
+            primaryClass: st.className ?? rtmRow.primaryClass,
+            sourceFile: st.sourceFileName ?? rtmRow.sourceFile,
+            methodName: st.methodName ?? rtmRow.methodName,
+            testCaseIds: [...new Set([...rtmRow.testCaseIds, ...testCaseIds])],
+            tbdFutureRef: st.tbdFutureRefs.length > 0 ? st.tbdFutureRefs[0] : rtmRow.tbdFutureRef,
+          },
+        });
+        updated++;
+      } else {
+        this.logger.warn(`No RTM row for ${mod.moduleId}/${st.featureId} — creating one`);
+        await this.prisma.baRtmRow.create({
+          data: {
+            projectId,
+            moduleId: mod.moduleId,
+            moduleName: mod.moduleName,
+            packageName: mod.packageName,
+            featureId: st.featureId,
+            featureName: st.subtaskName,
+            featureStatus: st.status,
+            priority: st.priority ?? 'P1',
+            screenRef: '',
+            subtaskId: st.subtaskId,
+            subtaskTeam: st.team,
+            primaryClass: st.className,
+            sourceFile: st.sourceFileName,
+            methodName: st.methodName,
+          },
+        });
+        updated++;
+      }
+    }
+    this.logger.log(`Extended ${updated} RTM rows with SubTask data`);
   }
 
   private splitIntoSections(markdown: string): { key: string; label: string; content: string }[] {
@@ -509,10 +649,20 @@ export class BaSkillOrchestratorService {
     if (exec.status !== BaExecutionStatus.AWAITING_REVIEW) {
       throw new Error(`Execution is ${exec.status}, not AWAITING_REVIEW`);
     }
-    return this.prisma.baSkillExecution.update({
+    const updated = await this.prisma.baSkillExecution.update({
       where: { id: executionId },
       data: { status: BaExecutionStatus.APPROVED },
     });
+
+    // When SKILL-05 (final skill) is approved, mark the module as APPROVED
+    if (exec.skillName === 'SKILL-05') {
+      await this.prisma.baModule.update({
+        where: { id: exec.moduleDbId },
+        data: { moduleStatus: BaModuleStatus.APPROVED, approvedAt: new Date() },
+      });
+    }
+
+    return updated;
   }
 
   async retryExecution(moduleDbId: string, skillName: SkillName): Promise<string> {
@@ -578,7 +728,10 @@ export class BaSkillOrchestratorService {
         modules: {
           include: {
             artifacts: { include: { sections: true } },
-            skillExecutions: { where: { status: BaExecutionStatus.APPROVED } },
+            skillExecutions: {
+              where: { status: { in: [BaExecutionStatus.APPROVED, BaExecutionStatus.AWAITING_REVIEW, BaExecutionStatus.COMPLETED] } },
+              orderBy: { createdAt: 'desc' },
+            },
             tbdFutureEntries: true,
           },
         },

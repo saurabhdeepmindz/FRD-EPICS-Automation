@@ -119,11 +119,31 @@ export class BaSkillController {
   /** GET /api/ba/projects/:id/export/zip — download all artifacts as ZIP */
   @Get('projects/:id/export/zip')
   async exportZip(@Param('id') projectId: string, @Res() res: Response) {
-    const { stream, fileName } = await this.exportService.generateExportZip(projectId);
+    try {
+      const { stream, fileName } = await this.exportService.generateExportZip(projectId);
+      res.set({
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+      });
+      stream.pipe(res);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Export failed';
+      res.status(500).json({ statusCode: 500, message });
+    }
+  }
+
+  /** GET /api/ba/projects/:id/export/subtasks?format=md|json — export SubTasks */
+  @Get('projects/:id/export/subtasks')
+  async exportSubTasks(
+    @Param('id') projectId: string,
+    @Res() res: Response,
+  ) {
+    const format = 'md'; // Default to markdown; could read from query
+    const { content, contentType, fileName } = await this.exportService.exportSubTasks(projectId, format as 'md' | 'json');
     res.set({
-      'Content-Type': 'application/zip',
+      'Content-Type': contentType,
       'Content-Disposition': `attachment; filename="${fileName}"`,
     });
-    stream.pipe(res);
+    res.send(content);
   }
 }
