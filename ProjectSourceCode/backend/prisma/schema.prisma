@@ -163,6 +163,7 @@ model BaModule {
   skillExecutions  BaSkillExecution[]
   artifacts        BaArtifact[]
   tbdFutureEntries BaTbdFutureEntry[]
+  subtasks         BaSubTask[]
 
   @@unique([projectId, moduleId])
   @@map("ba_modules")
@@ -269,6 +270,7 @@ model BaArtifact {
   updatedAt    DateTime         @updatedAt
 
   sections     BaArtifactSection[]
+  subtasks     BaSubTask[]
 
   @@map("ba_artifacts")
 }
@@ -346,4 +348,64 @@ model BaRtmRow {
 
   @@index([projectId, moduleId])
   @@map("ba_rtm_rows")
+}
+
+// ─── BA SubTask (structured output from SKILL-05) ────────────────────────────
+
+enum SubTaskStatus {
+  DRAFT
+  APPROVED
+  IMPLEMENTED
+}
+
+model BaSubTask {
+  id               String        @id @default(uuid())
+  moduleDbId       String
+  module           BaModule      @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  artifactDbId     String?
+  artifact         BaArtifact?   @relation(fields: [artifactDbId], references: [id])
+  subtaskId        String        // e.g. ST-US001-BE-01
+  subtaskName      String
+  subtaskType      String?       // Code / Config / Test / Documentation / DevOps
+  team             String?       // FE / BE / IN / QA
+  userStoryId      String?       // e.g. US-001
+  epicId           String?       // e.g. EPIC-01
+  featureId        String?       // e.g. F-01-01
+  moduleId         String?       // e.g. MOD-01
+  packageName      String?
+  assignedTo       String?
+  estimatedEffort  String?       // e.g. "4 hours"
+  prerequisites    String[]      // SubTask IDs this depends on
+  status           SubTaskStatus @default(DRAFT)
+  priority         String?       // P0 / P1 / P2 / P3
+  tbdFutureRefs    String[]      // e.g. ["TBD-001"]
+  sourceFileName   String?
+  className        String?
+  methodName       String?
+  approvedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  sections         BaSubTaskSection[]
+
+  @@unique([moduleDbId, subtaskId])
+  @@index([moduleDbId])
+  @@map("ba_subtasks")
+}
+
+model BaSubTaskSection {
+  id              String     @id @default(uuid())
+  subtaskDbId     String
+  subtask         BaSubTask  @relation(fields: [subtaskDbId], references: [id], onDelete: Cascade)
+  sectionNumber   Int        // 1-24
+  sectionKey      String     // e.g. "algorithm", "integration_points"
+  sectionLabel    String     // e.g. "Algorithm", "Integration Points"
+  aiContent       String     @db.Text   // original AI output — immutable
+  editedContent   String?    @db.Text   // human-edited version
+  isHumanModified Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([subtaskDbId, sectionNumber])
+  @@map("ba_subtask_sections")
 }

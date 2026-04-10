@@ -6,7 +6,8 @@
 
 ## P0 — Database Schema & SubTask Parsing (Must Have — BE First)
 
-- [ ] Task 1: Add BaSubTask and BaSubTaskSection Prisma models (P0-BE)
+- [x] Task 1: Add BaSubTask and BaSubTaskSection Prisma models (P0-BE)
+  - Completed: 2026-04-10 — Added SubTaskStatus enum, BaSubTask (22 fields), BaSubTaskSection (9 fields), relations to BaModule + BaArtifact, unique constraints, indexes. Tables created: ba_subtasks, ba_subtask_sections. Tests: 3 passed.
   - SubTask: Schema foundation for structured SubTask storage
   - Acceptance: Prisma schema includes `BaSubTask` model with header fields (subtaskId, subtaskName, subtaskType, userStoryId, epicId, featureId, moduleId, packageName, assignedTo, estimatedEffort, prerequisites, status, priority, tbdFutureRefs, sourceFileName, className, methodName) and `BaSubTaskSection` model with fields (sectionNumber 1-24, sectionKey, sectionLabel, aiContent, editedContent, isHumanModified); `SubTaskStatus` enum (DRAFT, APPROVED, IMPLEMENTED); foreign keys to BaModule and BaArtifact; migration runs cleanly
   - Algorithm:
