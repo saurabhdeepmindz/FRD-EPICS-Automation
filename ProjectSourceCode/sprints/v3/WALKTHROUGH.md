@@ -2,112 +2,133 @@
 
 ## Summary
 
-Sprint v3 closes the BA Tool automation pipeline by making SKILL-05 SubTask output a first-class entity in the platform. When SKILL-05 completes, raw markdown is parsed into structured `BaSubTask` records (header fields + up to 24 sections each), TBD-Future integration references are auto-extracted and registered, and RTM rows are auto-extended with SubTask IDs and Test Case IDs. The frontend gains a SubTask list panel, a full 24-section detail page with inline editing (preserving original AI content separately from human edits), and a Sprint Sequencing view that computes P0/P1/P2/P3 priority levels from the dependency graph. SubTasks can be exported as structured markdown or JSON for downstream code-gen tools. Twelve tasks were completed across backend and frontend, adding the `BaSubTask` and `BaSubTaskSection` Prisma models, a dedicated parser service, six new REST endpoints, three new React components, and a new Next.js route.
+Sprint v3 closes the BA Tool automation pipeline by making SKILL-05 SubTask output a first-class entity in the platform and then extends the artifact viewing experience across EPICs, User Stories, FRDs, and SubTasks with structured, TOC-navigable, markdown-rendered views.
+
+The original 12-task sprint:
+
+- SKILL-05 raw markdown is now parsed into `BaSubTask` records with up to 24 per-section `BaSubTaskSection` rows
+- TBD-Future integration references extracted from Section 15 are auto-registered in the TBD-Future Registry
+- RTM rows are auto-extended with SubTask IDs, test case IDs, class/file/method metadata
+- Frontend gains a SubTask list, a 24-section structured detail page with inline editing, and a Sprint Sequencing view that computes P0/P1/P2/P3 from the prerequisites graph
+- SubTasks can be exported as markdown or JSON for downstream code-gen tools
+
+Post-v3 enhancements (9 follow-up items) upgrade artifact presentation and fix several pipeline issues:
+
+- Rewritten FRD parser (new `#### **F-XX-XX: Name**` heading regex + line-by-line `extractField`)
+- New structured `EpicArtifactView` with 12 ordered sections plus a collapsible "EPIC Internal Processing" group
+- New structured `UserStoryArtifactView` with 26 sections grouped into 5 color-coded categories
+- New `MarkdownRenderer` that renders tables, fenced code, lists, headings, and inline formatting (replaces raw `<pre>` blocks everywhere)
+- Shared `epic-parser.ts` library used by both the TOC tree and the EPIC view for consistency
+- `ArtifactTree` EPIC nodes now render a structured TOC with ring-highlighting on the target section
+- `ArtifactContentPanel` routes clicks from the TOC to `EpicArtifactView` / `FrdArtifactView` / `UserStoryArtifactView` with an `activeSectionId` prop
+- Module workspace UI now stays on Step 0 when status is `SCREENS_UPLOADED` so users can keep adding descriptions; SubTasks and Sprint Sequence toolbar buttons added
+- Export ZIP fixed (archiver CommonJS require), export data query broadened to include `AWAITING_REVIEW` and `COMPLETED`, and `approveExecution()` auto-promotes modules to `APPROVED` on SKILL-05 approval
 
 ## Architecture Overview
 
 ```
 +-------------------------------------------------------------------------------+
-|                        Browser (port 3001)                                     |
-|                                                                                |
-|   Next.js 14 (App Router) + Tailwind CSS + shadcn/ui                           |
-|                                                                                |
-|   /ba-tool/project/[id]/module/[moduleId]                                      |
-|     Existing: ScreenUploader, SkillStepper, ClickThroughBuilder,               |
-|               SkillExecutionPanel, ArtifactTree, ArtifactContentPanel           |
-|     NEW:  SubTask List panel (step 6)                                          |
-|           Sprint Sequence view (step 7)                                        |
-|                                                                                |
-|   /ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]  (NEW)           |
-|     SubTaskDetailView — 24-section structured render                           |
-|     SubTaskSectionPanel — collapsible, inline editor, View Original toggle     |
-|                                                                                |
-+--------------------------------------+----------------------------------------+
-                                       | HTTP (port 4000)
-                                       v
+|                          Browser (port 3001)                                  |
+|                                                                               |
+|   Next.js 14 (App Router) + Tailwind + shadcn/ui                              |
+|                                                                               |
+|   /ba-tool/project/[id]/module/[moduleId]                                     |
+|     Toolbar: Screens | Skills 01-05 | SubTasks (step 6) | Sprint Seq (step 7) |
+|                                                                               |
+|    +---------------+   +-----------------------------------------------+      |
+|    | ArtifactTree  |-->| ArtifactContentPanel (routes by artifact type)|      |
+|    | (TOC)         |   |                                               |      |
+|    |  EPIC ->      |   |  +------------------------------------------+ |      |
+|    |   Summary     |   |  | EpicArtifactView (new)                   | |      |
+|    |   Biz Context |   |  |  - 12 ordered sections                   | |      |
+|    |   ...         |   |  |  - "Internal Processing" collapsible grp | |      |
+|    |   [Internal]  |   |  |  - activeSectionId -> scroll + ring      | |      |
+|    |    Step 1     |   |  +------------------------------------------+ |      |
+|    |    Step 2     |   |  +------------------------------------------+ |      |
+|    |   ...         |   |  | UserStoryArtifactView (new)              | |      |
+|    |  Story ->     |   |  |  - 26 sections in 5 color-coded groups   | |      |
+|    |   26 sections |   |  +------------------------------------------+ |      |
+|    |  FRD ->       |   |  +------------------------------------------+ |      |
+|    |   F-01-01...  |   |  | FrdArtifactView (structured features)    | |      |
+|    |  SubTask ->   |   |  +------------------------------------------+ |      |
+|    |   24 sections |   |  +------------------------------------------+ |      |
+|    +---------------+   |  | SubTaskDetailView (24 collapsible panels)| |      |
+|                        |  +------------------------------------------+ |      |
+|                        |                                               |      |
+|                        |  All content bodies rendered via              |      |
+|                        |  MarkdownRenderer (tables/code/lists/etc.)    |      |
+|                        +-----------------------------------------------+      |
+|                                                                               |
+|   /ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]  (new)          |
+|     SubTaskDetailView + per-section inline editor                             |
+|                                                                               |
++-------------------------------------+-----------------------------------------+
+                                      | HTTP (port 4000)
+                                      v
 +-------------------------------------------------------------------------------+
-|                     NestJS Backend (port 4000)                                 |
-|                                                                                |
-|   BaToolController (enhanced):                                                 |
-|     GET  /api/ba/modules/:id/subtasks          -- list SubTasks                |
-|     GET  /api/ba/subtasks/:id                  -- get SubTask + sections       |
-|     PUT  /api/ba/subtasks/:id/sections/:key    -- edit section                 |
-|     POST /api/ba/subtasks/:id/approve          -- approve SubTask              |
-|     GET  /api/ba/modules/:id/sprint-sequence   -- dependency graph             |
-|     GET  /api/ba/projects/:id/export/subtasks  -- export md/json               |
-|                                                                                |
-|   SubTaskParserService (NEW):                                                  |
-|     parseAndStore() -- raw markdown -> BaSubTask + BaSubTaskSection records    |
-|     parseMarkdown() -- pure parsing, no DB writes                              |
-|                                                                                |
-|   BaSkillOrchestratorService (enhanced):                                       |
-|     SKILL-05 post-processing pipeline:                                         |
-|       7a. subtaskParser.parseAndStore()                                        |
-|       7b. extractTbdFromSubTasks()                                             |
-|       7c. extendRtmWithSubTasks()                                              |
-|                                                                                |
-|   BaExportService (enhanced):                                                  |
-|     exportSubTasks() -- markdown + JSON export                                 |
-|                                                                                |
-|   Prisma Schema:                                                               |
-|     BaSubTask        -- 22 fields + relations to BaModule, BaArtifact          |
-|     BaSubTaskSection -- sectionNumber, sectionKey, aiContent, editedContent    |
-|     SubTaskStatus    -- DRAFT | APPROVED | IMPLEMENTED                         |
-|                                                                                |
-+--------------------------------------+----------------------------------------+
-                                       | Prisma ORM
-                                       v
-+--------------------------------------+
-|   PostgreSQL 16                       |
-|   Tables:                             |
-|     ba_subtasks                       |
-|     ba_subtask_sections               |
-|   (Existing: ba_projects, ba_modules, |
-|    ba_screens, ba_artifacts,          |
-|    ba_skill_executions, ba_rtm_rows,  |
-|    ba_tbd_future_entries)             |
-+---------------------------------------+
+|                       NestJS Backend (port 4000)                              |
+|                                                                               |
+|   BaToolController:                                                           |
+|     GET  /api/ba/modules/:id/subtasks                                         |
+|     GET  /api/ba/subtasks/:id                                                 |
+|     PUT  /api/ba/subtasks/:id/sections/:key                                   |
+|     POST /api/ba/subtasks/:id/approve                                         |
+|     GET  /api/ba/modules/:id/sprint-sequence                                  |
+|     GET  /api/ba/projects/:id/export/subtasks?format=md|json                  |
+|                                                                               |
+|   SubTaskParserService:                                                       |
+|     parseAndStore() | parseMarkdown() | parseHeader() | parseSections()       |
+|                                                                               |
+|   BaSkillOrchestratorService (SKILL-05 post-processing):                      |
+|     subtaskParser.parseAndStore()                                             |
+|     extractTbdFromSubTasks()                                                  |
+|     extendRtmWithSubTasks()                                                   |
+|     approveExecution()  -> auto-promote module to APPROVED                    |
+|     getExportData() includes APPROVED | AWAITING_REVIEW | COMPLETED           |
+|                                                                               |
+|   BaExportService:                                                            |
+|     exportSubTasks(projectId, format)   (md or json)                          |
+|     ZIP export via require('archiver') (CJS interop fix)                      |
+|                                                                               |
+|   Prisma:                                                                     |
+|     BaSubTask   + BaSubTaskSection   + SubTaskStatus enum                     |
+|                                                                               |
++-------------------------------------+-----------------------------------------+
+                                      | Prisma
+                                      v
+                          PostgreSQL 16 (ba_subtasks,
+                                         ba_subtask_sections, ...)
 ```
 
-## Files Created/Modified
+## Files Created / Modified
 
-### 1. `backend/prisma/schema.prisma` (Modified)
+### Backend
 
-**Purpose:** Add SubTask data model to the database schema.
+#### 1. `backend/prisma/schema.prisma` (Modified)
 
-**Key additions:**
-- `SubTaskStatus` enum with values `DRAFT`, `APPROVED`, `IMPLEMENTED`
-- `BaSubTask` model (22 fields) with foreign keys to `BaModule` and `BaArtifact`, compound unique constraint `@@unique([moduleDbId, subtaskId])`, and index on `moduleDbId`
-- `BaSubTaskSection` model (9 fields) with compound unique constraint `@@unique([subtaskDbId, sectionNumber])`
-- `aiContent` stored as `@db.Text` (immutable original AI output), `editedContent` as optional `@db.Text`
-- Added `subtasks BaSubTask[]` relation on `BaArtifact` model
+Adds SubTask storage.
 
-**How it works:** The `BaSubTask` model stores header-level metadata (subtaskId, name, type, team, userStoryId, epicId, featureId, prerequisites, priority, etc.) while each of the 24 sections is a separate `BaSubTaskSection` row. This separation enables section-level editing without touching other sections and supports the "View Original" toggle by keeping `aiContent` immutable.
+- `SubTaskStatus` enum: `DRAFT | APPROVED | IMPLEMENTED`
+- `BaSubTask` (22 fields: `subtaskId`, `subtaskName`, `subtaskType`, `userStoryId`, `epicId`, `featureId`, `moduleId`, `packageName`, `assignedTo`, `estimatedEffort`, `prerequisites`, `status`, `priority`, `tbdFutureRefs`, `sourceFileName`, `className`, `methodName`, plus FKs + timestamps)
+- `BaSubTaskSection` (9 fields: `sectionNumber` 1-24, `sectionKey`, `sectionLabel`, `aiContent` (`@db.Text`, immutable), `editedContent` (`@db.Text?`), `isHumanModified`)
+- Compound uniques: `@@unique([moduleDbId, subtaskId])`, `@@unique([subtaskDbId, sectionNumber])`
+- Relations wired on `BaModule` and `BaArtifact`
 
----
+The separation of `aiContent` and `editedContent` enables the "View Original" toggle with a full audit trail.
 
-### 2. `backend/src/ba-tool/subtask-parser.service.ts` (New)
+#### 2. `backend/src/ba-tool/subtask-parser.service.ts` (New)
 
-**Purpose:** Dedicated service for parsing raw SKILL-05 markdown output into structured SubTask records.
+Dedicated SKILL-05 markdown parser.
 
-**Key functions:**
-
-- `parseAndStore(rawMarkdown, moduleDbId, artifactDbId)` -- Top-level entry point. Calls `parseMarkdown()`, then creates `BaSubTask` + `BaSubTaskSection` records via Prisma. Skips duplicates using the `moduleDbId_subtaskId` unique constraint. Returns array of created database IDs.
-
-- `parseMarkdown(rawMarkdown)` -- Pure parsing function (no DB writes). Splits raw markdown by `## ST-` or `## SubTask: ST-` headings, then for each chunk: extracts the SubTask ID from the heading, parses the header block for metadata fields, and parses `#### Section N` blocks for all 24 sections.
-
-- `extractTeam(subtaskId)` -- Derives team code (FE/BE/IN/QA) from the SubTask ID convention (e.g., `ST-US001-BE-01` yields `BE`).
-
-- `parseHeader(chunk)` -- Regex-based extraction of header fields: SubTask Name, User Story ID, EPIC ID, Feature ID, Module ID, Package Name, Assigned To, Estimated Effort, TBD-Future Refs, Priority.
-
-- `parseSections(chunk)` -- Matches `#### Section N -- Label` patterns and maps section numbers to keys using the `SECTION_MAP` constant (24 entries from `subtask_id` through `testing_notes`).
-
-**How it works:** The `SECTION_MAP` constant defines the canonical mapping of section numbers 1-24 to keys and labels:
+- `parseAndStore(rawMarkdown, moduleDbId, artifactDbId)` — top-level; parses, then writes SubTask + section rows (duplicates skipped by unique constraint). Returns created DB IDs.
+- `parseMarkdown(rawMarkdown)` — pure, DB-free; split by `/(?=^## (?:SubTask:\s*)?ST-)/m`.
+- `parseHeader(chunk)` — regex extraction for SubTask metadata block.
+- `parseSections(chunk)` — matches `#### Section N — Label` and maps N to a stable key via `SECTION_MAP`.
+- `extractTeam(subtaskId)` — derives FE/BE/IN/QA from `ST-US001-BE-01`-style IDs.
 
 ```typescript
 const SECTION_MAP: Record<number, { key: string; label: string }> = {
   1: { key: 'subtask_id', label: 'SubTask ID' },
-  2: { key: 'subtask_name', label: 'SubTask Name' },
   // ...
   14: { key: 'algorithm', label: 'Algorithm' },
   15: { key: 'integration_points', label: 'Integration Points' },
@@ -116,17 +137,13 @@ const SECTION_MAP: Record<number, { key: string; label: string }> = {
 };
 ```
 
-The parser uses regex splitting (`/(?=^## (?:SubTask:\s*)?ST-)/m`) to isolate individual SubTask blocks, then iterates through each to extract structured data. Prerequisites are parsed from Section 5 content by splitting on commas/newlines and filtering for `ST-` prefixed IDs.
+Prerequisites are extracted from Section 5 by splitting on commas/newlines and filtering for `ST-`-prefixed tokens.
 
----
+#### 3. `backend/src/ba-tool/ba-skill-orchestrator.service.ts` (Modified)
 
-### 3. `backend/src/ba-tool/ba-skill-orchestrator.service.ts` (Modified)
+Wires SKILL-05 completion into the SubTask pipeline, plus orchestrates execution approval.
 
-**Purpose:** Wire SKILL-05 completion to the SubTask parsing pipeline, TBD extraction, and RTM extension.
-
-**Key additions:**
-
-- **SKILL-05 post-processing block (step 7 in `runSkillAsync`)** -- After `createArtifactFromOutput()` completes for SKILL-05, three post-processing steps run in sequence, wrapped in a try-catch so that parsing failures do not block the skill execution from completing:
+- SKILL-05 post-processing block in `runSkillAsync()` (wrapped in try/catch so pipeline failures never block execution completion):
 
 ```typescript
 if (skillName === 'SKILL-05') {
@@ -142,222 +159,295 @@ if (skillName === 'SKILL-05') {
 }
 ```
 
-- `extractTbdFromSubTasks(moduleDbId)` -- Queries all SubTasks for the module, reads their `integration_points` section (Section 15), scans for `TBD-Future Ref: TBD-NNN` patterns, and auto-registers new `BaTbdFutureEntry` records. Extracts Called Class and Referenced Module from the section content. Skips entries that already exist for the same module + registryId.
+- `extractTbdFromSubTasks(moduleDbId)` — scans each SubTask's `integration_points` section for `TBD-Future Ref: TBD-NNN`, extracts Called Class and Referenced Module, and registers new `BaTbdFutureEntry` rows (duplicates skipped).
+- `extendRtmWithSubTasks(moduleDbId, projectId)` — for each SubTask with a `featureId`, finds the matching `BaRtmRow` and appends `subtaskId`, team, class, file, method, and test case IDs (deduped via `Set`). Creates a new RTM row with a warning log if none matches.
+- `approveExecution(executionId)` — validates status is `AWAITING_REVIEW`, marks `APPROVED`, and (for SKILL-05) auto-promotes the parent module's status to `APPROVED`.
+- `getExportData(projectId)` — broadened to include executions in `APPROVED | AWAITING_REVIEW | COMPLETED` so export works before explicit approval.
 
-- `extendRtmWithSubTasks(moduleDbId, projectId)` -- For each parsed SubTask with a `featureId`, finds the matching `BaRtmRow` and updates it with subtaskId, team, className, sourceFileName, methodName, and test case IDs extracted from Section 22. Uses `Set` for deduplication of testCaseIds. Creates a new RTM row if no match exists (with a warning log).
+#### 4. `backend/src/ba-tool/ba-tool.service.ts` (Modified)
 
-- `assembleSkill05Context()` -- Assembles the context packet for SKILL-05 execution, including the User Stories document, EPIC and FRD handoff packets, Compact Module Index, TBD-Future registry, and RTM rows.
+SubTask CRUD + Sprint Sequencing.
 
----
+- `listSubTasks(moduleDbId)` — header fields only, ordered by `subtaskId`.
+- `getSubTask(id)` — includes sections ordered by `sectionNumber`; 404s if missing.
+- `updateSubTaskSection(id, sectionKey, editedContent)` — sets `editedContent` + `isHumanModified = true`; never touches `aiContent`.
+- `approveSubTask(id)` — sets `status = APPROVED`, `approvedAt = now()`.
+- `getSprintSequence(moduleDbId)` — topological priority from prerequisites:
+  - P0 = no prerequisites (or unknown refs), P1 = depends only on P0, P2 = depends on P0+P1, P3 = rest. Returns `{ priorities, dependencies, subtasks }`.
 
-### 4. `backend/src/ba-tool/ba-tool.service.ts` (Modified)
+#### 5. `backend/src/ba-tool/ba-tool.controller.ts` (Modified)
 
-**Purpose:** Add SubTask CRUD operations and Sprint Sequencing computation.
+| Method | Route | Handler |
+|--------|-------|---------|
+| GET | `/api/ba/modules/:id/subtasks` | `listSubTasks` |
+| GET | `/api/ba/subtasks/:id` | `getSubTask` |
+| PUT | `/api/ba/subtasks/:id/sections/:sectionKey` | `updateSubTaskSection` (validated via DTO) |
+| POST | `/api/ba/subtasks/:id/approve` | `approveSubTask` |
+| GET | `/api/ba/modules/:id/sprint-sequence` | `getSprintSequence` |
 
-**Key additions:**
+#### 6. `backend/src/ba-tool/ba-export.service.ts` (Modified)
 
-- `listSubTasks(moduleDbId)` -- Queries `BaSubTask` records for a module, ordered by subtaskId, selecting header fields only (no section content) for list views.
+- `exportSubTasks(projectId, format)` — queries all SubTasks in the project, groups by module, emits either structured JSON (with `isModified` flags and `editedContent` preferred) or a markdown document with a per-SubTask header table + `#### Section N` blocks (human-modified sections tagged `*(Modified)*`).
+- ZIP export fix: replaces broken ESM default import with CommonJS require to load the `archiver` package:
 
-- `getSubTask(subtaskDbId)` -- Returns a single SubTask with all sections included, ordered by sectionNumber. Throws 404 if not found.
+```typescript
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const archiverFn = require('archiver');
+const archive = archiverFn('zip', { zlib: { level: 9 } });
+```
 
-- `updateSubTaskSection(subtaskDbId, sectionKey, editedContent)` -- Finds the `BaSubTaskSection` by `subtaskDbId + sectionKey`, sets `editedContent` and `isHumanModified = true`. Original `aiContent` is never modified.
+- Execution filter broadened to `{ status: { in: [APPROVED, AWAITING_REVIEW, COMPLETED] } }`.
 
-- `approveSubTask(subtaskDbId)` -- Sets `status = APPROVED` and `approvedAt = now()`.
+#### 7. `backend/src/ba-tool/dto/update-subtask-section.dto.ts` (New)
 
-- `getSprintSequence(moduleDbId)` -- Builds a dependency graph from SubTask prerequisites, then computes topological priority levels:
-  - **P0**: SubTasks with no prerequisites (or prerequisites that reference unknown IDs)
-  - **P1**: SubTasks depending only on P0
-  - **P2**: SubTasks depending on P0+P1
-  - **P3**: Everything else
+`class-validator` DTO: `@IsString() @IsNotEmpty() editedContent: string`. Rejects empty/malformed payloads at the controller boundary.
 
-  Returns `{ priorities: { P0: [...], P1: [...], P2: [...], P3: [...] }, dependencies: [{ from, to }], subtasks: [...with computedPriority] }`.
+#### 8. `backend/src/ba-tool/ba-subtask-schema.spec.ts` (New)
 
----
-
-### 5. `backend/src/ba-tool/ba-tool.controller.ts` (Modified)
-
-**Purpose:** Expose SubTask CRUD and Sprint Sequencing as REST endpoints.
-
-**New endpoints:**
-
-| Method | Route | Handler | Description |
-|--------|-------|---------|-------------|
-| GET | `/api/ba/modules/:id/subtasks` | `listSubTasks()` | List SubTasks for a module (header fields only) |
-| GET | `/api/ba/subtasks/:id` | `getSubTask()` | Full SubTask with all 24 sections |
-| PUT | `/api/ba/subtasks/:id/sections/:sectionKey` | `updateSubTaskSection()` | Edit a section (sets isHumanModified=true) |
-| POST | `/api/ba/subtasks/:id/approve` | `approveSubTask()` | Set status to APPROVED |
-| GET | `/api/ba/modules/:id/sprint-sequence` | `getSprintSequence()` | Dependency-ordered SubTask sequence |
-
----
-
-### 6. `backend/src/ba-tool/ba-export.service.ts` (Modified)
-
-**Purpose:** Add SubTask-specific export in markdown and JSON formats.
-
-**Key addition:**
-
-- `exportSubTasks(projectId, format)` -- Queries all SubTasks across all modules in a project (via the module relation), including sections ordered by sectionNumber. For `format=json`, returns a structured array with each SubTask's header fields and sections, using `editedContent` when `isHumanModified` is true, with an `isModified` flag per section. For `format=md`, renders each SubTask as a markdown document with a header table and `#### Section N` blocks, grouped by module with `---` separators. Human-modified sections are marked with `*(Modified)*` in the markdown output.
+Three schema-validation tests: `BaSubTask` model exposure, `BaSubTaskSection` model exposure, and `SubTaskStatus` enum values.
 
 ---
 
-### 7. `backend/src/ba-tool/dto/update-subtask-section.dto.ts` (New)
+### Frontend — Sprint v3 Originals
 
-**Purpose:** DTO for validating SubTask section edit requests.
+#### 9. `frontend/lib/ba-api.ts` (Modified)
 
-**How it works:** Uses `class-validator` decorators (`@IsString()`, `@IsNotEmpty()`) to validate the `editedContent` field. Ensures empty or non-string payloads are rejected at the controller level.
+Types: `BaSubTask`, `BaSubTaskSection`, `SprintSequence`. API functions: `listBaSubTasks`, `getBaSubTask`, `updateBaSubTaskSection`, `approveBaSubTask`, `getSprintSequence`. Helpers: `TEAM_COLORS`, `SKILL_LABELS`.
 
----
+#### 10. `frontend/components/ba-tool/SubTaskList.tsx` (New)
 
-### 8. `backend/src/ba-tool/ba-subtask-schema.spec.ts` (New)
+Clickable cards per SubTask: ID (monospace primary), team badge, truncated name, priority badge, effort, status badge. Empty state "Run SKILL-05 to generate SubTasks".
 
-**Purpose:** Schema validation tests confirming the Prisma models were generated correctly.
+#### 11. `frontend/components/ba-tool/SubTaskDetailView.tsx` (New)
 
-**Tests:**
-1. `BaSubTask` model is available on PrismaClient with `findMany`, `create`, `update`, `delete` methods
-2. `BaSubTaskSection` model is available with `findMany`, `create` methods
-3. `SubTaskStatus` enum has values `DRAFT`, `APPROVED`, `IMPLEMENTED`
+- Header card with traceability metadata, TBD-Future warning badges, Approve button (DRAFT only).
+- `SubTaskSectionPanel` per section: collapsible, edit/view toggle, amber border for Integration Points containing TBD-Future, monospace rendering for algorithm/traceability/project-structure sections, and a "View Original" toggle that shows immutable `aiContent` when a section has been edited.
 
----
+#### 12. `frontend/components/ba-tool/SprintSequenceView.tsx` (New)
 
-### 9. `frontend/lib/ba-api.ts` (Modified)
+Responsive 4-column grid for P0/P1/P2/P3 (labels: "Must Build First", "Core Logic", "API + Frontend", "Tests"). Nodes link to SubTask detail. Dependencies rendered as prerequisite badges on each node.
 
-**Purpose:** Add TypeScript types and API functions for SubTask operations.
+#### 13. `frontend/app/ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]/page.tsx` (New)
 
-**Key additions:**
-
-- `BaSubTask` interface -- 20+ typed fields matching the backend model, with optional `sections` array
-- `BaSubTaskSection` interface -- sectionNumber, sectionKey, sectionLabel, aiContent, editedContent, isHumanModified
-- `SprintSequence` interface -- priorities map (P0-P3 string arrays), dependencies array, subtasks with computedPriority
-
-**API functions:**
-- `listBaSubTasks(moduleDbId)` -- GET `/ba/modules/:id/subtasks`
-- `getBaSubTask(subtaskDbId)` -- GET `/ba/subtasks/:id`
-- `updateBaSubTaskSection(subtaskDbId, sectionKey, editedContent)` -- PUT `/ba/subtasks/:id/sections/:sectionKey`
-- `approveBaSubTask(subtaskDbId)` -- POST `/ba/subtasks/:id/approve`
-- `getSprintSequence(moduleDbId)` -- GET `/ba/modules/:id/sprint-sequence`
-
-**Helper constants:**
-- `TEAM_COLORS` -- color mappings for FE (blue), BE (purple), IN (orange), QA (green)
-- `SKILL_LABELS` -- human-readable labels for each skill name
+Next.js page: resolves params, fetches via `getBaSubTask`, delegates to `SubTaskDetailView`, with back navigation header and loading/error states.
 
 ---
 
-### 10. `frontend/components/ba-tool/SubTaskList.tsx` (New)
+### Frontend — Post-v3 Enhancements
 
-**Purpose:** Display a list of SubTasks for a module with summary cards.
+#### 14. `frontend/lib/frd-parser.ts` (Modified)
 
-**How it works:** Fetches SubTasks via `listBaSubTasks(moduleDbId)` on mount. Each SubTask renders as a clickable `Link` card showing: SubTask ID (monospace, primary-colored), team badge (FE/BE/IN/QA with color coding), name (truncated), priority badge, estimated effort, and status badge (DRAFT/APPROVED/IMPLEMENTED). Clicking navigates to the SubTask detail page. Shows an empty state with "Run SKILL-05 to generate SubTasks" message when no SubTasks exist.
+Three parsing improvements for FRD artifacts:
+
+- New feature-heading regex handles `#### **F-01-01: Name**` (bold-wrapped), `#### F-01-01: Name`, and `#### **F-01-01** — Name` variants.
+- `extractField()` rewritten as a robust line-by-line parser that strips leading `- * #` and `**…**`, then matches on a cleaned `label: value` pair:
+
+```typescript
+function extractField(block: string, labels: string[]): string {
+  const lines = block.split('\n');
+  const lowerLabels = labels.map((l) => l.toLowerCase());
+  for (const line of lines) {
+    const cleaned = line.replace(/^\s*[-*]*\s*/, '').replace(/\*{1,2}/g, '').trim();
+    const colonIdx = cleaned.indexOf(':');
+    if (colonIdx < 1) continue;
+    const lineLabel = cleaned.substring(0, colonIdx).trim().toLowerCase();
+    const lineValue = cleaned.substring(colonIdx + 1).trim();
+    if (!lineValue) continue;
+    for (const target of lowerLabels) {
+      if (lineLabel === target || lineLabel.includes(target) || target.includes(lineLabel)) return lineValue;
+    }
+  }
+  return '';
+}
+```
+
+- Field labels aligned to the actual FRD template: `Feature Description`, `Screen Reference`, `Business Rules`, `Integration Signals`, `Pre-conditions`, `Post-conditions`, `Acceptance Criteria`, etc.
+
+#### 15. `frontend/components/ba-tool/EpicArtifactView.tsx` (New)
+
+Structured EPIC view accepting an `activeSectionId` prop.
+
+- Uses `parseEpicContent` from `lib/epic-parser.ts` to get ordered `sections` and `internalSections`.
+- Renders a header card (EPIC ID, name, module, package) and each of the 12 structured sections via a collapsible `EpicSection`.
+- `sections` covers: FRD Feature IDs, Summary, Business Context (highlighted as "AUTOMATION CRITICAL"), Key Actors, High-Level Flow, Scope & Classes, Integration Domains, Acceptance Criteria, NFRs, Pre-requisites, Out of Scope, Risks & Challenges.
+- A collapsible "EPIC Internal Processing" group at the bottom holds skill-runtime steps (Step 1-7, Output Checklist) sorted numerically via `sortInternalSections`.
+- When `activeSectionId` changes, the matching panel scrolls into view, auto-expands, and gets a primary-colored ring:
+
+```tsx
+useEffect(() => {
+  if (!activeSectionId) return;
+  const isInternal = sortedInternalSections.some((s) => s.key === activeSectionId);
+  if (isInternal) setInternalExpanded(true);
+  const el = document.getElementById(`epic-sec-${activeSectionId}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}, [activeSectionId, sortedInternalSections]);
+```
+
+- Section bodies are rendered via `MarkdownRenderer` (not raw `<pre>`).
+
+#### 16. `frontend/components/ba-tool/UserStoryArtifactView.tsx` (New)
+
+Structured User Story view for 26 sections.
+
+- Story header with type badges (Frontend/Backend/Integration) and status badges (CONFIRMED/PARTIAL/DRAFT).
+- `STORY_SECTION_CONFIG` maps 27 known section keys (`1_user_story_id` … `27_subtasks`) into 5 categories:
+  - **header** — Story Identity (blue)
+  - **flow** — User Flows & Screens (green)
+  - **technical** — Technical Specification (purple)
+  - **integration** — Integrations (amber)
+  - **testing** — Testing & Traceability (emerald)
+- Each category renders as a bordered, color-tinted group with collapsible section panels; section bodies flow through `MarkdownRenderer`.
+
+#### 17. `frontend/components/ba-tool/MarkdownRenderer.tsx` (New)
+
+Lightweight markdown-to-JSX renderer (no external dependency). Replaces the raw `<pre>` blocks previously used across all artifact views.
+
+- Block types: `table`, `code`, `list` (ordered/unordered), `heading`, `paragraph`, `separator`, `empty`.
+- Parses pipe tables (`| header | --- | row |`) into real `<table>` elements with alternating row colors, borders, hover, and per-cell decoration:
+  - Status values (`CONFIRMED`, `PARTIAL`, `DRAFT`, etc.) rendered as color-coded badges
+  - Feature IDs (`F-XX-XX`, `US-XX`, `EPIC-XX`, `ST-XX`, `TBD-XX`, `BR-XX`, `TC-XX`) rendered monospace with primary color
+  - `TBD-Future` markers highlighted in amber
+- Fenced code blocks preserve language labels.
+- Inline formatting: `**bold**`, `*italic*`, `` `code` ``.
+- Consumed by `EpicArtifactView`, `UserStoryArtifactView`, `SubTaskDetailView`, and the FRD view — replacing raw markdown dumps with readable tables and structure.
+
+#### 18. `frontend/lib/epic-parser.ts` (New)
+
+Shared EPIC parsing library for cross-component consistency.
+
+- `parseEpicContent(sections)` → `{ header, sections, internalSections }`.
+- `EPIC_SECTION_ORDER` defines the 12 canonical EPIC sections with display labels and alternate label lookups (`FRD Feature IDs`, `Summary`, `Business Context`, `Key Actors`, `High-Level Flow`, `Scope`, `Integration Domains`, `Acceptance Criteria`, `NFRs`, `Pre-requisites`, `Out of Scope`, `Risks`).
+- `sortInternalSections()` sorts `Step N` entries numerically, then alphabetically — so Step 1, Step 2 … Step 7 precede "Output Checklist".
+- Used by both `ArtifactTree` (to build the TOC) and `EpicArtifactView` (to render content), guaranteeing the tree and the panel stay in sync.
+
+#### 19. `frontend/components/ba-tool/ArtifactTree.tsx` (Modified)
+
+TOC-style tree for artifacts.
+
+- EPIC nodes now expand into a structured sub-tree using `parseEpicContent`: top-level sections (Summary, Business Context, …) followed by an "Internal Processing" sub-group containing Step 1-7 + Output Checklist, sorted via `sortInternalSections`.
+- Clicking a TOC entry sets `activeSectionId` on the parent, which the content panel uses to scroll + ring-highlight.
+- EPIC tree nodes show `AlertTriangle` icons for TBD-Future-tainted sections and a "Critical" badge for Business Context.
+
+#### 20. `frontend/components/ba-tool/ArtifactContentPanel.tsx` (Modified)
+
+Routing layer from artifact type → view component.
+
+- EPIC artifacts → `<EpicArtifactView artifact={...} activeSectionId={activeTreeNode?.sectionId} />`.
+- User Story artifacts → `<UserStoryArtifactView artifact={...} activeStorySection={...} />`.
+- FRD artifacts → `<FrdArtifactView artifact={...} activeFeatureId={...} />` when a feature TOC entry is clicked.
+- SubTask artifacts → `<SubTaskDetailView>`.
+- Detects section vs. artifact-level clicks via the tree node payload.
+
+#### 21. `frontend/app/ba-tool/project/[id]/module/[moduleId]/page.tsx` (Modified)
+
+Module workspace UX fixes.
+
+- `statusToStep` mapping: `SCREENS_UPLOADED` now maps to **step 0** (not step 1) so users can keep adding descriptions until they explicitly advance:
+
+```typescript
+const statusToStep = {
+  DRAFT: 0,
+  SCREENS_UPLOADED: 0,   // stay on upload step — user still adding descriptions
+  // ...
+};
+```
+
+- Toolbar adds two new buttons shown when module status is `SUBTASKS_COMPLETE` or `APPROVED`:
+  - "SubTasks" → `setActiveStep(6)` → renders `<SubTaskList moduleDbId={mod.id} />`
+  - "Sprint Sequence" → `setActiveStep(7)` → renders `<SprintSequenceView moduleDbId={mod.id} projectId={projectId} />`
+- Clicking either clears `activeTreeNode` so the right-panel view switches cleanly.
 
 ---
-
-### 11. `frontend/components/ba-tool/SubTaskDetailView.tsx` (New)
-
-**Purpose:** Full SubTask detail view with header metadata, 24-section display, inline editing, and approval.
-
-**Key components:**
-
-- `SubTaskDetailView` -- Renders the SubTask header card with ID, team badge, status badge, priority badge, traceability fields (Story, EPIC, Feature, Module, Class, Method, File, Effort), TBD-Future warning badges, and an Approve button (visible only for DRAFT status). Iterates over sections rendering a `SubTaskSectionPanel` for each.
-
-- `SubTaskSectionPanel` -- Collapsible section panel with:
-  - Section number, label, AI/human icon indicator
-  - Amber border highlight for Integration Points sections containing TBD-Future references
-  - **Edit mode**: textarea pre-filled with current content (editedContent or aiContent), Save/Cancel buttons, calls `updateBaSubTaskSection()` on save
-  - **View mode**: content display with special rendering for algorithm (monospace), traceability header (monospace + muted background), and project structure (monospace + muted background) sections
-  - **View Original toggle**: when a section is human-modified, shows the original AI content in a blue-bordered panel
-
----
-
-### 12. `frontend/components/ba-tool/SprintSequenceView.tsx` (New)
-
-**Purpose:** Visual representation of SubTask execution order grouped by priority level.
-
-**How it works:** Fetches sprint sequence data via `getSprintSequence(moduleDbId)`. Renders a 4-column grid (responsive: 1 on mobile, 2 on medium, 4 on large screens) with columns for P0 ("Must Build First"), P1 ("Core Logic"), P2 ("API + Frontend"), and P3 ("Tests"). Each column has a colored background and border. SubTask nodes within each column show: index, SubTask ID (monospace), team badge, status badge, name (truncated), and prerequisite dependencies. Clicking a node navigates to the SubTask detail page.
-
----
-
-### 13. `frontend/app/ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]/page.tsx` (New)
-
-**Purpose:** Next.js page route for viewing a single SubTask's full detail.
-
-**How it works:** Extracts `projectId`, `moduleDbId`, and `subtaskDbId` from URL params via `useParams()`. Fetches SubTask data via `getBaSubTask(subtaskDbId)`. Renders a header bar with "Back to Module" navigation and the SubTask ID + name, then delegates to `SubTaskDetailView` for the full content. Handles loading and error states.
-
----
-
-### 14. `frontend/app/ba-tool/project/[id]/module/[moduleId]/page.tsx` (Modified)
-
-**Purpose:** Integrate SubTask list and Sprint Sequencing into the module workspace.
-
-**Key additions:**
-
-- Imports `SubTaskList` and `SprintSequenceView` components
-- Adds two new header buttons ("SubTasks" and "Sprint Sequence") visible when `moduleStatus` is `SUBTASKS_COMPLETE` or `APPROVED`, mapping to `activeStep` values 6 and 7
-- Renders `SubTaskList` at step 6 and `SprintSequenceView` at step 7 in the main content area
-- Imports `ListChecks` and `GitBranch` icons from lucide-react for the tab buttons
 
 ## Data Flow
 
 ```
-SKILL-05 AI execution completes
+User approves SKILL-05 execution
   |
   v
-runSkillAsync() stores raw output + creates BaArtifact (existing)
+BaSkillOrchestratorService.approveExecution()
+  |  Marks execution APPROVED
+  |  For SKILL-05, auto-promotes parent module to APPROVED
+  v
+(pipeline already ran on SKILL-05 completion:)
+  runSkillAsync() -> createArtifactFromOutput()  [existing]
+    |
+    v
+  subtaskParser.parseAndStore(humanDocument, moduleDbId, artifactId)
+    |  Split markdown by /^## (SubTask: )?ST-/m
+    |  parseHeader() -> BaSubTask row (skip duplicates)
+    |  parseSections() -> up to 24 BaSubTaskSection rows
+    v
+  extractTbdFromSubTasks(moduleDbId)
+    |  Section 15 (integration_points) scanned for `TBD-Future Ref: TBD-NNN`
+    |  New BaTbdFutureEntry rows created
+    v
+  extendRtmWithSubTasks(moduleDbId, projectId)
+       For each SubTask with featureId:
+         find BaRtmRow (projectId+moduleId+featureId)
+         append subtaskId/team/class/file/method + testCaseIds (Set-dedup)
+
+Frontend
   |
   v
-subtaskParser.parseAndStore(humanDocument, moduleDbId, artifactId)
-  |  Splits markdown by ## ST- headings
-  |  Extracts header fields (ID, name, type, story, epic, feature, etc.)
-  |  Parses 24 #### Section N blocks per SubTask
-  |  Creates BaSubTask + BaSubTaskSection records (skips duplicates)
+Module workspace polls status
+  |
   v
-extractTbdFromSubTasks(moduleDbId)
-  |  Reads Section 15 (integration_points) from each SubTask
-  |  Regex matches TBD-Future Ref: TBD-NNN patterns
-  |  Creates BaTbdFutureEntry records (skips existing)
+ArtifactTree loads artifacts
+  |  EPIC      -> parseEpicContent() -> TOC (12 sections + Internal Processing)
+  |  Story     -> 26 sections grouped into 5 categories
+  |  FRD       -> features parsed via extractFeatures() (new F-XX-XX regex)
+  |  SubTask   -> 24 sections from BaSubTaskSection rows
   v
-extendRtmWithSubTasks(moduleDbId, projectId)
-  |  For each SubTask with a featureId:
-  |    Finds matching BaRtmRow (projectId + moduleId + featureId)
-  |    Appends subtaskId, team, class, file, method, testCaseIds
-  |    Deduplicates testCaseIds via Set
-  |    Creates new RTM row if no match found
+User clicks a TOC entry -> activeTreeNode with sectionId
+  |
   v
-Module status updated to SUBTASKS_COMPLETE
+ArtifactContentPanel routes to {Epic|UserStory|Frd|SubTask}ArtifactView
+  |  Passes activeSectionId / activeFeatureId / activeStorySection
   v
-Frontend polls -> renders SubTask list / detail / sprint sequence
+Target view: scrolls target into view, auto-expands, ring-highlights
+  Body text rendered through MarkdownRenderer (tables, code, lists, badges)
 ```
 
 ## Test Coverage
 
-- **Schema validation tests** (`ba-subtask-schema.spec.ts`): 3 tests confirming `BaSubTask` model, `BaSubTaskSection` model, and `SubTaskStatus` enum are correctly generated by Prisma.
-- **Parser isolation**: `parseMarkdown()` is a pure function (no DB dependency) that can be unit-tested independently of the database.
-- **Frontend data-testid attributes**: `subtask-list`, `subtask-card-{id}`, `subtask-detail`, `subtask-detail-page`, `sprint-sequence` -- ready for E2E testing with Playwright.
+- **Schema tests** (`backend/src/ba-tool/ba-subtask-schema.spec.ts`): 3 passing tests — `BaSubTask` model availability, `BaSubTaskSection` model availability, `SubTaskStatus` enum values.
+- **Parser isolation**: `parseMarkdown()` is a pure function, trivially unit-testable without a DB; `parseEpicContent()` and `parseFrdContent()` are likewise pure.
+- **E2E hooks**: Frontend components expose `data-testid` attributes (`subtask-list`, `subtask-card-{id}`, `subtask-detail`, `subtask-detail-page`, `sprint-sequence`, `epic-artifact-view`) for future Playwright coverage.
+- **Still pending**: integration tests for the SKILL-05 pipeline (parser → TBD → RTM) end-to-end; unit tests for `MarkdownRenderer` table/code rendering; E2E flow for the TOC → scroll → ring-highlight interaction.
 
 ## Security Measures
 
-- **Input validation**: `UpdateSubTaskSectionDto` uses `class-validator` decorators (`@IsString()`, `@IsNotEmpty()`) to reject empty or malformed section edit payloads.
-- **404 handling**: All SubTask endpoints (`getSubTask`, `updateSubTaskSection`, `approveSubTask`) throw `NotFoundException` for invalid IDs, preventing information leakage.
-- **Pipeline failure isolation**: SKILL-05 post-processing (parsing, TBD extraction, RTM extension) is wrapped in try-catch. A parsing failure does not block the skill execution from completing -- the raw artifact is always preserved.
-- **Immutable AI content**: The `aiContent` field is never modified after creation. Human edits are stored separately in `editedContent`, preserving full audit trail.
-- **Duplicate prevention**: SubTask upsert logic checks the `moduleDbId_subtaskId` unique constraint before creating records. TBD extraction checks existing entries before creating duplicates.
+- **Input validation at the boundary**: `UpdateSubTaskSectionDto` uses `class-validator` (`@IsString()`, `@IsNotEmpty()`) to reject empty or malformed section edit payloads before the service layer sees them.
+- **404-first error handling**: `getSubTask`, `updateSubTaskSection`, `approveSubTask` all throw `NotFoundException` for invalid IDs — no information leakage about internal IDs.
+- **Pipeline failure isolation**: SKILL-05 post-processing is wrapped in a try/catch so a SubTask parse/TBD/RTM failure never corrupts or rolls back the already-completed execution and its raw artifact.
+- **Immutable AI content**: `aiContent` is written once and never mutated — human edits live in `editedContent` with an `isHumanModified` flag, giving a full audit trail.
+- **Duplicate prevention**: `@@unique([moduleDbId, subtaskId])` prevents duplicate SubTasks on re-run; the TBD extractor checks existing `registryId + moduleDbId` before insert; RTM extension deduplicates `testCaseIds` via `Set`.
+- **Markdown renderer sanitization**: The `MarkdownRenderer` builds JSX trees directly — no `dangerouslySetInnerHTML`. Inline formatting is tokenized; values flow into React children, preventing XSS from AI-produced markdown.
+- **CommonJS interop for archiver**: `require('archiver')` avoids the ESM default-export pitfall that produced a non-callable import under NestJS's ts-node config, preventing runtime crashes during ZIP export.
 
 ## Known Limitations
 
-1. **No SubTask diff between re-runs**: If SKILL-05 is re-run, existing SubTasks are skipped (not updated). There is no diff/merge capability for changed output.
-2. **No automated code generation**: SubTasks are the terminal output -- LLD/code-gen from SubTask JSON is deferred to v4+.
-3. **No sequence diagram rendering**: Section 21 (Sequence Diagram Inputs) is stored as text but not rendered visually.
-4. **Sprint Sequencing is computed, not persistent**: Priority levels are recalculated on each API call from the prerequisites graph. There is no stored sprint plan.
-5. **No real-time collaborative editing**: SubTask section editing is single-user. Concurrent edits would result in last-write-wins.
-6. **SubTask export is project-level only**: No per-module export endpoint exists (though the data is grouped by module in the output).
-7. **Error handling in frontend**: Some catch blocks in frontend components silently ignore errors or use `alert()` for failure notification rather than structured error UI.
+1. **No SubTask diff between re-runs** — unique-constraint skips existing SubTasks; no merge or change-detection on re-execution.
+2. **No automated code generation** — SubTask JSON is the terminal output; LLD/code-gen belongs to v4+.
+3. **Sequence Diagram Inputs not rendered visually** — Section 21 is stored as text only.
+4. **Sprint Sequencing is computed on every request** — no persistent sprint plan; changes to prerequisites instantly reshape priorities.
+5. **No real-time collaborative editing** — SubTask section editing is last-write-wins.
+6. **Per-module SubTask export missing** — only project-level export exists (though data is grouped by module in output).
+7. **Section numbering drift** — older SubTasks stored before the current `SECTION_MAP` use slightly different section keys; the UI renders them but section-key-aware features (inline edit routing) assume the current mapping.
+8. **Table parsing is regex-based** — `MarkdownRenderer` handles the common GFM-ish pipe table syntax but is not a full CommonMark parser; exotic markdown constructs (nested tables, HTML blocks, footnotes) degrade to paragraphs.
+9. **Frontend error UX is shallow** — some catch blocks use `alert()` or swallow errors rather than showing structured toasts.
+10. **Existing `SUBTASKS_COMPLETE` modules needed SQL migration** — a one-off migration was applied to promote previously-completed modules to `APPROVED`; this is not idempotent in automated deploys.
 
-## What's Next
+## What's Next (v4 candidates)
 
-Sprint v4+ candidates (from PRD Out of Scope):
-
-- **Automated code generation from SubTasks**: Use the JSON export as input to LLD/code-gen tooling
-- **Sequence diagram rendering**: Visualize Section 21 inputs as interactive diagrams
-- **SubTask diff between re-runs**: Show what changed when SKILL-05 is re-executed
-- **Automated test case generation**: Generate test scaffolds from Section 22 Test Case IDs
-- **Real-time collaborative editing**: WebSocket-based concurrent SubTask editing
-- **SubTask template customization**: Allow teams to define custom section schemas
-- **External tool integration**: Sync SubTasks with Jira, Azure DevOps, or other project management tools
+- **Streaming SKILL execution output** with live parse-as-you-go into SubTask rows
+- **Code generation from SubTask JSON** — wire the export to an LLD/codegen tool and produce Spring Boot / Next.js scaffolds
+- **Real-time collaborative SubTask editing** via WebSockets with OT/CRDT merge
+- **Mermaid rendering for Section 21** sequence diagrams
+- **SubTask diff and merge** between SKILL-05 re-runs
+- **Automated test-case scaffolding** from Section 22 Test Case IDs
+- **Jira / Azure DevOps sync** for SubTasks as work items
+- **Per-module export + download ZIP** combining RTM + TBD + SubTasks for handoff
+- **Full-fidelity markdown renderer** — replace the in-house `MarkdownRenderer` with `react-markdown` + `remark-gfm` once bundle size tradeoffs are acceptable
+- **Server-side content sanitization** for any future HTML-emitting artifacts
