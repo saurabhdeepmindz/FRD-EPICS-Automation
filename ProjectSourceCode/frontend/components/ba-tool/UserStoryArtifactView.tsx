@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { type BaArtifact } from '@/lib/ba-api';
 import { ChevronDown, ChevronUp, AlertTriangle, BookOpen, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface UserStoryArtifactViewProps {
   artifact: BaArtifact;
@@ -192,12 +193,8 @@ function StorySectionCard({
       </button>
       {expanded && (
         <div className="border-t border-border/30 px-3 py-2">
-          <div className={cn(
-            'text-sm whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto',
-            (isCode || isAlgorithm) ? 'font-mono text-xs bg-muted/20 rounded p-2' : '',
-            hasTbd ? 'text-amber-900' : '',
-          )}>
-            {content || <span className="text-muted-foreground italic">No content</span>}
+          <div className={cn('max-h-[400px] overflow-y-auto', hasTbd ? 'text-amber-900' : '')}>
+            {content ? <MarkdownRenderer content={content} /> : <span className="text-muted-foreground italic text-sm">No content</span>}
           </div>
         </div>
       )}

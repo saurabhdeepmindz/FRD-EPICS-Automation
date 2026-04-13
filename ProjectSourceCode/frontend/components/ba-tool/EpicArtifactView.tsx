@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { type BaArtifact } from '@/lib/ba-api';
 import { ChevronDown, ChevronUp, AlertTriangle, Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface EpicArtifactViewProps {
   artifact: BaArtifact;
@@ -156,10 +157,7 @@ function EpicSection({
       </button>
       {expanded && (
         <div className="border-t border-border/50 px-4 py-3">
-          <pre className={cn(
-            'text-sm whitespace-pre-wrap leading-relaxed',
-            mono ? 'font-mono text-xs bg-muted/30 rounded p-2' : 'font-sans',
-          )}>{content}</pre>
+          <MarkdownRenderer content={content} />
         </div>
       )}
     </div>

@@ -14,6 +14,7 @@ import {
   Sparkles, User, AlertTriangle, Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface SubTaskDetailViewProps {
   subtask: BaSubTask;
@@ -169,12 +170,10 @@ function SubTaskSectionPanel({
             </div>
           ) : (
             <div className="p-4">
-              <div className={cn(
-                'text-sm whitespace-pre-wrap leading-relaxed max-h-[400px] overflow-y-auto',
-                (isTraceability || isProjectStructure) ? 'font-mono text-xs bg-muted/30 rounded p-3' : '',
-                isAlgorithm ? 'font-mono text-xs' : '',
-              )}>
-                {displayContent || <span className="text-muted-foreground italic">No content</span>}
+              <div className={cn('max-h-[500px] overflow-y-auto')}>
+                {displayContent
+                  ? <MarkdownRenderer content={displayContent} plain={isTraceability || isProjectStructure} />
+                  : <span className="text-muted-foreground italic text-sm">No content</span>}
               </div>
               <div className="mt-3 pt-3 border-t border-border/50 flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
