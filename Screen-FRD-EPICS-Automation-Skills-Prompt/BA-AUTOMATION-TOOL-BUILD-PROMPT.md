@@ -313,6 +313,64 @@ model BaRtmRow {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }
+
+// ─── BA SubTask (structured output from SKILL-05) ─────────────────────
+
+enum SubTaskStatus {
+  DRAFT
+  APPROVED
+  IMPLEMENTED
+}
+
+model BaSubTask {
+  id               String        @id @default(uuid())
+  moduleDbId       String
+  module           BaModule      @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  artifactDbId     String?
+  artifact         BaArtifact?   @relation(fields: [artifactDbId], references: [id])
+  subtaskId        String        // e.g. ST-US001-BE-01
+  subtaskName      String
+  subtaskType      String?       // Code / Config / Test / Documentation / DevOps
+  team             String?       // FE / BE / IN / QA
+  userStoryId      String?       // e.g. US-001
+  epicId           String?       // e.g. EPIC-01
+  featureId        String?       // e.g. F-01-01
+  moduleId         String?       // e.g. MOD-01
+  packageName      String?
+  assignedTo       String?
+  estimatedEffort  String?       // e.g. "4 hours"
+  prerequisites    String[]      // SubTask IDs this depends on
+  status           SubTaskStatus @default(DRAFT)
+  priority         String?       // P0 / P1 / P2 / P3
+  tbdFutureRefs    String[]      // e.g. ["TBD-001"]
+  sourceFileName   String?
+  className        String?
+  methodName       String?
+  approvedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  sections         BaSubTaskSection[]
+
+  @@unique([moduleDbId, subtaskId])
+  @@index([moduleDbId])
+}
+
+model BaSubTaskSection {
+  id              String     @id @default(uuid())
+  subtaskDbId     String
+  subtask         BaSubTask  @relation(fields: [subtaskDbId], references: [id], onDelete: Cascade)
+  sectionNumber   Int        // 1-24 (see SECTION_MAP in subtask-parser.service.ts)
+  sectionKey      String     // e.g. "algorithm", "integration_points"
+  sectionLabel    String     // e.g. "Algorithm", "Integration Points"
+  aiContent       String     @db.Text   // original AI output — immutable
+  editedContent   String?    @db.Text   // human-edited version
+  isHumanModified Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([subtaskDbId, sectionNumber])
+}
 ```
 
 ---
@@ -359,6 +417,8 @@ This is the main working area for a single module. It contains:
 - Module ID badge, Module Name, Package Name
 - Status badge
 - "Back to Project" link
+- **SubTasks** and **Sprint Sequence** buttons (top-right, visible once any skill has output artifacts)
+  - Clicking either clears any active tree selection and routes to Step 6/7 view
 
 **The SkillStepper Component (central, full-width):**
 Shows 6 steps as a horizontal stepper (or vertical on small screens):
@@ -377,8 +437,56 @@ Each step has one of these states:
 - APPROVED (green) — human approved, locked, next step unlocked
 - FAILED (red) — execution failed, retry available
 
-**Below the stepper — Step Content Area:**
-Shows the UI for the currently active step.
+**CRITICAL auto-step behaviour:**
+When the module loads, an effect maps `moduleStatus` to the active step. `SCREENS_UPLOADED`
+must keep the active step at 0 (screen upload view) — the user should stay on Step 0 to
+continue adding descriptions/flows. Do NOT jump to step 1 on SCREENS_UPLOADED.
+
+```ts
+const statusToStep: Record<string, number> = {
+  DRAFT: 0,
+  SCREENS_UPLOADED: 0,       // stay on upload — user still adding descriptions
+  ANALYSIS_COMPLETE: 2,      // SKILL-00 done → ready for SKILL-01-S
+  FRD_COMPLETE: 3,
+  EPICS_COMPLETE: 4,
+  STORIES_COMPLETE: 5,
+  SUBTASKS_COMPLETE: 5,
+  APPROVED: 5,
+};
+```
+
+**Content area layout (tree + main panel):**
+
+Once any artifacts exist for the module, the content area splits into two columns:
+
+- **Left:** ArtifactTree — TOC with expandable skill → artifact → section nodes
+- **Right:** ArtifactContentPanel — renders the appropriate view based on selected tree node
+  - If no tree node selected, shows the SkillExecutionPanel for the active stepper step
+  - If a tree node is selected, shows that artifact/section in its structured view
+
+**Step 6 — SubTasks view:**
+Shows `<SubTaskList>` with one card per SubTask. Card shows team badge, priority,
+estimated effort, status, and links to the full SubTask detail page.
+
+**Step 7 — Sprint Sequencing view:**
+Shows `<SprintSequenceView>` — P0/P1/P2/P3 priority columns with dependency arrows.
+Data comes from `GET /api/ba/modules/:id/sprint-sequence`.
+
+**Active step handling when tree node is clicked:**
+Clicking a tree node sets `activeTreeNode` state, which the right panel reads.
+Clicking a stepper step clears `activeTreeNode` (returns to execution view).
+Clicking the SubTasks/Sprint Sequence buttons also clears `activeTreeNode`.
+
+---
+
+### Route 4: `/ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]` — SubTask Detail
+
+Dedicated full-page view for a single SubTask. Route navigated to by clicking
+a SubTask card in Step 6 list.
+
+Renders `<SubTaskDetailView>` which shows the header + all 24 sections as
+expandable panels with inline editing (`PUT /api/ba/subtasks/:id/sections/:sectionKey`)
+and "View Original" toggles for human-modified sections.
 
 ---
 
@@ -477,59 +585,137 @@ When a skill completes:
 
 ---
 
-### ArtifactViewer Component
+### Artifact Viewing Components (split by artifact type)
 
-Displays the output of a skill as a structured, editable form.
-NOT a markdown text editor — a proper form with labelled sections.
+The artifact viewer is NOT a single monolithic component. Each artifact type has its own
+specialised view component that parses the raw skill output into structured, editable cards.
 
-**General layout:**
-- Artifact header (Artifact ID, Type, Status badge)
-- Collapsible sections matching the skill's template sections
-- Each section has:
-  - Section label (bold)
-  - AI-generated badge (blue dot) if content was AI-generated
-  - Human-modified badge (amber dot) if content was edited
-  - Editable content (textarea or structured sub-fields)
-  - Section-level "Lock" toggle (locked sections can't be edited without unlocking)
+#### Architecture — Tree + Content Panel + Renderer
 
-**For FRD output specifically:**
-- Module header section (Module ID, Module Name, Package Name — editable fields)
-- Feature cards — one card per feature:
-  - Feature ID (read-only after first save — Feature IDs are permanent)
-  - Feature Name (editable)
-  - Feature Description (editable textarea)
-  - Priority dropdown (Must Have / Should Have / Could Have / Won't Have)
-  - Status badge (CONFIRMED / CONFIRMED-PARTIAL / DRAFT)
-  - Integration Signals section (collapsible) — shows each signal with its classification
-  - Business Rules section (collapsible) — listed rules with BR-IDs
-  - Validations section (collapsible)
-  - Screen Reference (read-only)
-- "Add Feature" button (adds new feature card — marked as human-added)
-- TBD-Future Integration Registry table at the bottom of the FRD view
+```text
+┌────────────────────────┬─────────────────────────────────────┐
+│  ArtifactTree (left)   │  ArtifactContentPanel (right)       │
+│  — TOC for every       │  — routes artifactType to view:     │
+│    artifact type       │    FRD  → FrdArtifactView           │
+│  — clicking a node     │    EPIC → EpicArtifactView          │
+│    sets activeSectionId│    UserStory → UserStoryArtifactView│
+│  — right panel scrolls │    SubTask → SubTaskDetailView      │
+│    + highlights target │    Screen Analysis → SectionCard[]  │
+└────────────────────────┴─────────────────────────────────────┘
+                                     │
+                                     ▼
+                        ┌──────────────────────────────┐
+                        │ MarkdownRenderer             │
+                        │ (shared utility — used by    │
+                        │  all four views)             │
+                        └──────────────────────────────┘
+```
 
-**For EPIC output:**
-- EPIC header fields (EPIC ID, EPIC Name, Module Reference, Package Name)
-- FRD Feature IDs section (read-only table — Feature IDs cannot be changed here)
-- Business Context (large editable textarea — marked AUTOMATION CRITICAL)
-- Integration Domains section — each domain card with status badge, assumed interface, TBD-Future ref
-- Scope section — including Classes This Module Will Produce sub-section
-- NFRs section — each category as a separate field
-- Acceptance Criteria — one entry per Feature ID
+#### MarkdownRenderer (`components/ba-tool/MarkdownRenderer.tsx`)
 
-**For User Stories:**
-- Story header (US-ID, EPIC-ID, Story Type badge, Status badge)
-- All 26 sections as collapsible cards
-- Algorithm Outline (Section 22) — numbered steps, each step editable individually
-- Integrations (Section 21) — each integration as a card with CONFIRMED/TBD-Future status
-- Traceability Header (Section 26) — read-only code block
+Shared utility that parses markdown and renders:
+- **Tables** — `| header | ... | --- | row |` becomes proper HTML `<table>` with
+  alternating row colours, borders, hover, status badges, ID highlighting
+- **Fenced code blocks** — `` ```lang `` becomes `<pre>` with language label and
+  monospace styling
+- **Lists** — ordered and unordered with proper indentation
+- **Inline formatting** — `**bold**`, `*italic*`, `` `code` ``
+- **ID highlighting** — `F-XX-XX`, `US-XX`, `EPIC-XX`, `ST-XX`, `TBD-XX`, `BR-XX`, `TC-XX`
+  rendered in monospace + primary colour badge
+- **Status pills** — `CONFIRMED` green, `CONFIRMED-PARTIAL` amber, `DRAFT` grey
+- **TBD-Future markers** highlighted amber inline
 
-**For SubTasks:**
-- SubTask header with Team badge [FE] [BE] [IN] [QA]
-- AUTOMATION CRITICAL sections highlighted with a distinct border colour
-- Algorithm steps — numbered list, each step editable
-- Integration Points — each point as a card, TBD-Future ones highlighted amber
-- Project Structure Definition (Section 20) — file path display
-- Sequence Diagram Inputs (Section 21) — structured participant and message list
+All four structured views use this renderer for section content. The raw `<pre>`
+fallback is reserved for Traceability Headers and Project Structure trees (which
+contain ASCII art that should not be reflowed).
+
+#### FrdArtifactView (`components/ba-tool/FrdArtifactView.tsx`)
+
+Uses `frd-parser.ts` to extract features from `feature_details` section.
+
+- Module header card (Module ID, Module Name, Package Name, feature count, TBD count)
+- **Feature cards** — one expandable card per F-XX-XX:
+  - Header: Feature ID pill + Feature Name + Priority badge (Must=red, Should=amber, Could=blue) + Status badge
+  - Expanded body: Description, Screen Reference, Trigger, Pre/Post-conditions,
+    Business Rules, Validations, Integration Signals (amber for TBD-Future), Acceptance Criteria
+  - Active feature gets primary ring when selected from tree
+- Collapsible sections for Business Rules, Validations, TBD-Future Registry
+
+The parser (`frd-parser.ts`) uses line-by-line label matching rather than brittle
+regexes — strips markdown formatting (`*`, `-`, `#`) from each line, splits on the
+first `:`, and does case-insensitive label matching.
+
+#### EpicArtifactView (`components/ba-tool/EpicArtifactView.tsx`)
+
+Uses shared `epic-parser.ts` (also consumed by ArtifactTree for TOC).
+
+**Content group (top):**
+- EPIC header card (EPIC ID, Name, Module, Package)
+- Structured sections in fixed logical order:
+  FRD Feature IDs → Summary → Business Context (AUTOMATION CRITICAL highlight) →
+  Key Actors → High-Level Flow → Scope & Classes → Integration Domains →
+  Acceptance Criteria → NFRs → Pre-requisites → Out of Scope → Risks
+- Each section rendered via MarkdownRenderer (so tables, code, lists format properly)
+
+**EPIC Internal Processing group (bottom, collapsed by default):**
+- All `Step 1..Step 7` sections sorted numerically, then Output Checklist
+- Labelled as "not part of the EPIC deliverable itself"
+- Distinguishes the skill's internal processing from the EPIC artifact content
+
+`activeSectionId` prop auto-scrolls the target section into view and applies a
+primary-coloured ring. If the active section is an internal step, the internal
+group auto-expands.
+
+#### UserStoryArtifactView (`components/ba-tool/UserStoryArtifactView.tsx`)
+
+All 26 sections grouped into 5 colour-coded category panels:
+
+| Category | Colour | Sections |
+|---|---|---|
+| Story Identity | blue | 1-6 (ID, Name, Goal, Module/FRD/EPIC refs) |
+| User Flows & Screens | green | 9-14 (Trigger, Actors, Primary/Alternate Flow, StateChart, Screen Ref) |
+| Technical Specification | purple | 15-20, 22-23, 25 (Class, API Contract, Algorithm, Validations, DB) |
+| Integrations | amber | 21 (with TBD-Future highlighting) |
+| Testing & Traceability | emerald | 24, 26-27 (Acceptance Criteria, Traceability, SubTasks) |
+
+Story header card shows Type badge (Frontend=blue, Backend=purple, Integration=orange),
+Status badge (CONFIRMED=green, PARTIAL=amber), and italic goal quote.
+
+#### SubTaskDetailView (`components/ba-tool/SubTaskDetailView.tsx`)
+
+Full SubTask with all 24 sections. Located at
+`/ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]`.
+
+- SubTask header: ID pill, team badge [FE/BE/IN/QA], status, priority, estimated effort
+- Traceability grid showing Story/EPIC/Feature/Module/Class/Method links
+- TBD-Future ref alert banner if applicable
+- Each of 24 sections as expandable panel
+- **Inline section editor** per section:
+  - Edit button reveals textarea with current content
+  - Save calls `PUT /api/ba/subtasks/:id/sections/:sectionKey`
+  - "Modified" badge after save (amber User icon)
+  - "View Original" toggle shows the pristine AI content in a blue-highlighted block
+  - Immutable `aiContent` is preserved separately from `editedContent`
+- Special rendering for Algorithm, Traceability Header, Project Structure (plain monospace preformatted)
+- All other content rendered via MarkdownRenderer
+
+#### ArtifactTree (`components/ba-tool/ArtifactTree.tsx`) — TOC
+
+3-level hierarchy:
+
+```text
+▼ Skill (Screen Analysis | FRD | EPIC | User Stories | SubTasks)  [Done]
+    ▼ Artifact (e.g. FRD-MOD-01, EPIC-MOD-01)  [badges: team, TBD]
+        Section (e.g. F-01-03, Summary, Business Context)
+        ─── INTERNAL PROCESSING ⚙ ───   (EPIC only, at bottom)
+        Step 1, Step 2, ... Step 7, Output Checklist
+```
+
+- FRD nodes show individual F-XX-XX features with priority + status badges
+- EPIC nodes use the shared `epic-parser.ts` to show structured sections + internal group
+- Clicking any node sets `activeNode` state; ArtifactContentPanel reads it and passes
+  `activeSectionId`/`activeFeatureId` to the matching view
+- TBD-Future warning icons, "Critical" badges, and team badges shown in the tree
 
 ---
 
@@ -650,6 +836,96 @@ Before marking a skill execution as allowing progression to the next skill:
 4. Check TBD-Future entries all have required 4 fields
 5. If any check fails: mark as FAILED with specific failure message
 6. BA sees the failure with actionable error messages
+
+### SKILL-05 Post-Processing Pipeline
+
+When `SKILL-05` completes (`runSkillAsync`), after the artifact record is created,
+run a three-stage post-processing pipeline wrapped in a try/catch so that a parsing
+failure does NOT block the skill from completing (raw artifact is always preserved):
+
+```ts
+if (skillName === 'SKILL-05') {
+  try {
+    // 1. Parse raw markdown into structured BaSubTask + BaSubTaskSection records
+    await this.subtaskParser.parseAndStore(humanDocument, moduleDbId, artifact.id);
+
+    // 2. Extract TBD-Future entries from Section 15 (Integration Points) of each SubTask
+    await this.extractTbdFromSubTasks(moduleDbId);
+
+    // 3. Extend existing BaRtmRow records with SubTask IDs, test case IDs,
+    //    class/method names, source file names
+    await this.extendRtmWithSubTasks(moduleDbId, projectId);
+  } catch (pipelineErr) {
+    // Pipeline failure isolation — raw artifact preserved, user sees partial data
+    this.logger.warn(`SKILL-05 post-processing partial failure: ${pipelineErr.message}`);
+  }
+}
+```
+
+**SubTaskParserService** (`subtask-parser.service.ts`):
+- Split raw markdown by `## ST-` headings (one chunk per SubTask)
+- Extract header from table/block (SubTask ID, User Story ID, EPIC ID, Feature ID, etc.)
+- Extract 24 sections by `#### Section N` heading regex
+- Map section numbers to stable keys (subtask_id, algorithm, integration_points,
+  error_handling, traceability_header, project_structure, end_to_end_flow, etc.)
+- QA SubTasks (ST-*-QA-*) may have reduced section counts
+- Upsert: skip if `moduleDbId + subtaskId` already exists
+
+**TBD extraction from SubTasks:**
+- For each parsed SubTask, read Section 15 (integration_points) content
+- Scan for patterns: `Status: TBD-Future`, `TBD-Future Ref: TBD-NNN`, `Called Class: X`, `Referenced Module: MOD-XX`
+- Deduplicate by `registryId + moduleDbId`
+- Create BaTbdFutureEntry records with classification (INTERNAL vs EXTERNAL) and stub guidance
+
+**RTM extension:**
+- Match each parsed SubTask to existing BaRtmRow by `projectId + moduleId + featureId`
+- Update: `subtaskId`, `subtaskTeam`, `primaryClass`, `methodName`, `sourceFile`,
+  `testCaseIds[]` (deduplicated), `tbdFutureRef`
+- If no matching RTM row exists, create one (SKILL-02-S should have created it —
+  log a warning if missing)
+
+### Sprint Sequencing API
+
+New endpoint `GET /api/ba/modules/:id/sprint-sequence` that computes a topological
+dependency graph from parsed SubTasks:
+
+1. Query all BaSubTask records for the module
+2. Build dependency edges from each SubTask's `prerequisites` array (each entry is
+   another SubTask ID in the same module)
+3. Compute priority levels by topological sort:
+   - P0: SubTasks with no prerequisites (or prerequisites outside this module)
+   - P1: SubTasks whose prerequisites are all P0
+   - P2: SubTasks whose prerequisites are all P0 + P1
+   - P3: Everything else
+4. Return `{ priorities: { P0, P1, P2, P3 }, dependencies: [{ from, to }], subtasks: [...] }`
+
+The frontend `SprintSequenceView` renders this as 4 priority columns with arrows
+showing dependency relationships.
+
+### SubTask CRUD Endpoints
+
+```
+GET    /api/ba/modules/:id/subtasks        — list header fields only
+GET    /api/ba/subtasks/:id                — full SubTask with all sections
+PUT    /api/ba/subtasks/:id/sections/:key  — edit a section (sets isHumanModified=true)
+POST   /api/ba/subtasks/:id/approve        — status → APPROVED, timestamp set
+```
+
+Section edits store into `BaSubTaskSection.editedContent` and flip
+`isHumanModified = true`. The original `aiContent` is never overwritten — this
+enables the "View Original" toggle in the UI and guarantees the immutable AI
+baseline for audit/diff purposes.
+
+### SubTask Export
+
+```
+GET /api/ba/projects/:id/export/subtasks?format=md|json
+```
+
+- Markdown format: reconstructs the SubTask template layout per SubTask, grouped
+  by module. Uses `editedContent` when available, else `aiContent`.
+- JSON format: array of structured SubTasks with sections array, each section
+  flagged with `isModified`. Suitable as input to downstream code-gen tools.
 
 ---
 
