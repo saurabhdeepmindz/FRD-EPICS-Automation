@@ -451,3 +451,112 @@ Target view: scrolls target into view, auto-expands, ring-highlights
 - **Per-module export + download ZIP** combining RTM + TBD + SubTasks for handoff
 - **Full-fidelity markdown renderer** — replace the in-house `MarkdownRenderer` with `react-markdown` + `remark-gfm` once bundle size tradeoffs are acceptable
 - **Server-side content sanitization** for any future HTML-emitting artifacts
+
+---
+
+## Build-Time vs Runtime Architecture
+
+A common confusion when onboarding to this codebase: there are TWO distinct sets of prompt / skill files that serve very different purposes. They live in different folders and are invoked at different lifecycle stages.
+
+### The two layers
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│  BUILD-TIME (one-time bootstrap — runs OUTSIDE the BA Tool)          │
+│  ──────────────────────────────────────────────────────────────────  │
+│  Screen-FRD-EPICS-Automation-Skills-Prompt/                          │
+│    └── BA-AUTOMATION-TOOL-BUILD-PROMPT.md                            │
+│                                                                      │
+│  → Fed to a coding AI (Claude Code, Cursor, etc.) ONCE to rebuild    │
+│    the entire BA Tool from scratch                                   │
+│  → Tells the AI what DB models, API routes, services, React          │
+│    components to create                                              │
+│  → NOT invoked at runtime — the running app never reads this file    │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  RUNTIME (read by the live BA Tool — every skill execution)          │
+│  ──────────────────────────────────────────────────────────────────  │
+│  Screen-FRD-EPICS-Automation-Skills/                                 │
+│    ├── FINAL-SKILL-00-screen-analysis.md                             │
+│    ├── FINAL-SKILL-01-S-create-frd-from-screens.md                   │
+│    ├── FINAL-SKILL-02-S-create-epics-from-screens.md                 │
+│    ├── FINAL-SKILL-04-create-user-stories-v2.md                      │
+│    ├── FINAL-SKILL-05-create-subtasks-v2.md                          │
+│    └── FINAL-SKILL-SET-ROUTING-GUIDE.md                              │
+│                                                                      │
+│  → Loaded by BaSkillOrchestratorService.loadSkillFile() at runtime   │
+│  → Sent to the Python AI service as the system prompt for each       │
+│    skill execution                                                   │
+│  → Edited ⇒ behaviour of future SKILL runs changes immediately       │
+│    (no redeploy needed)                                              │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### The lifecycle
+
+**Bootstrap (done once):**
+
+```text
+Developer opens Claude Code in empty repo
+ → Attaches BA-AUTOMATION-TOOL-BUILD-PROMPT.md
+ → Attaches the 6 FINAL-SKILL-*.md files (referenced by the build prompt)
+ → Prompts: "Read and implement phase by phase"
+ → AI generates:
+     - backend/prisma/schema.prisma
+     - backend/src/ba-tool/ (orchestrator, parser, controllers, services)
+     - frontend/app/ba-tool/* + frontend/components/ba-tool/*
+     - Copies the 6 FINAL-SKILL-*.md into Screen-FRD-EPICS-Automation-Skills/
+       so the runtime orchestrator can load them
+```
+
+**Runtime (every day, every skill click):**
+
+```text
+User clicks "Run SKILL-00" in the UI
+ → POST /api/ba/modules/:id/execute/SKILL-00
+ → BaSkillOrchestratorService.executeSkill('SKILL-00')
+     └─ loadSkillFile('SKILL-00')
+         └─ fs.readFileSync('Screen-FRD-EPICS-Automation-Skills/
+                              FINAL-SKILL-00-screen-analysis.md')
+     └─ assembleContext(moduleDbId, 'SKILL-00')
+     └─ POST to Python AI service:
+          {
+            systemPrompt: <contents of FINAL-SKILL-00 file>,
+            textContent: <assembled module context>,
+            images: <screen base64[]>
+          }
+     └─ OpenAI returns markdown + handoff JSON
+     └─ Stored in ba_skill_executions, parsed into ba_artifacts
+     └─ Frontend polls and displays in ArtifactTree
+```
+
+### Key implication — the skill files are hot-swappable
+
+Because the runtime skill files are read from disk on every execution (not bundled into the AI service Docker image, not cached), a BA can:
+
+1. Edit `FINAL-SKILL-05-create-subtasks-v2.md` — add a new Section 22 requirement, tighten the validation rules, add examples
+2. Save the file
+3. The next SKILL-05 execution picks up the new prompt — no backend restart required
+
+This is intentional. It lets BAs (not just developers) iterate on AI behaviour without touching code. If the skill file is moved into bundled assets or cached in memory for perf, the hot-swap property is lost.
+
+### Where the build prompt references the runtime skill files
+
+Inside `BA-AUTOMATION-TOOL-BUILD-PROMPT.md` under "Reference Skill Files":
+
+```text
+Reference Skill Files (Attached — Read All Before Building)
+├─ FINAL-SKILL-00-screen-analysis.md
+├─ FINAL-SKILL-01-S-create-frd-from-screens.md
+├─ FINAL-SKILL-02-S-create-epics-from-screens.md
+├─ FINAL-SKILL-04-create-user-stories-v2.md
+├─ FINAL-SKILL-05-create-subtasks-v2.md
+└─ FINAL-SKILL-SET-ROUTING-GUIDE.md
+```
+
+These are listed as INPUTS the coding AI must read during the build phase, and as FILES it must copy into the repository so the runtime orchestrator can load them. They are the bridge between the two layers.
+
+### Why no `/build-ba-tool` slash command exists
+
+A slash command like `/build-ba-tool` that invokes the build prompt was considered but not created. The build prompt is fed manually to a coding AI outside the BA Tool — it's a one-time operation that doesn't fit the slash-command pattern (which is designed for frequent user actions within a running app). If you do want one, the canonical location would be `.claude/commands/build-ba-tool.md` containing a tiny wrapper prompt: *"Read `BA-AUTOMATION-TOOL-BUILD-PROMPT.md` and the 6 FINAL-SKILL-\*.md files, then implement phase by phase."*
