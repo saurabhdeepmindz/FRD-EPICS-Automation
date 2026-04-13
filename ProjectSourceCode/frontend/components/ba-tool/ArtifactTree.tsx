@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useMemo } from 'react';
 import { SKILL_LABELS, type BaArtifact, type BaArtifactSection, type BaSkillExecution } from '@/lib/ba-api';
 import { parseFrdContent, type ParsedFeature } from '@/lib/frd-parser';
+import { parseEpicContent, type EpicSectionId } from '@/lib/epic-parser';
 import { ChevronRight, ChevronDown, FileText, Layers, BookOpen, ListChecks, Cog, Sparkles, User, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -31,6 +32,16 @@ interface ArtifactNode {
   statusBadge?: string;
   children: SectionNode[];
   features: FeatureNode[]; // parsed FRD features (only for FRD artifacts)
+  epicSections?: EpicSectionNode[]; // parsed EPIC sections (only for EPIC artifacts)
+  epicInternalSections?: EpicSectionNode[]; // internal processing (Step 1, Step 2, ...)
+}
+
+interface EpicSectionNode {
+  id: string; // section ID or internal key
+  label: string;
+  hasTbd: boolean;
+  highlight?: boolean;
+  isInternal?: boolean;
 }
 
 interface SectionNode {
@@ -87,6 +98,37 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         }));
       }
 
+      // Parse EPIC sections for TOC
+      let epicSections: EpicSectionNode[] | undefined;
+      let epicInternalSections: EpicSectionNode[] | undefined;
+      if (artifact.artifactType === 'EPIC') {
+        const parsedEpic = parseEpicContent(artifact.sections);
+        epicSections = parsedEpic.sections.map((s) => ({
+          id: s.id,
+          label: s.label,
+          hasTbd: s.content.includes('TBD-Future'),
+          highlight: s.highlight,
+        }));
+        // Sort internal sections by step number
+        const sortedInternal = [...parsedEpic.internalSections].sort((a, b) => {
+          const aStep = a.label.match(/^step\s*(\d+)/i);
+          const bStep = b.label.match(/^step\s*(\d+)/i);
+          if (aStep && bStep) return parseInt(aStep[1]) - parseInt(bStep[1]);
+          if (aStep) return -1;
+          if (bStep) return 1;
+          return a.label.localeCompare(b.label);
+        });
+        epicInternalSections = sortedInternal.map((s) => ({
+          id: s.key,
+          label: s.label,
+          hasTbd: s.content.includes('TBD-Future'),
+          isInternal: true,
+        }));
+      }
+
+      const showRawChildren =
+        artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC';
+
       return {
         artifact,
         label: formatArtifactLabel(artifact),
@@ -94,14 +136,16 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         teamBadge,
         statusBadge,
         features,
-        children: artifact.artifactType === 'FRD'
-          ? [] // FRD shows features instead of raw sections
-          : artifact.sections.map((section) => ({
+        epicSections,
+        epicInternalSections,
+        children: showRawChildren
+          ? artifact.sections.map((section) => ({
               section,
               label: section.sectionLabel,
               isAi: section.aiGenerated && !section.isHumanModified,
               isEdited: section.isHumanModified,
-            })),
+            }))
+          : [],
       };
     });
 
@@ -326,7 +370,75 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                         </div>
                       )}
 
-                      {/* ── Level 2: Sections (for non-FRD artifacts) ── */}
+                      {/* ── Level 2: EPIC Structured Sections (TOC) ── */}
+                      {isArtifactExpanded && artifactNode.epicSections && artifactNode.epicSections.length > 0 && (
+                        <div className="ml-5 border-l border-border/30">
+                          {artifactNode.epicSections.map((sec) => {
+                            const isActive = activeNode?.type === 'section'
+                              && activeNode.artifactId === artifactNode.artifact.id
+                              && activeNode.sectionId === sec.id;
+                            return (
+                              <button
+                                key={sec.id}
+                                onClick={() => onNodeSelect({
+                                  type: 'section',
+                                  artifactId: artifactNode.artifact.id,
+                                  sectionId: sec.id,
+                                })}
+                                className={cn(
+                                  'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                  isActive
+                                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                )}
+                              >
+                                <span className="truncate">{sec.label}</span>
+                                {sec.highlight && (
+                                  <span className="text-[7px] bg-primary/20 text-primary px-1 rounded shrink-0">Critical</span>
+                                )}
+                                {sec.hasTbd && (
+                                  <span title="TBD-Future"><AlertTriangle className="h-2.5 w-2.5 text-amber-500 shrink-0" /></span>
+                                )}
+                              </button>
+                            );
+                          })}
+
+                          {/* Internal Processing sub-group */}
+                          {artifactNode.epicInternalSections && artifactNode.epicInternalSections.length > 0 && (
+                            <div className="mt-1 pt-1 border-t border-border/30">
+                              <div className="flex items-center gap-1 pl-3 pr-2 py-1 text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+                                <Cog className="h-2.5 w-2.5" />
+                                Internal Processing
+                              </div>
+                              {artifactNode.epicInternalSections.map((sec) => {
+                                const isActive = activeNode?.type === 'section'
+                                  && activeNode.artifactId === artifactNode.artifact.id
+                                  && activeNode.sectionId === sec.id;
+                                return (
+                                  <button
+                                    key={sec.id}
+                                    onClick={() => onNodeSelect({
+                                      type: 'section',
+                                      artifactId: artifactNode.artifact.id,
+                                      sectionId: sec.id,
+                                    })}
+                                    className={cn(
+                                      'w-full flex items-center gap-1.5 pl-5 pr-2 py-1 text-left text-[10px] transition-colors',
+                                      isActive
+                                        ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                        : 'text-muted-foreground/70 hover:text-foreground hover:bg-muted/50',
+                                    )}
+                                  >
+                                    <span className="truncate">{sec.label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Level 2: Sections (for non-FRD, non-EPIC artifacts) ── */}
                       {isArtifactExpanded && artifactNode.children.length > 0 && (
                         <div className="ml-5 border-l border-border/30">
                           {artifactNode.children.map((sectionNode) => {

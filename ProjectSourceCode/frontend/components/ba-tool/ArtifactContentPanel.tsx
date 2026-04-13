@@ -111,6 +111,15 @@ export function ArtifactContentPanel({
       );
     }
 
+    // EPIC section click — route to EPIC view with active section
+    if (artifact?.artifactType === 'EPIC') {
+      return (
+        <div className="p-6 overflow-y-auto h-full">
+          <EpicArtifactView artifact={artifact} activeSectionId={activeNode.sectionId} />
+        </div>
+      );
+    }
+
     const section = artifact?.sections.find((s) => s.id === activeNode.sectionId);
     if (!section) return <EmptyState message="Section not found" />;
     return (
