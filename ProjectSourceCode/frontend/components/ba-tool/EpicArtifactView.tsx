@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { type BaArtifact } from '@/lib/ba-api';
-import { ChevronDown, ChevronUp, AlertTriangle, Layers } from 'lucide-react';
+import { ChevronDown, ChevronUp, AlertTriangle, Layers, Cog } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
@@ -91,8 +91,28 @@ function parseEpicContent(sections: { sectionKey: string; content: string }[]): 
   return { epic, otherSections };
 }
 
+/** Extract step number from a label like "Step 3: Write the EPIC" → 3, else null */
+function extractStepNumber(label: string): number | null {
+  const m = label.match(/^step\s*(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** Sort internal processing sections: numbered steps ascending, then non-step items (output checklist, etc.) */
+function sortInternalSections(sections: { label: string; content: string }[]): { label: string; content: string }[] {
+  return [...sections].sort((a, b) => {
+    const aStep = extractStepNumber(a.label);
+    const bStep = extractStepNumber(b.label);
+    if (aStep !== null && bStep !== null) return aStep - bStep;
+    if (aStep !== null) return -1;
+    if (bStep !== null) return 1;
+    return a.label.localeCompare(b.label);
+  });
+}
+
 export function EpicArtifactView({ artifact }: EpicArtifactViewProps) {
   const { epic, otherSections } = useMemo(() => parseEpicContent(artifact.sections), [artifact.sections]);
+  const sortedInternalSections = useMemo(() => sortInternalSections(otherSections), [otherSections]);
+  const [internalExpanded, setInternalExpanded] = useState(false);
 
   return (
     <div className="space-y-4" data-testid="epic-artifact-view">
@@ -109,13 +129,13 @@ export function EpicArtifactView({ artifact }: EpicArtifactViewProps) {
         </div>
       </div>
 
-      {/* Structured EPIC sections */}
-      {epic.featureIds && <EpicSection title="FRD Feature IDs" content={epic.featureIds} icon="features" />}
+      {/* ═══ EPIC Content (the actual deliverable) ═══ */}
+      {epic.featureIds && <EpicSection title="FRD Feature IDs" content={epic.featureIds} />}
       {epic.summary && <EpicSection title="Summary" content={epic.summary} />}
       {epic.businessContext && <EpicSection title="Business Context" content={epic.businessContext} highlight />}
       {epic.keyActors && <EpicSection title="Key Actors" content={epic.keyActors} />}
-      {epic.highLevelFlow && <EpicSection title="High-Level Flow" content={epic.highLevelFlow} mono />}
-      {epic.scope && <EpicSection title="Scope & Classes" content={epic.scope} mono />}
+      {epic.highLevelFlow && <EpicSection title="High-Level Flow" content={epic.highLevelFlow} />}
+      {epic.scope && <EpicSection title="Scope & Classes" content={epic.scope} />}
       {epic.integrationDomains && <EpicSection title="Integration Domains" content={epic.integrationDomains} />}
       {epic.acceptanceCriteria && <EpicSection title="Acceptance Criteria" content={epic.acceptanceCriteria} />}
       {epic.nfrs && <EpicSection title="Non-Functional Requirements" content={epic.nfrs} />}
@@ -123,18 +143,42 @@ export function EpicArtifactView({ artifact }: EpicArtifactViewProps) {
       {epic.outOfScope && <EpicSection title="Out of Scope" content={epic.outOfScope} />}
       {epic.risks && <EpicSection title="Risks & Challenges" content={epic.risks} />}
 
-      {/* Other sections */}
-      {otherSections.map((s, idx) => (
-        <EpicSection key={idx} title={s.label} content={s.content} defaultCollapsed />
-      ))}
+      {/* ═══ EPIC Internal Processing (skill process + validation steps) ═══ */}
+      {sortedInternalSections.length > 0 && (
+        <div className="rounded-lg border border-border bg-muted/20 overflow-hidden">
+          <button
+            onClick={() => setInternalExpanded((p) => !p)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/40 transition-colors text-left"
+          >
+            <div className="flex items-center gap-2">
+              <Cog className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold text-foreground">EPIC Internal Processing</span>
+              <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                {sortedInternalSections.length} steps
+              </span>
+            </div>
+            {internalExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          {internalExpanded && (
+            <div className="border-t border-border/50 p-3 space-y-2">
+              <p className="text-[11px] text-muted-foreground italic mb-2">
+                These are the skill&apos;s internal processing steps and validations, not part of the EPIC deliverable itself.
+              </p>
+              {sortedInternalSections.map((s, idx) => (
+                <EpicSection key={idx} title={s.label} content={s.content} defaultCollapsed />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 function EpicSection({
-  title, content, highlight, mono, icon, defaultCollapsed,
+  title, content, highlight, defaultCollapsed,
 }: {
-  title: string; content: string; highlight?: boolean; mono?: boolean; icon?: string; defaultCollapsed?: boolean;
+  title: string; content: string; highlight?: boolean; defaultCollapsed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const hasTbd = content.includes('TBD-Future');
