@@ -27,8 +27,31 @@ import { cn } from '@/lib/utils';
 import { FtcNarrativeCard } from '@/components/ba-tool/FtcNarrativeCard';
 import { MarkdownRenderer } from '@/components/ba-tool/MarkdownRenderer';
 
-const FRAMEWORK_CHOICES = ['Playwright', 'Cypress', 'Selenium', 'pytest', 'JUnit', 'TestNG', 'Manual'] as const;
+const FRAMEWORK_CHOICES: { code: string; label: string; domain: string }[] = [
+  { code: 'Playwright',    label: 'Playwright',    domain: 'UI / E2E' },
+  { code: 'Cypress',       label: 'Cypress',       domain: 'UI / E2E' },
+  { code: 'Selenium',      label: 'Selenium',      domain: 'UI / E2E' },
+  { code: 'pytest',        label: 'pytest',        domain: 'Backend / API' },
+  { code: 'JUnit',         label: 'JUnit',         domain: 'Backend (Java)' },
+  { code: 'TestNG',        label: 'TestNG',        domain: 'Backend (Java)' },
+  { code: 'REST-assured',  label: 'REST-assured',  domain: 'API contract' },
+  { code: 'Postman',       label: 'Postman',       domain: 'API contract' },
+  { code: 'k6',            label: 'k6',            domain: 'Performance' },
+  { code: 'JMeter',        label: 'JMeter',        domain: 'Performance' },
+  { code: 'Manual',        label: 'Manual',        domain: 'Human execution — no automation hints emitted' },
+];
 const COVERAGE_CHOICES = ['Smoke', 'Regression', 'Full'] as const;
+const TEST_TYPE_CHOICES: { code: string; label: string }[] = [
+  { code: 'Functional',    label: 'Functional' },
+  { code: 'Integration',   label: 'Integration' },
+  { code: 'UI',            label: 'UI' },
+  { code: 'Security',      label: 'Security' },
+  { code: 'Data',          label: 'Data' },
+  { code: 'Performance',   label: 'Performance' },
+  { code: 'Accessibility', label: 'Accessibility' },
+  { code: 'API',           label: 'API' },
+];
+const DEFAULT_TEST_TYPES = ['Functional', 'Integration', 'UI', 'Security'];
 const OWASP_WEB = [
   { code: 'A01', label: 'Broken Access Control' },
   { code: 'A02', label: 'Cryptographic Failures' },
@@ -87,7 +110,10 @@ export default function FtcWorkbenchPage() {
       setAllFtcs(all);
       setSelectedFtcId(f.artifact?.id ?? '');
       setForm(b.config ? ({
-        testingFramework: b.config.testingFramework,
+        testingFrameworks: b.config.testingFrameworks ?? [],
+        testTypes: (b.config.testTypes && b.config.testTypes.length > 0)
+          ? b.config.testTypes
+          : DEFAULT_TEST_TYPES,
         coverageTarget: b.config.coverageTarget,
         owaspWebEnabled: b.config.owaspWebEnabled,
         owaspLlmEnabled: b.config.owaspLlmEnabled,
@@ -97,6 +123,8 @@ export default function FtcWorkbenchPage() {
         ftcTemplateId: b.config.ftcTemplateId,
         customNotes: b.config.customNotes,
       }) : ({
+        testingFrameworks: ['Playwright'],
+        testTypes: DEFAULT_TEST_TYPES,
         owaspWebEnabled: true,
         owaspLlmEnabled: true,
         excludedOwaspWeb: [],
@@ -298,20 +326,43 @@ export default function FtcWorkbenchPage() {
         <Card>
           <CardContent className="p-4 space-y-4">
             <h3 className="text-sm font-semibold">Test Strategy</h3>
+
+            {/* Testing frameworks — multi-select */}
+            <div>
+              <label className="text-xs font-medium mb-1 block">
+                Testing frameworks <span className="text-muted-foreground font-normal">(pick one or more — the AI routes per-TC hints by category)</span>
+              </label>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                Leave all unchecked to let the AI pick defaults (Playwright for UI, pytest for backend).
+                Pick <strong>Manual</strong> alone to skip automation hints entirely.
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-1 text-[11px]">
+                {FRAMEWORK_CHOICES.map((f) => {
+                  const checked = (form.testingFrameworks ?? []).includes(f.code);
+                  return (
+                    <label key={f.code} className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setForm({
+                          ...form,
+                          testingFrameworks: toggleInList(form.testingFrameworks, f.code),
+                        })}
+                      />
+                      <span className="font-mono">{f.label}</span>
+                      <span className="text-muted-foreground truncate">— {f.domain}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Coverage depth — single select (unchanged) + Test types multi-select */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-medium mb-1 block">Testing framework</label>
-                <select
-                  value={form.testingFramework ?? ''}
-                  onChange={(e) => setForm({ ...form, testingFramework: e.target.value || null })}
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                >
-                  <option value="">(AI default — Playwright for web, pytest for backend)</option>
-                  {FRAMEWORK_CHOICES.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium mb-1 block">Coverage target</label>
+                <label className="text-xs font-medium mb-1 block">
+                  Coverage depth <span className="text-muted-foreground font-normal">(how exhaustive)</span>
+                </label>
                 <select
                   value={form.coverageTarget ?? ''}
                   onChange={(e) => setForm({ ...form, coverageTarget: e.target.value || null })}
@@ -320,8 +371,34 @@ export default function FtcWorkbenchPage() {
                   <option value="">(AI default — Regression)</option>
                   {COVERAGE_CHOICES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
+                <p className="text-[10px] text-muted-foreground mt-1">Smoke ⊂ Regression ⊂ Full. Regression + Smoke are depth, not type.</p>
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">
+                  Test types <span className="text-muted-foreground font-normal">(which categories to emit)</span>
+                </label>
+                <div className="grid grid-cols-2 gap-1 text-[11px]">
+                  {TEST_TYPE_CHOICES.map((t) => {
+                    const checked = (form.testTypes ?? []).includes(t.code);
+                    return (
+                      <label key={t.code} className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setForm({
+                            ...form,
+                            testTypes: toggleInList(form.testTypes, t.code),
+                          })}
+                        />
+                        <span>{t.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">Empty = emit all types.</p>
               </div>
             </div>
+
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="checkbox"

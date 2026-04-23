@@ -31,8 +31,9 @@ rtmRows                   [{ featureId, featureName, epicId, storyId, subtaskId,
 tbdFutureRegistry         [{ registryId, integrationName, classification, ... }]
 
 ftcConfig {
-  testingFramework     "Playwright" | "Cypress" | "Selenium" | "pytest" | "JUnit" | "TestNG" | "Manual" | null
-  coverageTarget       "Smoke" | "Regression" | "Full" | null
+  testingFrameworks    string[]         // multi-select. e.g. ["Playwright", "pytest", "k6"]. Empty = AI picks defaults.
+  testTypes            string[]         // multi-select. e.g. ["Functional", "Integration", "UI", "Security"]. Empty = emit ALL types.
+  coverageTarget       "Smoke" | "Regression" | "Full" | null   // depth (not type)
   owaspWebEnabled      boolean
   owaspLlmEnabled      boolean
   excludedOwaspWeb     string[]         // e.g. ["A10"]
@@ -209,8 +210,37 @@ Sub-section blocks (each `### Heading` followed by content):
 - **Post Validation** — cross-cutting checks beyond the UI: emails received, DB rows written, audit entries, API responses, background jobs triggered. Distinct from `Expected` — these are the *consequences* of the test, not what the user sees immediately.
 - **Supporting Documents** — list of supplementary evidence names.
 - **SQL Setup / SQL Verify** — dialect from `projectMeta.sqlDialect`. Keep idiomatic; avoid proprietary extensions unless the dialect requires them. Skip for pure-UI validation tests.
-- **Playwright Hint** — 5–15 lines of realistic code. Skip for pure backend / SQL-only TCs.
+- **Playwright Hint** — 5–15 lines of realistic code. Skip for pure backend / SQL-only TCs. See framework routing below for multi-framework projects.
 - **Developer Hints** — 1–3 sentences for the future v5.1 TDD codegen skill. Skip for pure end-to-end UI cases.
+
+### Framework routing (multi-select)
+
+`ftcConfig.testingFrameworks[]` may contain several entries. Route per-TC hint blocks to the framework(s) that match the TC's `category`:
+
+| TC `category` | Eligible frameworks (first match wins) |
+|---|---|
+| `UI` | Playwright → Cypress → Selenium |
+| `Functional` (backend) | pytest → JUnit → TestNG |
+| `Integration` | REST-assured → Postman → pytest (requests) |
+| `Performance` | k6 → JMeter |
+| `Security` | use whatever the TC's category-of-origin maps to above |
+| `Accessibility`, `Data`, `API` | use the same mapping as their closest primary category (UI for Accessibility, Functional for Data, Integration for API) |
+
+Rules:
+
+- If `testingFrameworks` is empty, fall back to defaults: Playwright for UI/accessibility, pytest for Functional/Data/API, REST-assured for Integration, k6 for Performance.
+- If multiple eligible frameworks are selected for a TC's category, emit a **single** primary hint block (first match), and mention the alternatives in one line at the end of the hint: `// Also executable in: Cypress, Selenium`.
+- When `Manual` is the only selection, SKIP the Playwright Hint block entirely for every TC — output pure manual-execution steps.
+- Header sub-section name stays `### Playwright Hint` when the chosen framework is Playwright. For other frameworks use `### pytest Hint`, `### JUnit Hint`, `### k6 Script`, etc. — the backend parser stores whichever comes first under `playwrightHint` (the field is framework-agnostic despite the legacy name).
+
+### Test types filter
+
+`ftcConfig.testTypes[]` (e.g. `["Functional", "Integration", "UI", "Security"]`) filters which TC categories you emit.
+
+- If `testTypes` is empty, emit ALL categories (pre-multi-select behaviour).
+- If non-empty, generate TCs ONLY for the listed categories. Do NOT fabricate a TC for a category not in the list.
+- OWASP Security TCs follow `testTypes` filtering too: if `Security` is not selected, do not emit OWASP-tagged TCs even if the category is enabled on the module (list them under §9/§10 matrices as "Excluded by test-types filter").
+- Log any categories excluded by this filter under §15 Applied Best-Practice Defaults so reviewers understand what was skipped and why.
 
 ## 6. OWASP Coverage Rules
 

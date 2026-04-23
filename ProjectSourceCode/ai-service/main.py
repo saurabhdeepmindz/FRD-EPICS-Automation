@@ -604,7 +604,11 @@ class FtcGapCheckRequest(BaseModel):
     narrative: str = Field(..., max_length=20000)
     attachmentText: str = Field(default="", max_length=40000)
     useAsAdditional: bool = Field(default=True)
-    testingFramework: str | None = Field(default=None)
+    # v4.3: multi-select; architects may pick several frameworks and several
+    # test types. Either list may be empty, in which case the AI falls back
+    # to sensible defaults (Playwright for web, pytest for backend; all types).
+    testingFrameworks: list[str] = Field(default_factory=list)
+    testTypes: list[str] = Field(default_factory=list)
     coverageTarget: str | None = Field(default=None)
     owaspWebEnabled: bool = Field(default=True)
     owaspLlmEnabled: bool = Field(default=True)
@@ -688,10 +692,13 @@ async def ba_ftc_gap_check(
         hasLld=body.hasLld,
     )
     mode = "additional-context" if body.useAsAdditional else "narrative-first"
+    frameworks = ", ".join(body.testingFrameworks) if body.testingFrameworks else "(not selected — will default to Playwright for web, pytest for backend)"
+    types = ", ".join(body.testTypes) if body.testTypes else "(not selected — will produce all types: Functional, Integration, UI, Security, Data, Performance, Accessibility, API)"
     user_parts = [
         f"Mode: {mode}",
-        f"Testing framework: {body.testingFramework or '(not selected — will default to Playwright for web, pytest for backend)'}",
-        f"Coverage target: {body.coverageTarget or '(not selected — will default to Regression)'}",
+        f"Testing frameworks: {frameworks}",
+        f"Test types to generate: {types}",
+        f"Coverage target (depth): {body.coverageTarget or '(not selected — will default to Regression)'}",
         f"Module / stack context:\n{body.moduleContext}",
         f"Tester/architect narrative:\n{body.narrative}",
     ]

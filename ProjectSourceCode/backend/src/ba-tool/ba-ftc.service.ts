@@ -2,7 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface FtcConfigPayload {
-  testingFramework?: string | null;
+  /** Multi-select since v4.3. See `testingFramework` for the legacy singular shape. */
+  testingFrameworks?: string[] | null;
+  /** Multi-select since v4.3 — filters which TC categories the skill emits. */
+  testTypes?: string[] | null;
   coverageTarget?: string | null;
   owaspWebEnabled?: boolean | null;
   owaspLlmEnabled?: boolean | null;
@@ -34,7 +37,8 @@ export class BaFtcService {
   async saveConfig(moduleDbId: string, payload: FtcConfigPayload) {
     const existing = await this.prisma.baFtcConfig.findUnique({ where: { moduleDbId } });
     const data: Record<string, unknown> = {
-      testingFramework: payload.testingFramework ?? null,
+      testingFrameworks: payload.testingFrameworks ?? [],
+      testTypes: payload.testTypes ?? [],
       coverageTarget: payload.coverageTarget ?? null,
       excludedOwaspWeb: payload.excludedOwaspWeb ?? [],
       excludedOwaspLlm: payload.excludedOwaspLlm ?? [],

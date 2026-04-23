@@ -685,7 +685,8 @@ export class BaSkillOrchestratorService {
       tbdFutureRegistry: tbdEntries.filter((e) => !e.isResolved),
       lldContext,
       ftcConfig: {
-        testingFramework: ftcConfig?.testingFramework ?? null,
+        testingFrameworks: ftcConfig?.testingFrameworks ?? [],
+        testTypes: ftcConfig?.testTypes ?? [],
         coverageTarget: ftcConfig?.coverageTarget ?? null,
         owaspWebEnabled: ftcConfig?.owaspWebEnabled ?? true,
         owaspLlmEnabled: ftcConfig?.owaspLlmEnabled ?? true,
@@ -917,13 +918,16 @@ export class BaSkillOrchestratorService {
 
   /**
    * Derive a short suffix for the FTC artifactId from the saved BaFtcConfig.
-   * Priority: testing framework > "default". When narrative is set, append
-   * `-narrative` to the suffix.
+   * testingFrameworks is multi-select; we pick the FIRST framework for the
+   * artifactId suffix (keeps it stable + short). The full framework list
+   * appears inside the document's Test Strategy section.
+   * When narrative is set, append `-narrative` to the suffix.
    */
   private async deriveFtcSuffix(moduleDbId: string): Promise<string> {
     const config = await this.prisma.baFtcConfig.findUnique({ where: { moduleDbId } });
     if (!config) return 'default';
-    const raw = (config.testingFramework ?? 'default').toLowerCase();
+    const firstFw = (config.testingFrameworks ?? [])[0] ?? 'default';
+    const raw = firstFw.toLowerCase();
     const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '');
     let base = cleaned || 'default';
     if (config.narrative && config.narrative.trim()) base = `${base}-narrative`;

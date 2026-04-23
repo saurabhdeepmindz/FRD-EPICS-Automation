@@ -599,9 +599,15 @@ model BaFtcConfig {
   id                   String    @id @default(uuid())
   moduleDbId           String    @unique
   module               BaModule  @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
-  // Test framework + coverage scope
-  testingFramework     String?   // Playwright | Cypress | Selenium | pytest | JUnit | TestNG | Manual
+  // Test framework — multi-select. Architect can pick several and the skill
+  // routes per-TC hints by category (UI→Playwright/Cypress, backend→pytest/JUnit,
+  // perf→k6/JMeter, integration→REST-assured/Postman, etc.).
+  testingFrameworks    String[]  @default([])
+  // Coverage depth — single value. Smoke ⊂ Regression ⊂ Full.
   coverageTarget       String?   // Smoke | Regression | Full
+  // Test types — multi-select. Filters which TC categories the skill emits.
+  // Empty array = fall back to "all types" (matches pre-multiselect behaviour).
+  testTypes            String[]  @default([])
   // OWASP preferences (MVP: Web Top 10 + LLM Top 10)
   owaspWebEnabled      Boolean   @default(true)
   owaspLlmEnabled      Boolean   @default(true)

@@ -1046,7 +1046,10 @@ export async function savePseudoFile(id: string, editedContent: string): Promise
 export interface BaFtcConfig {
   id: string;
   moduleDbId: string;
-  testingFramework: string | null;
+  /** Multi-select since v4.3. */
+  testingFrameworks: string[];
+  /** Multi-select since v4.3 — filters which TC categories the skill emits. */
+  testTypes: string[];
   coverageTarget: string | null;
   owaspWebEnabled: boolean;
   owaspLlmEnabled: boolean;

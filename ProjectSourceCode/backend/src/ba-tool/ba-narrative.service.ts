@@ -324,8 +324,14 @@ export class BaNarrativeService {
       config.cachingId ? `Caching: ${config.cachingId}` : null,
       config.storageId ? `Storage: ${config.storageId}` : null,
       config.cloudId ? `Cloud: ${config.cloudId}` : null,
-      // FTC-specific fields (absent on LLD configs)
-      config.testingFramework ? `Testing framework: ${config.testingFramework}` : null,
+      // FTC-specific fields (absent on LLD configs). testingFrameworks is an
+      // array since v4.3; we emit a single comma-separated line.
+      Array.isArray(config.testingFrameworks) && (config.testingFrameworks as unknown[]).length > 0
+        ? `Testing frameworks: ${(config.testingFrameworks as string[]).join(', ')}`
+        : null,
+      Array.isArray(config.testTypes) && (config.testTypes as unknown[]).length > 0
+        ? `Test types: ${(config.testTypes as string[]).join(', ')}`
+        : null,
       config.coverageTarget ? `Coverage target: ${config.coverageTarget}` : null,
     ].filter(Boolean);
     return bits.join('\n');
