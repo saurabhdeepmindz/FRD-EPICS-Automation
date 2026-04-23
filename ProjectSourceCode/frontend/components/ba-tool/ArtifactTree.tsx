@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { SKILL_LABELS, listPseudoFilesByArtifact, type BaArtifact, type BaArtifactSection, type BaPseudoFile, type BaSkillExecution } from '@/lib/ba-api';
+import { SKILL_LABELS, listPseudoFilesByArtifact, listTestCasesByArtifact, type BaArtifact, type BaArtifactSection, type BaPseudoFile, type BaSkillExecution, type BaTestCase } from '@/lib/ba-api';
 import { parseFrdContent, type ParsedFeature } from '@/lib/frd-parser';
 import { parseEpicContent, type EpicSectionId } from '@/lib/epic-parser';
 import { ChevronRight, ChevronDown, FileText, Layers, BookOpen, ListChecks, Cog, Sparkles, User, AlertTriangle, Compass } from 'lucide-react';
@@ -237,8 +237,11 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
   });
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [expandedPseudo, setExpandedPseudo] = useState<Record<string, boolean>>({});
-  // Pseudo files per LLD artifact — fetched asynchronously once per artifact.
+  const [expandedCategory, setExpandedCategory] = useState<Record<string, boolean>>({});
+  // Pseudo files per LLD artifact + test cases per FTC artifact — fetched
+  // asynchronously once per artifact on first mount.
   const [pseudoFilesByArtifact, setPseudoFilesByArtifact] = useState<Record<string, BaPseudoFile[]>>({});
+  const [testCasesByArtifact, setTestCasesByArtifact] = useState<Record<string, BaTestCase[]>>({});
 
   // Fetch pseudo files for every LLD artifact so they can appear as tree children.
   useEffect(() => {
@@ -253,6 +256,28 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
           setPseudoFilesByArtifact((prev) => ({ ...prev, [a.id]: files }));
         } catch {
           // swallow — tree just won't show pseudo file children for that LLD
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifacts.map((a) => `${a.id}:${a.artifactType}`).join('|')]);
+
+  // Fetch test cases for every FTC artifact so they can appear as tree children,
+  // grouped by category (Functional / Integration / Security / UI / Data /
+  // Performance / Accessibility / API) plus a synthetic White-Box bucket.
+  useEffect(() => {
+    let cancelled = false;
+    const ftcArtifacts = artifacts.filter((a) => a.artifactType === 'FTC');
+    (async () => {
+      for (const a of ftcArtifacts) {
+        if (testCasesByArtifact[a.id]) continue;
+        try {
+          const tcs = await listTestCasesByArtifact(a.id);
+          if (cancelled) return;
+          setTestCasesByArtifact((prev) => ({ ...prev, [a.id]: tcs }));
+        } catch {
+          // swallow
         }
       }
     })();
@@ -596,6 +621,112 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                 )}
                               </>
                             );
+                          })()}
+                          {/* Synthetic Test-Case category groups for FTC artifacts.
+                              Test cases live in a separate table — loaded
+                              asynchronously into testCasesByArtifact and
+                              grouped into 8 canonical categories + a
+                              White-Box bucket. Empty buckets are hidden. */}
+                          {artifactNode.artifact.artifactType === 'FTC' && (() => {
+                            const artifactDbId = artifactNode.artifact.id;
+                            const tcs = testCasesByArtifact[artifactDbId] ?? [];
+                            if (tcs.length === 0) return null;
+
+                            const CATEGORY_ORDER = [
+                              'Functional', 'Integration', 'Security',
+                              'UI', 'Data', 'Performance', 'Accessibility', 'API',
+                            ];
+                            const buckets = new Map<string, BaTestCase[]>();
+                            const whiteBox: BaTestCase[] = [];
+                            for (const tc of tcs) {
+                              if (tc.scope === 'white_box') {
+                                whiteBox.push(tc);
+                                continue;
+                              }
+                              const cat = tc.category && CATEGORY_ORDER.includes(tc.category) ? tc.category : 'Functional';
+                              if (!buckets.has(cat)) buckets.set(cat, []);
+                              buckets.get(cat)!.push(tc);
+                            }
+                            const orderedGroups: Array<{ key: string; label: string; tcs: BaTestCase[] }> = [];
+                            for (const cat of CATEGORY_ORDER) {
+                              const bucket = buckets.get(cat);
+                              if (bucket && bucket.length > 0) {
+                                orderedGroups.push({ key: cat, label: cat, tcs: bucket });
+                              }
+                            }
+                            if (whiteBox.length > 0) {
+                              orderedGroups.push({ key: 'white_box', label: 'White-Box', tcs: whiteBox });
+                            }
+
+                            return orderedGroups.map((group, gIdx) => {
+                              const groupNum = `${artifactNum}.${artifactNode.children.length + gIdx + 1}`;
+                              const categoryKey = `${artifactDbId}:${group.key}`;
+                              const isAnyTcInGroupActive = activeNode?.type === 'section'
+                                && activeNode.artifactId === artifactDbId
+                                && activeNode.sectionId?.startsWith('__test_case__')
+                                && group.tcs.some((t) => activeNode.sectionId === `__test_case__:${t.id}`);
+                              const isExpanded = expandedCategory[categoryKey] ?? isAnyTcInGroupActive;
+                              return (
+                                <div key={categoryKey}>
+                                  <div className="flex items-center">
+                                    <button
+                                      onClick={() => setExpandedCategory((p) => ({ ...p, [categoryKey]: !(p[categoryKey] ?? isAnyTcInGroupActive) }))}
+                                      className="pl-2 pr-0 py-1 text-muted-foreground hover:text-foreground"
+                                    >
+                                      {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                    </button>
+                                    <div
+                                      className="flex-1 flex items-center gap-1.5 pl-1 pr-2 py-1 text-left text-[11px] text-muted-foreground"
+                                    >
+                                      <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{groupNum}</span>
+                                      <span className="truncate">{group.label} Test Cases</span>
+                                      <ListChecks className="h-2.5 w-2.5 text-muted-foreground/60 shrink-0" />
+                                      <span className="ml-auto text-[9px] text-muted-foreground/50 shrink-0">{group.tcs.length}</span>
+                                    </div>
+                                  </div>
+                                  {isExpanded && (
+                                    <div className="ml-5 border-l border-border/30">
+                                      {group.tcs.map((tc, tcIdx) => {
+                                        const tcNum = `${groupNum}.${tcIdx + 1}`;
+                                        const isTcActive = activeNode?.type === 'section'
+                                          && activeNode.artifactId === artifactDbId
+                                          && activeNode.sectionId === `__test_case__:${tc.id}`;
+                                        return (
+                                          <button
+                                            key={tc.id}
+                                            onClick={() => onNodeSelect({ type: 'section', artifactId: artifactDbId, sectionId: `__test_case__:${tc.id}` })}
+                                            className={cn(
+                                              'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                              isTcActive
+                                                ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                            )}
+                                            title={tc.title}
+                                          >
+                                            <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{tcNum}</span>
+                                            <span className="font-mono shrink-0 text-primary text-[10px]">{tc.testCaseId}</span>
+                                            <span className="truncate">{tc.title}</span>
+                                            {/* testKind micro-pill */}
+                                            {tc.testKind === 'negative' && (
+                                              <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-bold shrink-0">NEG</span>
+                                            )}
+                                            {tc.isIntegrationTest && (
+                                              <span className="text-[8px] bg-orange-100 text-orange-700 px-1 rounded font-bold shrink-0">INT</span>
+                                            )}
+                                            {tc.owaspCategory && (
+                                              <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-mono shrink-0">{tc.owaspCategory}</span>
+                                            )}
+                                            {tc.isHumanModified && (
+                                              <User className="h-2.5 w-2.5 text-amber-500 shrink-0" />
+                                            )}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            });
                           })()}
                         </div>
                       )}

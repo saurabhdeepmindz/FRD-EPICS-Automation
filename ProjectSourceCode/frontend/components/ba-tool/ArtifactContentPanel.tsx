@@ -21,6 +21,7 @@ import type { TreeNodeId } from './ArtifactTree';
 import { FrdArtifactView } from './FrdArtifactView';
 import { EpicArtifactView } from './EpicArtifactView';
 import { UserStoryArtifactView } from './UserStoryArtifactView';
+import { FtcArtifactView } from './FtcArtifactView';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MicButton } from '@/components/forms/MicButton';
 import { AISuggestButton } from '@/components/forms/AISuggestButton';
@@ -173,6 +174,21 @@ export function ArtifactContentPanel({
       );
     }
 
+    // FTC artifacts get a structured per-test-case view (no raw-markdown dump).
+    if (artifact.artifactType === 'FTC') {
+      return (
+        <div className="p-6 space-y-4 overflow-y-auto h-full pb-32">
+          <ArtifactToolbar artifact={artifact} />
+          <ArtifactHeader artifact={artifact} />
+          <FtcArtifactView
+            artifact={artifact}
+            moduleDbId={artifact.module?.id ?? ''}
+            onUpdated={onSectionUpdated}
+          />
+        </div>
+      );
+    }
+
     // All other artifacts use generic section cards. LLD artifacts also get
     // a pseudo-code-files appendix with numbered sub-sections + downloads.
     const bottomPad = artifact.artifactType === 'LLD' ? 'pb-32' : 'pb-6';
@@ -193,6 +209,25 @@ export function ArtifactContentPanel({
   // Section-level — show single section focused
   if (activeNode.type === 'section' && activeNode.sectionId) {
     const artifact = artifacts.find((a) => a.id === activeNode.artifactId);
+
+    // FTC synthetic "Test Case" node — click on a TC leaf in the tree routes
+    // here with sectionId = `__test_case__:<tcDbId>`. We render the full
+    // FtcArtifactView and pass activeTcId so the view scrolls + highlights.
+    if (artifact?.artifactType === 'FTC' && activeNode.sectionId?.startsWith('__test_case__')) {
+      const [, activeTcId] = activeNode.sectionId.split(':');
+      return (
+        <div className="p-6 space-y-4 overflow-y-auto h-full pb-32">
+          <ArtifactToolbar artifact={artifact} />
+          <ArtifactHeader artifact={artifact} />
+          <FtcArtifactView
+            artifact={artifact}
+            moduleDbId={artifact.module?.id ?? ''}
+            activeTcId={activeTcId || undefined}
+            onUpdated={onSectionUpdated}
+          />
+        </div>
+      );
+    }
 
     // LLD synthetic "Pseudo-Code Files" node — render the pseudo-file card.
     // Accepts either the bare key (section-level click) or `__pseudo_code_files__:<fileId>`
