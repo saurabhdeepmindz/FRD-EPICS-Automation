@@ -15,6 +15,8 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { BaFtcService, FtcConfigPayload } from './ba-ftc.service';
 import { BaFtcNarrativeService } from './ba-ftc-narrative.service';
+import { BaAcCoverageService } from './ba-ac-coverage.service';
+import { BaPlaywrightExportService } from './ba-playwright-export.service';
 import { MAX_TOTAL_ATTACHMENT_BYTES } from './ba-narrative.service';
 import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
 
@@ -24,6 +26,8 @@ export class BaFtcController {
     private readonly ftc: BaFtcService,
     private readonly narrative: BaFtcNarrativeService,
     private readonly orchestrator: BaSkillOrchestratorService,
+    private readonly acCoverage: BaAcCoverageService,
+    private readonly playwrightExport: BaPlaywrightExportService,
   ) {}
 
   /** GET /api/ba/modules/:id/ftc/config — load saved FTC selections */
@@ -136,5 +140,37 @@ export class BaFtcController {
   @Post('modules/:id/ftc/gap-check')
   gapCheck(@Param('id') moduleDbId: string) {
     return this.narrative.gapCheck(moduleDbId);
+  }
+
+  // ─── AC Coverage Verifier ─────────────────────────────────────────────
+
+  /** GET /api/ba/artifacts/:id/ac-coverage — list stored AC coverage rows */
+  @Get('artifacts/:id/ac-coverage')
+  listAcCoverage(@Param('id') artifactDbId: string) {
+    return this.acCoverage.listForArtifact(artifactDbId);
+  }
+
+  /** POST /api/ba/artifacts/:id/ac-coverage/analyze — re-run the check via AI */
+  @Post('artifacts/:id/ac-coverage/analyze')
+  analyzeAcCoverage(@Param('id') artifactDbId: string) {
+    return this.acCoverage.analyze(artifactDbId);
+  }
+
+  // ─── Playwright suite export ──────────────────────────────────────────
+
+  /**
+   * GET /api/ba/artifacts/:id/playwright-zip — stream a runnable
+   * Playwright suite (config + fixtures + one spec per scenarioGroup)
+   * as a ZIP. Deterministic template codegen, no AI call.
+   */
+  @Get('artifacts/:id/playwright-zip')
+  async exportPlaywrightZip(@Param('id') artifactDbId: string, @Res() res: Response) {
+    const { buffer, filename } = await this.playwrightExport.buildZip(artifactDbId);
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
   }
 }

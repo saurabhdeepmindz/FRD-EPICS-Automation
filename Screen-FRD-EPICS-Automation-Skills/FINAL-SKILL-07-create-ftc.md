@@ -77,9 +77,10 @@ Your response is a **single Markdown document** divided into two parts:
 10. OWASP LLM Top 10 Coverage Matrix (only when the module has AI content; table: LLM01–LLM10 × covered? × TC-ids)
 11. Data Cleanup / Teardown (SQL + notes)
 12. Playwright Automation Readiness (per-TC summary hints count + any gaps for automation)
-13. Traceability Summary (FRD → EPIC → US → ST → LLD → TC)
-14. Open Questions / TBD-Future Reconciliation
-15. Applied Best-Practice Defaults
+13. AC Coverage Verification (every acceptance criterion from upstream EPIC / User Story / SubTask packets, marked COVERED / PARTIAL / UNCOVERED with covering TCs + rationale)
+14. Traceability Summary (FRD → EPIC → US → ST → LLD → TC)
+15. Open Questions / TBD-Future Reconciliation
+16. Applied Best-Practice Defaults
 ```
 
 Under §6, §7, §8, embed test cases in the strict TC block format below. The full content of each TC (steps, expected, SQL, OWASP tag, traceability) must also appear in the Test Case Appendix so the parser can pick it up in one pass.
@@ -280,12 +281,64 @@ Trigger: `lldContext` indicates an AI stack (LangChain / LangGraph / PyTorch / `
 
 High-severity defaults for AI modules — produce at least one TC each for LLM01, LLM02, LLM05, LLM06 unless the architect has excluded them.
 
+## 6b. AC Coverage Verification (§13) — strict format
+
+This section is the single source of truth for whether the test plan covers every upstream acceptance criterion. The backend parser reads it into a structured `BaAcCoverage` table, so the format MUST be exact.
+
+### What goes in
+
+Extract every **acceptance criterion** from the context packet:
+
+- From **`epicHandoffPacket`** — each EPIC's "Acceptance Criteria" section, each bullet is one AC.
+- From **`storyHandoffPacket` / `storiesDocument`** — each User Story's Given/When/Then acceptance criteria.
+- From **`subtaskHandoffPacket` / `subtasksDocument`** — each SubTask's Definition of Done bullets.
+
+Number them per-source. E.g. `US-001 AC#1`, `US-001 AC#2`, `EPIC-01 AC#1`, `ST-US001-BE-03 DoD#2`.
+
+### Output format (strict — one fenced block per AC)
+
+```ac id=US-001-AC-1 source=USER_STORY sourceRef=US-001 status=COVERED coveringTcs=TC-001,Neg_TC-002
+text: User receives validation error for invalid email format
+rationale: TC-001 asserts the success path; Neg_TC-002 asserts the error copy + no form submission.
+```
+
+```ac id=US-001-AC-5 source=USER_STORY sourceRef=US-001 status=UNCOVERED coveringTcs=
+text: Rate limiting kicks in at 100 req/sec per tenant
+rationale: No performance TC addresses per-tenant rate limiting. Consider adding a k6 test or negative TC that bursts 101 requests in 1s.
+```
+
+```ac id=ST-US001-BE-03-DOD-2 source=SUBTASK sourceRef=ST-US001-BE-03 status=PARTIAL coveringTcs=TC-001
+text: Audit event written on successful login
+rationale: TC-001 covers the happy path. Missing coverage for failed-login audit rows (should be a separate audit event).
+```
+
+### AC block field rules
+
+- **id** — kebab case, unique across the whole FTC document. Format `<source-ref>-<type>-<N>` e.g. `US-001-AC-3`.
+- **source** — `EPIC` | `USER_STORY` | `SUBTASK` | `FEATURE`.
+- **sourceRef** — the upstream artifact id exactly as it appears in the context (e.g. `US-001`, not `us001`).
+- **status** — `COVERED` (one or more TCs assert this AC), `PARTIAL` (covered for happy path but not edge cases, OR only one of several assertions validated), `UNCOVERED` (no TC addresses this AC).
+- **coveringTcs** — comma-separated TC ids. Empty when status is UNCOVERED. Cite only TC ids that exist in this document's appendix.
+- **text** — the acceptance criterion verbatim from the upstream artifact. Do not paraphrase.
+- **rationale** — one or two sentences explaining the coverage decision. For UNCOVERED, suggest what TC would close the gap.
+
+### Coverage summary (after the per-AC blocks)
+
+End §13 with a one-line summary:
+
+```
+Coverage summary: 18 ACs total — 14 COVERED · 3 PARTIAL · 1 UNCOVERED
+```
+
+The backend uses this to badge the FTC artifact with a coverage-complete indicator.
+
 ## 7. Hard rules
 
 - Produce the canonical sections in the exact order above.
 - Every TC in the document MUST also appear in the Test Case Appendix (last section of the document).
+- Every acceptance criterion from upstream packets MUST appear in §13 AC Coverage Verification with exactly one status tag.
 - Never hallucinate IDs. Cite only IDs present in the context.
-- Preserve every `TBD-Future` marker from upstream verbatim — do not silently resolve them; reference them under §14 Open Questions.
+- Preserve every `TBD-Future` marker from upstream verbatim — do not silently resolve them; reference them under §15 Open Questions.
 - SQL dialect matches `projectMeta.sqlDialect`. When the dialect is null, default to PostgreSQL and note the default applied.
 - Output only Markdown — no JSON handoff packet (the parser reads TC blocks directly).
 - Do NOT wrap the entire response in a markdown code fence.

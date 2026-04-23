@@ -16,6 +16,7 @@ import {
   listFtcsForModule,
   getBaModule,
   downloadFtcCsv,
+  downloadPlaywrightZip,
   type BaFtcConfig,
   type BaModule,
   type FtcConfigBundle,
@@ -283,15 +284,26 @@ export default function FtcWorkbenchPage() {
         </div>
         <div className="flex items-center gap-2">
           {ftc?.artifact && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => downloadFtcCsv(ftc.artifact!.id, `${ftc.artifact!.artifactId}.csv`).catch(() => alert('CSV export failed'))}
-              title="Export test cases as CSV matching the QA team template"
-            >
-              <Download className="h-3.5 w-3.5 mr-1" />
-              Export CSV
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => downloadFtcCsv(ftc.artifact!.id, `${ftc.artifact!.artifactId}.csv`).catch(() => alert('CSV export failed'))}
+                title="Export test cases as CSV matching the QA team template"
+              >
+                <Download className="h-3.5 w-3.5 mr-1" />
+                Export CSV
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => downloadPlaywrightZip(ftc.artifact!.id, `${ftc.artifact!.artifactId}-playwright.zip`).catch(() => alert('Playwright export failed'))}
+                title="Export a runnable Playwright test suite (config + fixtures + one spec per scenario group)"
+              >
+                <Download className="h-3.5 w-3.5 mr-1" />
+                Export Playwright Suite
+              </Button>
+            </>
           )}
           <Button size="sm" variant="outline" onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}

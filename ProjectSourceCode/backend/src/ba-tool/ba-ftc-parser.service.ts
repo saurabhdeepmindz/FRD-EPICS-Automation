@@ -7,6 +7,15 @@ interface ParsedFtcSection {
   content: string;
 }
 
+interface ParsedAcCoverage {
+  acSource: string;       // US-001 AC#3
+  acSourceType: 'EPIC' | 'USER_STORY' | 'SUBTASK' | 'FEATURE';
+  acText: string;
+  coveringTcRefs: string[];
+  status: 'COVERED' | 'PARTIAL' | 'UNCOVERED';
+  rationale: string | null;
+}
+
 interface ParsedTestCase {
   testCaseId: string;
   title: string;
@@ -68,6 +77,7 @@ export class BaFtcParserService {
     { key: 'owasp_llm_coverage', label: 'OWASP LLM Top 10 Coverage Matrix' },
     { key: 'data_cleanup', label: 'Data Cleanup / Teardown' },
     { key: 'playwright_readiness', label: 'Playwright Automation Readiness' },
+    { key: 'ac_coverage_verification', label: 'AC Coverage Verification' },
     { key: 'traceability_summary', label: 'Traceability Summary' },
     { key: 'open_questions_tbd', label: 'Open Questions / TBD-Future Reconciliation' },
     { key: 'applied_defaults', label: 'Applied Best-Practice Defaults' },
@@ -84,9 +94,11 @@ export class BaFtcParserService {
   async parseAndStore(rawMarkdown: string, ftcArtifactDbId: string): Promise<{
     sectionsCreated: number;
     testCasesCreated: number;
+    acCoverageCreated: number;
   }> {
     const sections = this.parseSections(rawMarkdown);
     const testCases = this.parseTestCases(rawMarkdown);
+    const acCoverage = this.parseAcCoverage(rawMarkdown);
 
     for (const s of sections) {
       try {
@@ -154,10 +166,50 @@ export class BaFtcParserService {
       }
     }
 
+    // ─── AC Coverage rows ───
+    // Build a tc-ref → tc-db-id map so human-readable coveringTcRefs (TC-001,
+    // Neg_TC-002) can be linked to actual BaTestCase.id values for queryable
+    // traceability from the AC rows.
+    const tcRefToDbId = new Map<string, string>();
+    const createdTCs = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId: ftcArtifactDbId },
+      select: { id: true, testCaseId: true },
+    });
+    for (const tc of createdTCs) tcRefToDbId.set(tc.testCaseId, tc.id);
+
+    for (const ac of acCoverage) {
+      const tcIds = ac.coveringTcRefs
+        .map((ref) => tcRefToDbId.get(ref))
+        .filter((x): x is string => !!x);
+      try {
+        await this.prisma.baAcCoverage.create({
+          data: {
+            artifactDbId: ftcArtifactDbId,
+            acSource: ac.acSource,
+            acSourceType: ac.acSourceType,
+            acText: ac.acText,
+            coveringTcIds: tcIds,
+            coveringTcRefs: ac.coveringTcRefs,
+            status: ac.status,
+            rationale: ac.rationale,
+            source: 'AI_SKILL',
+          },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `FTC parser: failed to insert AC ${ac.acSource}: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      }
+    }
+
     this.logger.log(
-      `FTC parser: created ${sections.length} sections + ${testCases.length} test cases for artifact ${ftcArtifactDbId}`,
+      `FTC parser: created ${sections.length} sections + ${testCases.length} test cases + ${acCoverage.length} AC rows for artifact ${ftcArtifactDbId}`,
     );
-    return { sectionsCreated: sections.length, testCasesCreated: testCases.length };
+    return {
+      sectionsCreated: sections.length,
+      testCasesCreated: testCases.length,
+      acCoverageCreated: acCoverage.length,
+    };
   }
 
   // ─── Section parsing ──────────────────────────────────────────────────
@@ -172,9 +224,10 @@ export class BaFtcParserService {
     let insideTcFence = false;
 
     for (const line of lines) {
-      // Respect code-fence boundaries so "## " inside a ```tc block doesn't split
+      // Respect code-fence boundaries so "## " inside a ```tc or ```ac block
+      // doesn't split. Treat tc + ac fences identically for this purpose.
       if (/^```/.test(line)) {
-        if (!insideTcFence && /^```tc\b/.test(line)) insideTcFence = true;
+        if (!insideTcFence && /^```(tc|ac)\b/.test(line)) insideTcFence = true;
         else if (insideTcFence) insideTcFence = false;
         if (current) current.body.push(line);
         continue;
@@ -376,5 +429,79 @@ export class BaFtcParserService {
       .split(/[,;\s]+/)
       .map((s) => s.trim())
       .filter(Boolean);
+  }
+
+  // ─── AC Coverage parsing ──────────────────────────────────────────────
+
+  /**
+   * Extract every ```ac id=... ... ``` block from the document. The skill
+   * emits these under §13 AC Coverage Verification. Each block becomes a
+   * BaAcCoverage row with status COVERED / PARTIAL / UNCOVERED.
+   */
+  private parseAcCoverage(markdown: string): ParsedAcCoverage[] {
+    const out: ParsedAcCoverage[] = [];
+    const seen = new Set<string>();
+    const fenceRegex = /```ac\s+([^\n]*)\n([\s\S]*?)```/g;
+    let m: RegExpExecArray | null;
+    while ((m = fenceRegex.exec(markdown)) !== null) {
+      try {
+        const parsed = this.parseOneAc(m[1], m[2]);
+        if (!parsed) continue;
+        if (seen.has(parsed.acSource)) continue; // id collision — first wins
+        seen.add(parsed.acSource);
+        out.push(parsed);
+      } catch (err) {
+        this.logger.warn(
+          `FTC parser: dropped malformed ac block (${err instanceof Error ? err.message : 'unknown'})`,
+        );
+      }
+    }
+    return out;
+  }
+
+  private parseOneAc(headerLine: string, body: string): ParsedAcCoverage | null {
+    // Header attrs: id=US-001-AC-1 source=USER_STORY sourceRef=US-001
+    //   status=COVERED coveringTcs=TC-001,Neg_TC-002
+    const attrs = this.parseAttrs(headerLine);
+    const id = attrs.id?.trim();
+    const sourceType = (attrs.source ?? '').toUpperCase();
+    const sourceRef = attrs.sourceRef?.trim();
+    if (!id || !sourceRef) {
+      this.logger.warn('FTC parser: AC block missing id / sourceRef');
+      return null;
+    }
+    const VALID_TYPES = new Set(['EPIC', 'USER_STORY', 'SUBTASK', 'FEATURE']);
+    const acSourceType = (VALID_TYPES.has(sourceType) ? sourceType : 'USER_STORY') as ParsedAcCoverage['acSourceType'];
+
+    const statusRaw = (attrs.status ?? '').toUpperCase();
+    const VALID_STATUS = new Set(['COVERED', 'PARTIAL', 'UNCOVERED']);
+    const status = (VALID_STATUS.has(statusRaw) ? statusRaw : 'UNCOVERED') as ParsedAcCoverage['status'];
+
+    // Body: key-value lines (text:, rationale:)
+    const kv: Record<string, string> = {};
+    for (const line of body.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const match = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (match) kv[match[1]] = match[2].trim();
+      else if (kv.rationale !== undefined) {
+        // Append continuation lines to rationale (multi-line rationale).
+        kv.rationale = `${kv.rationale}\n${trimmed}`;
+      }
+    }
+    const text = kv.text ?? '';
+    if (!text) {
+      this.logger.warn(`FTC parser: AC ${id} missing text field`);
+      return null;
+    }
+
+    return {
+      acSource: id,
+      acSourceType,
+      acText: text,
+      coveringTcRefs: this.splitList(attrs.coveringTcs),
+      status,
+      rationale: kv.rationale?.trim() || null,
+    };
   }
 }

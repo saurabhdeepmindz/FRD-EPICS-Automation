@@ -732,6 +732,136 @@ async def ba_ftc_gap_check(
     return FtcGapCheckResponse(gaps=gaps, model=settings.OPENAI_MODEL)
 
 
+# ─── BA Tool: AC Coverage Verifier (standalone re-analysis) ─────────────────
+
+class AcInputBundle(BaseModel):
+    """One acceptance criterion supplied by the backend for analysis."""
+    acSource: str                  # e.g. "US-001 AC#3"
+    acSourceType: str              # EPIC | USER_STORY | SUBTASK | FEATURE
+    acText: str
+    sourceRef: str                 # the upstream artifact id (e.g. "US-001")
+
+
+class TcInputBundle(BaseModel):
+    """One test case summary supplied by the backend for analysis."""
+    testCaseId: str                # e.g. "TC-001" / "Neg_TC-002"
+    title: str
+    category: str | None = None
+    scope: str = "black_box"
+    steps: str = ""
+    expected: str = ""
+    postValidation: str = ""
+    linkedStoryIds: list[str] = Field(default_factory=list)
+    linkedSubtaskIds: list[str] = Field(default_factory=list)
+    linkedFeatureIds: list[str] = Field(default_factory=list)
+
+
+class AcCoverageCheckRequest(BaseModel):
+    acs: list[AcInputBundle] = Field(..., max_length=500)
+    tcs: list[TcInputBundle] = Field(..., max_length=500)
+
+
+class AcCoverageResult(BaseModel):
+    acSource: str
+    status: str                    # COVERED | PARTIAL | UNCOVERED
+    coveringTcRefs: list[str]
+    rationale: str
+
+
+class AcCoverageCheckResponse(BaseModel):
+    results: list[AcCoverageResult]
+    model: str
+    summary: dict                  # { covered, partial, uncovered, total }
+
+
+AC_COVERAGE_SYSTEM_PROMPT = """You are a senior QA architect auditing test-plan coverage.
+You receive a list of acceptance criteria (ACs) and a list of test cases (TCs). For every AC,
+decide whether the test plan COVERS / PARTIALLY COVERS / DOES NOT COVER it, cite the TCs that
+address it, and explain your decision in one or two sentences.
+
+Status rules:
+- COVERED: at least one TC directly asserts the AC's behaviour. Happy path + at least one
+  negative/edge variant if the AC implies input validation.
+- PARTIAL: the AC is addressed in one aspect but edge cases / error handling / boundary
+  conditions the AC implies are missing.
+- UNCOVERED: no TC addresses this AC.
+
+Rules for output:
+- Return STRICT JSON only: {{"results": [{{"acSource": "...", "status": "...", "coveringTcRefs": [...], "rationale": "..."}}, ...]}}
+- Use the TC's testCaseId value (e.g. "TC-001", "Neg_TC-002") in coveringTcRefs. Empty list when UNCOVERED.
+- rationale is one or two sentences. For UNCOVERED status, suggest what TC would close the gap.
+- Be strict: a TC title that merely mentions the feature is NOT coverage unless its steps + expected actually assert the AC's behaviour.
+- Output ONLY JSON. No preamble, no markdown fences.
+"""
+
+
+@app.post("/ba/ac-coverage-check", response_model=AcCoverageCheckResponse, tags=["ba"])
+async def ba_ac_coverage_check(
+    body: AcCoverageCheckRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> AcCoverageCheckResponse:
+    if len(body.acs) == 0:
+        return AcCoverageCheckResponse(
+            results=[], model=settings.OPENAI_MODEL,
+            summary={"covered": 0, "partial": 0, "uncovered": 0, "total": 0},
+        )
+
+    # Build a compact JSON payload for the AI
+    acs_json = [ac.model_dump() for ac in body.acs]
+    tcs_json = [tc.model_dump() for tc in body.tcs]
+    user_msg = (
+        f"Acceptance criteria ({len(acs_json)}):\n{json.dumps(acs_json, ensure_ascii=False)}\n\n"
+        f"Test cases ({len(tcs_json)}):\n{json.dumps(tcs_json, ensure_ascii=False)[:30000]}"
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": AC_COVERAGE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=3000,
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+    except openai.OpenAIError as exc:
+        logger.error("AC coverage check error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"AC coverage check failed: {exc}") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("AC coverage JSON parse failure: %s", raw[:500])
+        raise HTTPException(status_code=502, detail="AI returned malformed JSON") from exc
+
+    results_raw = parsed.get("results", [])
+    VALID_STATUS = {"COVERED", "PARTIAL", "UNCOVERED"}
+    results: list[AcCoverageResult] = []
+    for r in results_raw:
+        if not r.get("acSource"):
+            continue
+        status = (r.get("status") or "UNCOVERED").upper()
+        if status not in VALID_STATUS:
+            status = "UNCOVERED"
+        results.append(AcCoverageResult(
+            acSource=r["acSource"],
+            status=status,
+            coveringTcRefs=r.get("coveringTcRefs") or [],
+            rationale=r.get("rationale") or "",
+        ))
+
+    summary = {
+        "covered": sum(1 for r in results if r.status == "COVERED"),
+        "partial": sum(1 for r in results if r.status == "PARTIAL"),
+        "uncovered": sum(1 for r in results if r.status == "UNCOVERED"),
+        "total": len(results),
+    }
+    return AcCoverageCheckResponse(results=results, model=settings.OPENAI_MODEL, summary=summary)
+
+
 class ExtractImageTextRequest(BaseModel):
     dataUrl: str = Field(..., description="data:<mime>;base64,<payload>")
 

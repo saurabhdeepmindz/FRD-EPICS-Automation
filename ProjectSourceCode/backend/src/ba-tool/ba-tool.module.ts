@@ -16,6 +16,8 @@ import { BaLldNarrativeService } from './ba-lld-narrative.service';
 import { BaFtcService } from './ba-ftc.service';
 import { BaFtcParserService } from './ba-ftc-parser.service';
 import { BaFtcNarrativeService } from './ba-ftc-narrative.service';
+import { BaAcCoverageService } from './ba-ac-coverage.service';
+import { BaPlaywrightExportService } from './ba-playwright-export.service';
 import { BaNarrativeService } from './ba-narrative.service';
 import { TextExtractionService } from './text-extraction.service';
 import { AttachmentStorageModule } from './storage/storage.module';
@@ -38,6 +40,8 @@ import { ExportModule } from '../export/export.module';
     BaFtcService,
     BaFtcParserService,
     BaFtcNarrativeService,
+    BaAcCoverageService,
+    BaPlaywrightExportService,
     BaNarrativeService,
     TextExtractionService,
     SubTaskParserService,

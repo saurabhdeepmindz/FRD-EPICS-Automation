@@ -1,10 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import { listTestCasesByArtifact, type BaArtifact, type BaTestCase } from '@/lib/ba-api';
+import { Button } from '@/components/ui/button';
+import {
+  analyzeAcCoverage,
+  listAcCoverage,
+  listTestCasesByArtifact,
+  type BaAcCoverage,
+  type BaArtifact,
+  type BaTestCase,
+} from '@/lib/ba-api';
 import { cn } from '@/lib/utils';
-import { Sparkles, User as UserIcon } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw, Sparkles, User as UserIcon } from 'lucide-react';
 import { TestCaseBody, TestCaseAccordionHeader, usePseudoFileResolver } from './TestCaseBody';
 
 interface Props {
@@ -141,6 +149,9 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId }: Props) {
           </div>
         </div>
 
+        {/* ── AC Coverage Verifier ── */}
+        <AcCoverageCard artifactDbId={artifact.id} />
+
         {/* ── Per-category groups ── */}
         {grouped.map((group) => (
           <section key={group.key} className="space-y-1.5">
@@ -189,5 +200,186 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId }: Props) {
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── AC Coverage Card ───────────────────────────────────────────────────────
+
+/**
+ * Renders the AC Coverage Verifier matrix. On mount, fetches stored
+ * coverage rows (populated during FTC generation by the parser). The
+ * "Re-verify" button calls the standalone Python AC-coverage endpoint;
+ * its results replace any prior POST_GEN_CHECK rows but leave AI_SKILL
+ * rows from the original generation intact as an audit trail.
+ */
+function AcCoverageCard({ artifactDbId }: { artifactDbId: string }) {
+  const [bundle, setBundle] = useState<{
+    rows: BaAcCoverage[];
+    summary: { covered: number; partial: number; uncovered: number; total: number };
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await listAcCoverage(artifactDbId);
+        if (!cancelled) setBundle(data);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [artifactDbId]);
+
+  const handleReverify = useCallback(async () => {
+    setAnalyzing(true);
+    try {
+      const res = await analyzeAcCoverage(artifactDbId);
+      setBundle(res);
+      setExpanded(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      alert(`Re-verify failed: ${msg}`);
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [artifactDbId]);
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-3 text-xs text-muted-foreground">
+          Loading AC coverage…
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const rows = bundle?.rows ?? [];
+  const summary = bundle?.summary ?? { covered: 0, partial: 0, uncovered: 0, total: 0 };
+  const uncoveredCount = summary.uncovered;
+  const partialCount = summary.partial;
+  const hasAnyGap = uncoveredCount > 0 || partialCount > 0;
+
+  return (
+    <section className="rounded-lg border border-border bg-muted/20">
+      <div className="flex items-center justify-between gap-2 p-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h4 className="text-sm font-semibold">AC Coverage</h4>
+          {summary.total === 0 ? (
+            <span className="text-[10px] text-muted-foreground italic">
+              Not yet analyzed — run Re-verify to extract ACs from upstream artifacts.
+            </span>
+          ) : (
+            <>
+              <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                {summary.covered} covered
+              </span>
+              {partialCount > 0 && (
+                <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                  {partialCount} partial
+                </span>
+              )}
+              {uncoveredCount > 0 && (
+                <span className="bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                  {uncoveredCount} uncovered
+                </span>
+              )}
+              <span className="text-[10px] text-muted-foreground">of {summary.total}</span>
+              {hasAnyGap && (
+                <span className="flex items-center gap-1 text-[10px] text-amber-700">
+                  <AlertTriangle className="h-3 w-3" /> gaps detected
+                </span>
+              )}
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {summary.total > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => setExpanded((p) => !p)} className="h-7">
+              {expanded ? 'Hide details' : 'Show details'}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={handleReverify} disabled={analyzing} className="h-7">
+            {analyzing ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+            Re-verify
+          </Button>
+        </div>
+      </div>
+
+      {expanded && summary.total > 0 && (
+        <div className="border-t border-border overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead className="bg-muted/40 text-left text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 font-semibold">Source</th>
+                <th className="px-2 py-1.5 font-semibold">AC</th>
+                <th className="px-2 py-1.5 font-semibold">Covering TCs</th>
+                <th className="px-2 py-1.5 font-semibold">Status</th>
+                <th className="px-2 py-1.5 font-semibold">Rationale</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-border/50 align-top">
+                  <td className="px-2 py-1.5 font-mono text-[11px] text-primary whitespace-nowrap">
+                    {r.acSource}
+                    <br />
+                    <span className="text-muted-foreground text-[9px]">{r.acSourceType}</span>
+                  </td>
+                  <td className="px-2 py-1.5 max-w-[360px]">{r.acText}</td>
+                  <td className="px-2 py-1.5 font-mono text-[11px]">
+                    {r.coveringTcRefs.length > 0 ? (
+                      <div className="flex flex-wrap gap-0.5">
+                        {r.coveringTcRefs.map((ref) => (
+                          <span key={ref} className="bg-blue-50 text-blue-700 px-1 rounded">{ref}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <StatusPill status={r.status} />
+                    {r.source === 'POST_GEN_CHECK' && (
+                      <span className="ml-1 text-[9px] text-muted-foreground italic">(re-checked)</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 max-w-[320px] text-muted-foreground italic">
+                    {r.rationale ?? '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StatusPill({ status }: { status: BaAcCoverage['status'] }) {
+  if (status === 'COVERED') {
+    return (
+      <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+        <CheckCircle2 className="h-3 w-3" /> COVERED
+      </span>
+    );
+  }
+  if (status === 'PARTIAL') {
+    return (
+      <span className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+        <AlertTriangle className="h-3 w-3" /> PARTIAL
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-0.5 bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+      <XCircle className="h-3 w-3" /> UNCOVERED
+    </span>
   );
 }

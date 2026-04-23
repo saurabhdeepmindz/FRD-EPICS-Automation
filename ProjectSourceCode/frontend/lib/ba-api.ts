@@ -1179,6 +1179,46 @@ export function downloadFtcCsv(artifactDbId: string, filename: string): Promise<
   return downloadBlob(`/ba/artifacts/${artifactDbId}/test-cases/csv`, filename);
 }
 
+export function downloadPlaywrightZip(artifactDbId: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/artifacts/${artifactDbId}/playwright-zip`, filename);
+}
+
+// ─── AC Coverage ────────────────────────────────────────────────────────────
+
+export interface BaAcCoverage {
+  id: string;
+  artifactDbId: string;
+  acSource: string;
+  acSourceType: 'EPIC' | 'USER_STORY' | 'SUBTASK' | 'FEATURE';
+  acText: string;
+  coveringTcIds: string[];
+  coveringTcRefs: string[];
+  status: 'COVERED' | 'PARTIAL' | 'UNCOVERED';
+  rationale: string | null;
+  analyzedAt: string;
+  source: 'AI_SKILL' | 'POST_GEN_CHECK';
+}
+
+export interface AcCoverageBundle {
+  rows: BaAcCoverage[];
+  summary: { covered: number; partial: number; uncovered: number; total: number };
+  model?: string | null;
+}
+
+export async function listAcCoverage(artifactDbId: string): Promise<AcCoverageBundle> {
+  const { data } = await api.get<AcCoverageBundle>(`/ba/artifacts/${artifactDbId}/ac-coverage`);
+  return data;
+}
+
+export async function analyzeAcCoverage(artifactDbId: string): Promise<AcCoverageBundle> {
+  const { data } = await api.post<AcCoverageBundle>(
+    `/ba/artifacts/${artifactDbId}/ac-coverage/analyze`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data;
+}
+
 // FTC narrative + attachments + gap-check (reuses the shared shapes)
 
 export async function listFtcAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {

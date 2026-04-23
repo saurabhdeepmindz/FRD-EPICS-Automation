@@ -297,6 +297,7 @@ model BaArtifact {
   subtasks     BaSubTask[]
   pseudoFiles  BaPseudoFile[]
   testCases    BaTestCase[]
+  acCoverage   BaAcCoverage[]
 
   @@map("ba_artifacts")
 }
@@ -710,4 +711,27 @@ model BaTestCase {
   @@index([artifactDbId])
   @@index([parentTestCaseId])
   @@map("ba_test_cases")
+}
+
+// AC Coverage Verification — one row per acceptance criterion from an upstream
+// artifact (EPIC / User Story / SubTask), marked as covered / uncovered /
+// partial by the FTC. Generated at skill time (via SKILL-07 output section)
+// and re-generable via a standalone post-gen analysis endpoint.
+model BaAcCoverage {
+  id                 String     @id @default(uuid())
+  artifactDbId       String
+  artifact           BaArtifact @relation(fields: [artifactDbId], references: [id], onDelete: Cascade)
+  acSource           String     // e.g. "US-001 AC#3" or "ST-US001-BE-03 DoD#2"
+  acSourceType       String     // EPIC | USER_STORY | SUBTASK | FEATURE
+  acText             String     @db.Text
+  coveringTcIds      String[]   @default([]) // BaTestCase.id values
+  coveringTcRefs     String[]   @default([]) // human-readable TC-001, Neg_TC-002
+  status             String     // COVERED | UNCOVERED | PARTIAL
+  rationale          String?    @db.Text // AI explanation of the match / gap
+  analyzedAt         DateTime   @default(now())
+  source             String     // AI_SKILL (from generation) | POST_GEN_CHECK (re-analysis)
+
+  @@index([artifactDbId])
+  @@index([artifactDbId, status])
+  @@map("ba_ac_coverage")
 }
