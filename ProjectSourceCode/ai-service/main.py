@@ -597,6 +597,134 @@ async def ba_lld_gap_check(
     return LldGapCheckResponse(gaps=gaps, model=settings.OPENAI_MODEL)
 
 
+# ─── BA Tool: FTC Gap-Check ─────────────────────────────────────────────────
+
+class FtcGapCheckRequest(BaseModel):
+    moduleContext: str = Field(..., max_length=8000)
+    narrative: str = Field(..., max_length=20000)
+    attachmentText: str = Field(default="", max_length=40000)
+    useAsAdditional: bool = Field(default=True)
+    testingFramework: str | None = Field(default=None)
+    coverageTarget: str | None = Field(default=None)
+    owaspWebEnabled: bool = Field(default=True)
+    owaspLlmEnabled: bool = Field(default=True)
+    excludedOwaspWeb: list[str] = Field(default_factory=list)
+    excludedOwaspLlm: list[str] = Field(default_factory=list)
+    includeLldReferences: bool = Field(default=True)
+    hasLld: bool = Field(default=False)
+    hasAiContent: bool = Field(default=False)
+
+
+class FtcGapCheckResponse(BaseModel):
+    gaps: list[LldGap]  # reuses the same {id, category, question, suggestion} shape
+    model: str
+
+
+FTC_CANONICAL_SECTIONS = [
+    "Summary", "Test Strategy", "Test Environment & Dependencies",
+    "Master Data Setup", "Test Cases Index", "Functional Test Cases",
+    "Integration Test Cases", "White-Box Test Cases",
+    "OWASP Web Top 10 Coverage Matrix", "OWASP LLM Top 10 Coverage Matrix",
+    "Data Cleanup / Teardown", "Playwright Automation Readiness",
+    "Traceability Summary", "Open Questions / TBD-Future Reconciliation",
+    "Applied Best-Practice Defaults",
+]
+
+
+FTC_GAP_CHECK_SYSTEM_PROMPT = """You are a senior QA architect performing a gap analysis on
+a Functional Test Cases (FTC) plan. The tester/architect has provided a narrative (and
+optional attachments) describing additional test scenarios. You compare against the standard
+FTC framework + OWASP expectations and surface gaps in BOTH directions:
+
+  (A) Framework expectations the narrative does NOT address — e.g. the architect didn't
+      mention data cleanup, or no test for rate limiting despite the module having one.
+  (B) Narrative mentions scenarios the canonical sections don't natively cover — ask
+      whether to file them under Integration Test Cases or treat them as narrative-driven.
+
+Canonical FTC sections:
+{sections}
+
+OWASP considerations (honour the enabled flags + exclusion lists):
+- Web Top 10 2021 (A01-A10): enabled={webEnabled}, excluded={excludedWeb}
+- LLM Top 10 2025 (LLM01-LLM10): enabled={llmEnabled}, excluded={excludedLlm}
+- The module {aiNote}has AI content. When AI content is present and LLM OWASP is enabled,
+  ensure questions about prompt injection (LLM01), sensitive info disclosure (LLM02),
+  improper output handling (LLM05), and excessive agency (LLM06) are raised unless
+  already covered by the narrative or excluded.
+
+LLD linkage:
+- includeLldReferences={includeLld}; hasLld={hasLld}
+- When hasLld is true and includeLldReferences is true, ask whether specific classes /
+  methods from the LLD should be white-box tested; the narrative may be silent on this.
+
+Rules for your output:
+- Return STRICT JSON only: {{"gaps": [{{"id": "g1", "category": "...", "question": "...", "suggestion": "..."}}, ...]}}
+- id values are "g1", "g2", "g3" … in order.
+- category is one of: Scope, Coverage, Data, Integration, Security, LLM-Security,
+  White-Box, Non-Functional, Observability, Tooling, Cleanup.
+- question is ONE specific question. No compound "and" questions.
+- suggestion is the sensible default this skill WOULD pick if the user says "use the default".
+- Prefer 6-12 high-signal gaps over many nitpicks. Skip anything the narrative already answers.
+- If the narrative is short or vague, include 1 gap with category "Scope" asking for more
+  context about the module-under-test.
+- Output ONLY JSON. No preamble, no markdown fences, no trailing commentary.
+"""
+
+
+@app.post("/ba/ftc-gap-check", response_model=FtcGapCheckResponse, tags=["ba"])
+async def ba_ftc_gap_check(
+    body: FtcGapCheckRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> FtcGapCheckResponse:
+    system_prompt = FTC_GAP_CHECK_SYSTEM_PROMPT.format(
+        sections="\n".join(f"  {i+1}. {s}" for i, s in enumerate(FTC_CANONICAL_SECTIONS)),
+        webEnabled=body.owaspWebEnabled,
+        excludedWeb=body.excludedOwaspWeb or "(none)",
+        llmEnabled=body.owaspLlmEnabled,
+        excludedLlm=body.excludedOwaspLlm or "(none)",
+        aiNote="" if body.hasAiContent else "does not appear to ",
+        includeLld=body.includeLldReferences,
+        hasLld=body.hasLld,
+    )
+    mode = "additional-context" if body.useAsAdditional else "narrative-first"
+    user_parts = [
+        f"Mode: {mode}",
+        f"Testing framework: {body.testingFramework or '(not selected — will default to Playwright for web, pytest for backend)'}",
+        f"Coverage target: {body.coverageTarget or '(not selected — will default to Regression)'}",
+        f"Module / stack context:\n{body.moduleContext}",
+        f"Tester/architect narrative:\n{body.narrative}",
+    ]
+    if body.attachmentText.strip():
+        user_parts.append(f"Attachment extracts (truncated):\n{body.attachmentText[:20000]}")
+    user_msg = "\n\n".join(user_parts)
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=2500,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+    except openai.OpenAIError as exc:
+        logger.error("FTC gap-check error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"FTC gap-check failed: {exc}") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("FTC gap-check JSON parse failure: %s", raw[:500])
+        raise HTTPException(status_code=502, detail="AI returned malformed JSON") from exc
+
+    gaps = [LldGap(**g) for g in parsed.get("gaps", []) if g.get("question")]
+    return FtcGapCheckResponse(gaps=gaps, model=settings.OPENAI_MODEL)
+
+
 class ExtractImageTextRequest(BaseModel):
     dataUrl: str = Field(..., description="data:<mime>;base64,<payload>")
 

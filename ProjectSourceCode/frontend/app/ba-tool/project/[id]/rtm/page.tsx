@@ -24,6 +24,8 @@ export default function RtmViewerPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterTbd, setFilterTbd] = useState<'' | 'yes' | 'no'>('');
   const [filterLayer, setFilterLayer] = useState('');
+  const [filterTests, setFilterTests] = useState<'' | 'covered' | 'uncovered'>('');
+  const [filterOwasp, setFilterOwasp] = useState('');
   const [backfilling, setBackfilling] = useState(false);
 
   const load = useCallback(async () => {
@@ -46,6 +48,10 @@ export default function RtmViewerPage() {
   const epics = useMemo(() => [...new Set(rows.filter((r) => r.epicId).map((r) => r.epicId!))].sort(), [rows]);
   const storyTypes = useMemo(() => [...new Set(rows.filter((r) => r.storyType).map((r) => r.storyType!))].sort(), [rows]);
   const layers = useMemo(() => [...new Set(rows.filter((r) => r.layer).map((r) => r.layer!))].sort(), [rows]);
+  const owaspCategories = useMemo(
+    () => [...new Set(rows.flatMap((r) => [...(r.owaspWebCategories ?? []), ...(r.owaspLlmCategories ?? [])]))].sort(),
+    [rows],
+  );
 
   // Filtered rows
   const filteredRows = useMemo(() => {
@@ -57,9 +63,16 @@ export default function RtmViewerPage() {
       if (filterTbd === 'yes' && !r.tbdFutureRef) return false;
       if (filterTbd === 'no' && r.tbdFutureRef) return false;
       if (filterLayer && r.layer !== filterLayer) return false;
+      const tcCount = (r.ftcTestCaseRefs ?? []).length;
+      if (filterTests === 'covered' && tcCount === 0) return false;
+      if (filterTests === 'uncovered' && tcCount > 0) return false;
+      if (filterOwasp) {
+        const all = [...(r.owaspWebCategories ?? []), ...(r.owaspLlmCategories ?? [])];
+        if (!all.includes(filterOwasp)) return false;
+      }
       return true;
     });
-  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer]);
+  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer, filterTests, filterOwasp]);
 
   // CSV export
   const handleExportCsv = useCallback(() => {
@@ -69,6 +82,7 @@ export default function RtmViewerPage() {
       'Primary Class', 'Source File', 'SubTask ID', 'Team', 'Method', 'Test Cases',
       'Integration Status', 'TBD-Future Ref', 'Resolved',
       'Layer', 'LLD Source Files',
+      'Test Cases', 'OWASP Web', 'OWASP LLM',
     ];
     const csvRows = filteredRows.map((r) => [
       r.moduleId, r.moduleName, r.packageName, r.featureId, r.featureName, r.featureStatus, r.priority,
@@ -76,6 +90,7 @@ export default function RtmViewerPage() {
       r.primaryClass ?? '', r.sourceFile ?? '', r.subtaskId ?? '', r.subtaskTeam ?? '', r.methodName ?? '',
       (r.testCaseIds ?? []).join('; '), r.integrationStatus ?? '', r.tbdFutureRef ?? '', r.tbdResolved ? 'Yes' : 'No',
       r.layer ?? '', (r.pseudoFilePaths ?? []).join('; '),
+      (r.ftcTestCaseRefs ?? []).join('; '), (r.owaspWebCategories ?? []).join('; '), (r.owaspLlmCategories ?? []).join('; '),
     ].map((v) => `"${v}"`).join(','));
 
     const csv = [headers.join(','), ...csvRows].join('\n');
@@ -125,7 +140,7 @@ export default function RtmViewerPage() {
                 try {
                   const { data } = await api.post(`/ba/projects/${projectId}/rtm/backfill`);
                   await load();
-                  alert(`RTM populated: ${data?.seeded ?? 0} new rows, linked ${data?.epics ?? 0} EPICs / ${data?.stories ?? 0} Story artifacts / ${data?.subtasks ?? 0} SubTasks / ${data?.llds ?? 0} LLDs.`);
+                  alert(`RTM populated: ${data?.seeded ?? 0} new rows, linked ${data?.epics ?? 0} EPICs / ${data?.stories ?? 0} Story artifacts / ${data?.subtasks ?? 0} SubTasks / ${data?.llds ?? 0} LLDs / ${data?.ftcs ?? 0} FTCs.`);
                 } catch {
                   alert('Backfill failed. Ensure the backend is running and the project has generated artifacts.');
                 } finally {
@@ -175,9 +190,18 @@ export default function RtmViewerPage() {
           <option value="">All Layers</option>
           {layers.map((l) => <option key={l} value={l}>{l}</option>)}
         </select>
-        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer) && (
+        <select value={filterTests} onChange={(e) => setFilterTests(e.target.value as '' | 'covered' | 'uncovered')} className="text-xs border border-input rounded px-2 py-1 bg-background">
+          <option value="">Tests: All</option>
+          <option value="covered">Has test cases</option>
+          <option value="uncovered">No test cases</option>
+        </select>
+        <select value={filterOwasp} onChange={(e) => setFilterOwasp(e.target.value)} className="text-xs border border-input rounded px-2 py-1 bg-background">
+          <option value="">All OWASP</option>
+          {owaspCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer || filterTests || filterOwasp) && (
           <button
-            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); }}
+            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); setFilterTests(''); setFilterOwasp(''); }}
             className="text-xs text-primary hover:underline"
           >
             Clear filters
@@ -204,13 +228,15 @@ export default function RtmViewerPage() {
               <th className="px-3 py-2 border-b border-border font-semibold">Team</th>
               <th className="px-3 py-2 border-b border-border font-semibold">Layer</th>
               <th className="px-3 py-2 border-b border-border font-semibold">LLD Source Files</th>
+              <th className="px-3 py-2 border-b border-border font-semibold">Test Cases</th>
+              <th className="px-3 py-2 border-b border-border font-semibold">OWASP</th>
               <th className="px-3 py-2 border-b border-border font-semibold">TBD-Future</th>
             </tr>
           </thead>
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={15} className="px-3 py-12 text-center text-muted-foreground">
+                <td colSpan={17} className="px-3 py-12 text-center text-muted-foreground">
                   {rows.length === 0 ? 'No RTM data yet. Complete skill executions to populate.' : 'No rows match the current filters.'}
                 </td>
               </tr>
@@ -278,6 +304,33 @@ export default function RtmViewerPage() {
                         {row.pseudoFilePaths.length > 3 && (
                           <span className="text-[9px] text-muted-foreground/70">+{row.pseudoFilePaths.length - 3} more</span>
                         )}
+                      </div>
+                    ) : '—'}
+                  </td>
+                  <td className="px-3 py-1.5 max-w-[200px]">
+                    {row.ftcTestCaseRefs && row.ftcTestCaseRefs.length > 0 ? (
+                      <div className="flex items-center gap-1" title={row.ftcTestCaseRefs.join('\n')}>
+                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+                          {row.ftcTestCaseRefs.length}
+                        </span>
+                        <span className="text-[10px] font-mono text-muted-foreground truncate">
+                          {row.ftcTestCaseRefs.slice(0, 2).join(', ')}
+                          {row.ftcTestCaseRefs.length > 2 ? '…' : ''}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-amber-600">— uncovered</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {((row.owaspWebCategories?.length ?? 0) + (row.owaspLlmCategories?.length ?? 0)) > 0 ? (
+                      <div className="flex flex-wrap gap-0.5">
+                        {row.owaspWebCategories?.map((c) => (
+                          <span key={c} className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">{c}</span>
+                        ))}
+                        {row.owaspLlmCategories?.map((c) => (
+                          <span key={c} className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-mono">{c}</span>
+                        ))}
                       </div>
                     ) : '—'}
                   </td>

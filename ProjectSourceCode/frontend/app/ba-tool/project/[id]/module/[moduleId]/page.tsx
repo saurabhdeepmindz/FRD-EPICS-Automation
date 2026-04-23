@@ -172,6 +172,23 @@ export default function BaModuleWorkspacePage() {
               </Link>
             </Button>
           )}
+          {/* AI FTC Workbench — visible once EPICs are complete (same bar as LLD) */}
+          {(mod.moduleStatus === 'EPICS_COMPLETE'
+            || mod.moduleStatus === 'STORIES_COMPLETE'
+            || mod.moduleStatus === 'SUBTASKS_COMPLETE'
+            || mod.moduleStatus === 'APPROVED') && (
+            <Button
+              size="sm"
+              variant="outline"
+              asChild
+              title="AI FTC Workbench — narrative, testing framework, OWASP coverage, and test-case generation"
+            >
+              <Link href={`/ba-tool/project/${projectId}/module/${moduleDbId}/ftc`}>
+                <Compass className="h-3.5 w-3.5 mr-1" />
+                AI FTC Workbench
+              </Link>
+            </Button>
+          )}
           {/* SubTask / Sprint tabs — visible when subtasks exist */}
           {(mod.moduleStatus === 'SUBTASKS_COMPLETE' || mod.moduleStatus === 'APPROVED') && (
             <>

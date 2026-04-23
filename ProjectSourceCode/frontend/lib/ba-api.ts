@@ -193,6 +193,12 @@ export interface BaRtmRow {
   layer: string | null;              // Frontend / Backend / Database / Integration / Testing
   pseudoFileIds: string[];
   pseudoFilePaths: string[];
+  // FTC linkage — populated after SKILL-07-FTC runs
+  ftcArtifactId: string | null;
+  ftcTestCaseIds: string[];
+  ftcTestCaseRefs: string[];         // human-readable TC-001, TC-002-INT-01, …
+  owaspWebCategories: string[];      // A01, A03, …
+  owaspLlmCategories: string[];      // LLM01, LLM06, …
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
@@ -1028,5 +1034,159 @@ export function downloadProjectStructureZip(artifactDbId: string, filename: stri
 
 export async function savePseudoFile(id: string, editedContent: string): Promise<BaPseudoFile> {
   const { data } = await api.put<BaPseudoFile>(`/ba/pseudo-files/${id}`, { editedContent });
+  return data;
+}
+
+// ─── v4.2: FTC — Functional Test Cases ──────────────────────────────────────
+
+export interface BaFtcConfig {
+  id: string;
+  moduleDbId: string;
+  testingFramework: string | null;
+  coverageTarget: string | null;
+  owaspWebEnabled: boolean;
+  owaspLlmEnabled: boolean;
+  excludedOwaspWeb: string[];
+  excludedOwaspLlm: string[];
+  includeLldReferences: boolean;
+  ftcTemplateId: string | null;
+  customNotes: string | null;
+  narrative: string | null;
+  useAsAdditional: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FtcConfigBundle {
+  config: BaFtcConfig | null;
+  moduleStatus: BaModuleStatus;
+  ftcCompletedAt: string | null;
+  ftcArtifactId: string | null;
+}
+
+export interface BaTestCase {
+  id: string;
+  artifactDbId: string;
+  testCaseId: string;
+  title: string;
+  category: string | null;
+  scope: 'black_box' | 'white_box';
+  priority: string | null;
+  preconditions: string | null;
+  steps: string;
+  expected: string;
+  sqlSetup: string | null;
+  sqlVerify: string | null;
+  isIntegrationTest: boolean;
+  parentTestCaseId: string | null;
+  owaspCategory: string | null;
+  playwrightHint: string | null;
+  developerHints: string | null;
+  linkedFeatureIds: string[];
+  linkedEpicIds: string[];
+  linkedStoryIds: string[];
+  linkedSubtaskIds: string[];
+  linkedPseudoFileIds: string[];
+  linkedLldArtifactId: string | null;
+  tags: string[];
+  aiContent: string;
+  editedContent: string | null;
+  isHumanModified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FtcBundle {
+  artifact: (BaArtifact & { sections: BaArtifactSection[] }) | null;
+  testCases: BaTestCase[];
+}
+
+export interface FtcArtifactSummary {
+  id: string;
+  artifactId: string;
+  status: string;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sectionCount: number;
+  testCaseCount: number;
+  whiteBoxCount: number;
+  owaspCategories: string[];
+  isCurrent: boolean;
+}
+
+export async function getFtcConfig(moduleDbId: string): Promise<FtcConfigBundle> {
+  const { data } = await api.get<FtcConfigBundle>(`/ba/modules/${moduleDbId}/ftc/config`);
+  return data;
+}
+
+export async function saveFtcConfig(
+  moduleDbId: string,
+  payload: Partial<Omit<BaFtcConfig, 'id' | 'moduleDbId' | 'createdAt' | 'updatedAt'>>,
+): Promise<BaFtcConfig> {
+  const { data } = await api.put<BaFtcConfig>(`/ba/modules/${moduleDbId}/ftc/config`, payload);
+  return data;
+}
+
+export async function generateFtc(moduleDbId: string): Promise<{ executionId: string; skill: string; status: string }> {
+  const { data } = await api.post<{ executionId: string; skill: string; status: string }>(
+    `/ba/modules/${moduleDbId}/generate-ftc`,
+    null,
+    { timeout: 10_000 },
+  );
+  return data;
+}
+
+export async function getFtc(moduleDbId: string): Promise<FtcBundle> {
+  const { data } = await api.get<FtcBundle>(`/ba/modules/${moduleDbId}/ftc`);
+  return data;
+}
+
+export async function listFtcsForModule(moduleDbId: string): Promise<FtcArtifactSummary[]> {
+  const { data } = await api.get<FtcArtifactSummary[]>(`/ba/modules/${moduleDbId}/ftcs`);
+  return data;
+}
+
+export async function listTestCasesByArtifact(artifactDbId: string): Promise<BaTestCase[]> {
+  const { data } = await api.get<BaTestCase[]>(`/ba/artifacts/${artifactDbId}/test-cases`);
+  return data;
+}
+
+export async function saveTestCase(id: string, editedContent: string): Promise<BaTestCase> {
+  const { data } = await api.put<BaTestCase>(`/ba/test-cases/${id}`, { editedContent });
+  return data;
+}
+
+// FTC narrative + attachments + gap-check (reuses the shared shapes)
+
+export async function listFtcAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {
+  const { data } = await api.get<BaLldAttachmentList>(`/ba/modules/${moduleDbId}/ftc/attachments`);
+  return data;
+}
+
+export async function uploadFtcAttachments(moduleDbId: string, files: File[]): Promise<BaLldAttachmentList> {
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  const { data } = await api.post<BaLldAttachmentList>(
+    `/ba/modules/${moduleDbId}/ftc/attachments`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+  );
+  return data;
+}
+
+export async function deleteFtcAttachment(moduleDbId: string, attachmentId: string): Promise<{ deleted: string }> {
+  const { data } = await api.delete<{ deleted: string }>(
+    `/ba/modules/${moduleDbId}/ftc/attachments/${attachmentId}`,
+  );
+  return data;
+}
+
+export async function ftcGapCheck(moduleDbId: string): Promise<{ gaps: BaLldGap[]; model: string }> {
+  const { data } = await api.post<{ gaps: BaLldGap[]; model: string }>(
+    `/ba/modules/${moduleDbId}/ftc/gap-check`,
+    null,
+    { timeout: 120_000 },
+  );
   return data;
 }

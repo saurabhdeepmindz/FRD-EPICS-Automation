@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SubTaskParserService } from './subtask-parser.service';
 import { BaLldParserService } from './ba-lld-parser.service';
 import { BaLldNarrativeService } from './ba-lld-narrative.service';
+import { BaFtcParserService } from './ba-ftc-parser.service';
+import { BaFtcNarrativeService } from './ba-ftc-narrative.service';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,15 +19,16 @@ export const SKILL_ORDER = [
   'SKILL-04',    // User Stories
   'SKILL-05',    // SubTasks
   'SKILL-06-LLD', // Low-Level Design (v4)
+  'SKILL-07-FTC', // Functional Test Cases (v4.2) — optional after EPIC
 ] as const;
 
 export type SkillName = (typeof SKILL_ORDER)[number];
 
 /**
  * Maps skill name to the module status it sets on completion.
- * SKILL-06-LLD is excluded here — LLD completion is tracked via
- * `BaModule.lldCompletedAt` so the main status machine (DRAFT → … → APPROVED)
- * is unaffected and an LLD can be (re)generated at any point after EPIC.
+ * SKILL-06-LLD and SKILL-07-FTC are excluded — both are tracked on independent
+ * BaModule timestamp columns so the main status machine (DRAFT → … → APPROVED)
+ * is unaffected and either can be (re)generated at any point after EPIC.
  */
 const SKILL_STATUS_MAP: Partial<Record<SkillName, BaModuleStatus>> = {
   'SKILL-00': BaModuleStatus.ANALYSIS_COMPLETE,
@@ -43,13 +46,12 @@ const SKILL_ARTIFACT_MAP: Record<SkillName, BaArtifactType> = {
   'SKILL-04': BaArtifactType.USER_STORY,
   'SKILL-05': BaArtifactType.SUBTASK,
   'SKILL-06-LLD': BaArtifactType.LLD,
+  'SKILL-07-FTC': BaArtifactType.FTC,
 };
 
 /**
- * Prerequisite module status per skill.
- * SKILL-06-LLD requires EPIC to be complete at minimum — but EPICS_COMPLETE,
- * STORIES_COMPLETE, SUBTASKS_COMPLETE, and APPROVED are all acceptable
- * starting points (the orchestrator checks >= EPICS_COMPLETE for SKILL-06).
+ * Prerequisite module status per skill. SKILL-06-LLD and SKILL-07-FTC both
+ * require at least EPICS_COMPLETE — stories + subtasks are optional for both.
  */
 const SKILL_PREREQ_MAP: Record<SkillName, BaModuleStatus> = {
   'SKILL-00': BaModuleStatus.SCREENS_UPLOADED,
@@ -58,6 +60,7 @@ const SKILL_PREREQ_MAP: Record<SkillName, BaModuleStatus> = {
   'SKILL-04': BaModuleStatus.EPICS_COMPLETE,
   'SKILL-05': BaModuleStatus.STORIES_COMPLETE,
   'SKILL-06-LLD': BaModuleStatus.EPICS_COMPLETE,
+  'SKILL-07-FTC': BaModuleStatus.EPICS_COMPLETE,
 };
 
 @Injectable()
@@ -72,6 +75,8 @@ export class BaSkillOrchestratorService {
     private readonly subtaskParser: SubTaskParserService,
     private readonly lldParser: BaLldParserService,
     private readonly narrative: BaLldNarrativeService,
+    private readonly ftcParser: BaFtcParserService,
+    private readonly ftcNarrative: BaFtcNarrativeService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
     // Skill files are at project root Master-Documents-Skills/ or Screen-FRD-EPICS-Automation-Skills/
@@ -208,6 +213,26 @@ export class BaSkillOrchestratorService {
         }
       }
 
+      // 7d. SKILL-07 post-processing: parse FTC document + test cases, set
+      //     ftcCompletedAt/ArtifactId, and extend RTM rows with TC + OWASP coverage.
+      if (skillName === 'SKILL-07-FTC' && artifact) {
+        try {
+          await this.ftcParser.parseAndStore(humanDocument, artifact.id);
+          await this.prisma.baModule.update({
+            where: { id: moduleDbId },
+            data: { ftcCompletedAt: new Date(), ftcArtifactId: artifact.id },
+          });
+          const modForRtm = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+          if (modForRtm?.projectId) {
+            await this.extendRtmWithFtc(moduleDbId, modForRtm.projectId, artifact.id);
+          }
+          this.logger.log(`FTC: parsed document + test cases + extended RTM for module ${moduleDbId}`);
+        } catch (ftcErr: unknown) {
+          const msg = ftcErr instanceof Error ? ftcErr.message : 'unknown error';
+          this.logger.warn(`SKILL-07 post-processing partial failure: ${msg}`);
+        }
+      }
+
       // 7c. SKILL-05 post-processing: parse SubTasks, extract TBD, extend RTM
       if (skillName === 'SKILL-05') {
         try {
@@ -273,6 +298,7 @@ export class BaSkillOrchestratorService {
       'SKILL-04': 'FINAL-SKILL-04-create-user-stories-v2.md',
       'SKILL-05': 'FINAL-SKILL-05-create-subtasks-v2.md',
       'SKILL-06-LLD': 'FINAL-SKILL-06-create-lld.md',
+      'SKILL-07-FTC': 'FINAL-SKILL-07-create-ftc.md',
     };
     const fileName = fileMap[skillName];
     const filePath = path.join(this.skillFilesDir, fileName);
@@ -338,10 +364,15 @@ export class BaSkillOrchestratorService {
         ctx = this.assembleSkill05Context(mod, approvedModules, tbdEntries, rtmRows); break;
       case 'SKILL-06-LLD':
         ctx = await this.assembleSkill06Context(moduleDbId, mod, rtmRows, tbdEntries); break;
+      case 'SKILL-07-FTC':
+        ctx = await this.assembleSkill07Context(moduleDbId, mod, rtmRows, tbdEntries); break;
       default:
         ctx = { moduleId: mod.moduleId, moduleName: mod.moduleName };
     }
-    return { ...ctx, projectMeta };
+    // Expose the project sqlDialect to every skill; FTC actually uses it, but
+    // any future SQL-emitting skill will see it automatically.
+    const sqlDialect = (mod.project as { sqlDialect?: string | null })?.sqlDialect ?? 'postgresql';
+    return { ...ctx, projectMeta: { ...projectMeta, sqlDialect } };
   }
 
   /** SKILL-00: Screen images + BA descriptions + click-through flows
@@ -582,6 +613,124 @@ export class BaSkillOrchestratorService {
     };
   }
 
+  // ─── SKILL-07 (FTC) context assembly ───────────────────────────────────
+
+  private async assembleSkill07Context(
+    moduleDbId: string,
+    mod: { moduleId: string; moduleName: string; packageName: string; skillExecutions: { skillName: string; handoffPacket: unknown; humanDocument: string | null }[] },
+    rtmRows: unknown[],
+    tbdEntries: { registryId: string; integrationName: string; classification: string; referencedModule: string | null; isResolved: boolean }[],
+  ): Promise<Record<string, unknown>> {
+    const skill01SExec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-01-S');
+    const skill02SExec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-02-S');
+    const skill04Exec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-04');
+    const skill05Exec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-05');
+
+    const ftcConfig = await this.prisma.baFtcConfig.findUnique({ where: { moduleDbId } });
+
+    // Resolve the FTC template if one is selected (master data entry)
+    let ftcTemplate: { name: string; content: string } | null = null;
+    if (ftcConfig?.ftcTemplateId) {
+      const entry = await this.prisma.baMasterDataEntry.findUnique({
+        where: { id: ftcConfig.ftcTemplateId },
+        include: { template: true },
+      });
+      if (entry?.template) {
+        ftcTemplate = { name: entry.template.name, content: entry.template.content };
+      }
+    }
+
+    // If architect wants LLD references and an LLD artifact exists, include a
+    // trimmed LLD context so white-box TCs can cite real classes/methods.
+    const moduleRow = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      select: { lldArtifactId: true },
+    });
+    let lldContext: { artifactId: string; sections: { sectionLabel: string; content: string }[]; pseudoFilePaths: string[] } | null = null;
+    if (ftcConfig?.includeLldReferences && moduleRow?.lldArtifactId) {
+      const lldArtifact = await this.prisma.baArtifact.findUnique({
+        where: { id: moduleRow.lldArtifactId },
+        include: {
+          sections: { orderBy: { createdAt: 'asc' }, select: { sectionLabel: true, content: true } },
+          pseudoFiles: { select: { id: true, path: true } },
+        },
+      });
+      if (lldArtifact) {
+        lldContext = {
+          artifactId: lldArtifact.artifactId,
+          sections: lldArtifact.sections.map((s) => ({ sectionLabel: s.sectionLabel, content: s.content })),
+          pseudoFilePaths: lldArtifact.pseudoFiles.map((pf) => pf.path),
+        };
+      }
+    }
+
+    // Narrative + attachments (FTC scope)
+    const { text: narrativeBlock, useAsAdditional, hasNarrative } =
+      await this.ftcNarrative.buildNarrativeContextBlock(moduleDbId);
+
+    // Detect AI content — triggers LLM OWASP Top 10 coverage expectations
+    const hasAiContent = this.detectAiContent(lldContext);
+
+    const baseContext = {
+      moduleId: mod.moduleId,
+      moduleName: mod.moduleName,
+      packageName: mod.packageName,
+      frdHandoffPacket: skill01SExec?.handoffPacket ?? {},
+      epicHandoffPacket: skill02SExec?.handoffPacket ?? {},
+      storyHandoffPacket: skill04Exec?.handoffPacket ?? null,
+      storiesDocument: skill04Exec?.humanDocument ?? null,
+      subtaskHandoffPacket: skill05Exec?.handoffPacket ?? null,
+      subtasksDocument: skill05Exec?.humanDocument ?? null,
+      rtmRows,
+      tbdFutureRegistry: tbdEntries.filter((e) => !e.isResolved),
+      lldContext,
+      ftcConfig: {
+        testingFramework: ftcConfig?.testingFramework ?? null,
+        coverageTarget: ftcConfig?.coverageTarget ?? null,
+        owaspWebEnabled: ftcConfig?.owaspWebEnabled ?? true,
+        owaspLlmEnabled: ftcConfig?.owaspLlmEnabled ?? true,
+        excludedOwaspWeb: ftcConfig?.excludedOwaspWeb ?? [],
+        excludedOwaspLlm: ftcConfig?.excludedOwaspLlm ?? [],
+        includeLldReferences: ftcConfig?.includeLldReferences ?? true,
+        ftcTemplate,
+        customNotes: ftcConfig?.customNotes ?? null,
+      },
+      hasAiContent,
+    };
+
+    if (!hasNarrative) return baseContext;
+
+    if (useAsAdditional) {
+      return { ...baseContext, architectNarrative: narrativeBlock, narrativeMode: 'additional' };
+    }
+
+    return {
+      moduleId: mod.moduleId,
+      moduleName: mod.moduleName,
+      packageName: mod.packageName,
+      rtmRows: [],
+      tbdFutureRegistry: [],
+      lldContext,
+      ftcConfig: baseContext.ftcConfig,
+      hasAiContent,
+      architectNarrative: narrativeBlock,
+      narrativeMode: 'from-scratch',
+    };
+  }
+
+  private detectAiContent(
+    lldContext: { pseudoFilePaths: string[]; sections: { sectionLabel: string; content: string }[] } | null,
+  ): boolean {
+    if (!lldContext) return false;
+    const aiPathRegex = /(ai-service|backend\/ai\/|langchain|langgraph|agents?\/)/i;
+    if (lldContext.pseudoFilePaths.some((p) => aiPathRegex.test(p))) return true;
+    const techSection = lldContext.sections.find((s) => /technology stack/i.test(s.sectionLabel));
+    if (techSection && /(langchain|langgraph|openai|anthropic|gemini|llama|pytorch|tensorflow|huggingface)/i.test(techSection.content)) {
+      return true;
+    }
+    return false;
+  }
+
   // ─── AI service call ───────────────────────────────────────────────────
 
   private async callAiService(systemPrompt: string, contextPacket: Record<string, unknown>): Promise<string> {
@@ -659,12 +808,13 @@ export class BaSkillOrchestratorService {
 
     let artifactId = `${artifactType}-${mod.moduleId}`;
 
-    // For LLD artifacts we allow multiple coexisting LLDs per module (one per
-    // stack combination — Java, NestJS, LangChain, …). Suffix the artifactId
-    // with a short tag derived from the saved BaLldConfig. If the same stack
-    // is regenerated, append `-vN` so the old one is preserved intact.
-    if (artifactType === BaArtifactType.LLD) {
-      const suffix = await this.deriveLldSuffix(moduleDbId);
+    // For LLD and FTC artifacts we allow multiple coexisting versions per module
+    // (LLD by stack, FTC by framework). Suffix the artifactId with a short tag;
+    // regenerations append `-vN` so prior versions are preserved intact.
+    if (artifactType === BaArtifactType.LLD || artifactType === BaArtifactType.FTC) {
+      const suffix = artifactType === BaArtifactType.LLD
+        ? await this.deriveLldSuffix(moduleDbId)
+        : await this.deriveFtcSuffix(moduleDbId);
       const base = `${artifactType}-${mod.moduleId}-${suffix}`;
       const existingSameStack = await this.prisma.baArtifact.findMany({
         where: { moduleDbId, artifactType, artifactId: { startsWith: base } },
@@ -673,7 +823,6 @@ export class BaSkillOrchestratorService {
       if (existingSameStack.length === 0) {
         artifactId = base;
       } else {
-        // Next available -vN
         let n = 2;
         const existingIds = new Set(existingSameStack.map((a) => a.artifactId));
         while (existingIds.has(`${base}-v${n}`)) n++;
@@ -681,11 +830,18 @@ export class BaSkillOrchestratorService {
       }
     }
 
-    // For LLD, snapshot the architect narrative onto the artifact row so the
-    // version history remains truthful even if the configurator is edited later.
+    // Snapshot the architect narrative onto the artifact row so version history
+    // stays truthful even if the configurator is edited later. LLD + FTC each
+    // have their own config table with a `narrative` column.
     let sourceNarrative: string | null = null;
     if (artifactType === BaArtifactType.LLD) {
       const cfg = await this.prisma.baLldConfig.findUnique({
+        where: { moduleDbId },
+        select: { narrative: true },
+      });
+      sourceNarrative = cfg?.narrative?.trim() ? cfg.narrative : null;
+    } else if (artifactType === BaArtifactType.FTC) {
+      const cfg = await this.prisma.baFtcConfig.findUnique({
         where: { moduleDbId },
         select: { narrative: true },
       });
@@ -702,10 +858,10 @@ export class BaSkillOrchestratorService {
       },
     });
 
-    // LLD sections are populated by BaLldParserService in the post-hook
-    // (with tidy-up + dedup). Skip the generic splitter for LLD to avoid
-    // storing every heading twice (once naively, once via the LLD parser).
-    if (artifactType === BaArtifactType.LLD) {
+    // LLD + FTC sections are populated by their dedicated parsers in the post-hook
+    // (with tidy-up + dedup). Skip the generic splitter for both to avoid
+    // storing each heading twice (naive splitter + domain parser).
+    if (artifactType === BaArtifactType.LLD || artifactType === BaArtifactType.FTC) {
       return { id: artifact.id };
     }
 
@@ -756,6 +912,21 @@ export class BaSkillOrchestratorService {
     if (config.narrative && config.narrative.trim()) {
       return `${base}-narrative`;
     }
+    return base;
+  }
+
+  /**
+   * Derive a short suffix for the FTC artifactId from the saved BaFtcConfig.
+   * Priority: testing framework > "default". When narrative is set, append
+   * `-narrative` to the suffix.
+   */
+  private async deriveFtcSuffix(moduleDbId: string): Promise<string> {
+    const config = await this.prisma.baFtcConfig.findUnique({ where: { moduleDbId } });
+    if (!config) return 'default';
+    const raw = (config.testingFramework ?? 'default').toLowerCase();
+    const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '');
+    let base = cleaned || 'default';
+    if (config.narrative && config.narrative.trim()) base = `${base}-narrative`;
     return base;
   }
 
@@ -982,13 +1153,13 @@ export class BaSkillOrchestratorService {
    * Backfill RTM for a project that already has FRD/EPIC/User Story/SubTask
    * artifacts but no RTM rows yet. Idempotent — re-runs each phase.
    */
-  async backfillProjectRtm(projectId: string): Promise<{ seeded: number; epics: number; stories: number; subtasks: number; llds: number }> {
+  async backfillProjectRtm(projectId: string): Promise<{ seeded: number; epics: number; stories: number; subtasks: number; llds: number; ftcs: number }> {
     const modules = await this.prisma.baModule.findMany({
       where: { projectId },
       include: { artifacts: true },
     });
 
-    let seeded = 0, epics = 0, stories = 0, subtasks = 0, llds = 0;
+    let seeded = 0, epics = 0, stories = 0, subtasks = 0, llds = 0, ftcs = 0;
 
     for (const mod of modules) {
       // FRD → seed rows
@@ -1031,9 +1202,20 @@ export class BaSkillOrchestratorService {
         await this.extendRtmWithLld(mod.id, projectId, activeLldId);
         llds++;
       }
+      // FTC → link test cases to RTM rows (uses the module's active ftcArtifactId
+      // when set, otherwise the newest FTC artifact for the module)
+      const activeFtcId = mod.ftcArtifactId
+        ?? mod.artifacts
+          .filter((a) => a.artifactType === 'FTC' as typeof a.artifactType)
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]?.id
+        ?? null;
+      if (activeFtcId) {
+        await this.extendRtmWithFtc(mod.id, projectId, activeFtcId);
+        ftcs++;
+      }
     }
 
-    return { seeded, epics, stories, subtasks, llds };
+    return { seeded, epics, stories, subtasks, llds, ftcs };
   }
 
   /** Reassemble an artifact's full markdown by concatenating section content (edited > AI). */
@@ -1214,6 +1396,91 @@ export class BaSkillOrchestratorService {
       case 'QA': return 'Testing';
       default: return null;
     }
+  }
+
+  /**
+   * Link every test case from the given FTC bundle back to matching RTM rows.
+   * Matching strategy:
+   *   - TC.linkedFeatureIds / linkedStoryIds / linkedSubtaskIds (authoritative)
+   *   - Fall back to scanning TC text for F-XX-XX / US-NNN / ST-USxxx patterns
+   * Also aggregates OWASP web + LLM categories observed on each row's TCs.
+   */
+  private async extendRtmWithFtc(
+    moduleDbId: string,
+    projectId: string,
+    ftcArtifactDbId: string,
+  ): Promise<void> {
+    const testCases = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId: ftcArtifactDbId },
+    });
+    if (testCases.length === 0) return;
+
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) return;
+
+    const rtmRows = await this.prisma.baRtmRow.findMany({
+      where: { projectId, moduleId: mod.moduleId },
+    });
+    if (rtmRows.length === 0) return;
+
+    const OWASP_WEB = new Set(['A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A08', 'A09', 'A10']);
+    const OWASP_LLM = new Set(['LLM01', 'LLM02', 'LLM03', 'LLM04', 'LLM05', 'LLM06', 'LLM07', 'LLM08', 'LLM09', 'LLM10']);
+
+    // rowId → { ids: Set<tcId>, refs: Set<TC-001>, web: Set, llm: Set }
+    type Bucket = { ids: Set<string>; refs: Set<string>; web: Set<string>; llm: Set<string> };
+    const attach: Record<string, Bucket> = {};
+    const ensure = (rowId: string): Bucket => {
+      if (!attach[rowId]) {
+        attach[rowId] = { ids: new Set(), refs: new Set(), web: new Set(), llm: new Set() };
+      }
+      return attach[rowId];
+    };
+
+    for (const tc of testCases) {
+      const raw = tc.aiContent ?? '';
+      const derivedFeatures = new Set<string>([...raw.matchAll(/\bF-\d{2}-\d{2}/g)].map((m) => m[0]));
+      const derivedStories = new Set<string>([...raw.matchAll(/\bUS-\d+/g)].map((m) => m[0]));
+      const derivedSubtasks = new Set<string>([...raw.matchAll(/\bST-[A-Z0-9]+-[A-Z]+-\d+/g)].map((m) => m[0]));
+
+      const effectiveFeatures = new Set<string>([
+        ...tc.linkedFeatureIds,
+        ...derivedFeatures,
+      ]);
+      const effectiveStories = new Set<string>([...tc.linkedStoryIds, ...derivedStories]);
+      const effectiveSubtasks = new Set<string>([...tc.linkedSubtaskIds, ...derivedSubtasks]);
+
+      for (const row of rtmRows) {
+        const hit =
+          (row.featureId && effectiveFeatures.has(row.featureId)) ||
+          (row.storyId && effectiveStories.has(row.storyId)) ||
+          (row.subtaskId && effectiveSubtasks.has(row.subtaskId));
+        if (!hit) continue;
+        const bucket = ensure(row.id);
+        bucket.ids.add(tc.id);
+        bucket.refs.add(tc.testCaseId);
+        if (tc.owaspCategory) {
+          if (OWASP_WEB.has(tc.owaspCategory)) bucket.web.add(tc.owaspCategory);
+          else if (OWASP_LLM.has(tc.owaspCategory)) bucket.llm.add(tc.owaspCategory);
+        }
+      }
+    }
+
+    let updated = 0;
+    for (const row of rtmRows) {
+      const hit = attach[row.id];
+      await this.prisma.baRtmRow.update({
+        where: { id: row.id },
+        data: {
+          ftcArtifactId: ftcArtifactDbId,
+          ftcTestCaseIds: hit ? Array.from(hit.ids) : [],
+          ftcTestCaseRefs: hit ? Array.from(hit.refs).sort() : [],
+          owaspWebCategories: hit ? Array.from(hit.web).sort() : [],
+          owaspLlmCategories: hit ? Array.from(hit.llm).sort() : [],
+        },
+      });
+      if (hit) updated++;
+    }
+    this.logger.log(`Extended ${updated}/${rtmRows.length} RTM rows with FTC test cases from ${ftcArtifactDbId}`);
   }
 
   private splitIntoSections(markdown: string): { key: string; label: string; content: string }[] {

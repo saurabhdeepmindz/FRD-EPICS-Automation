@@ -127,6 +127,10 @@ model BaProject {
   submittedBy String?
   clientLogo  String?         @db.Text   // base64 data-URI for preview cover
   status      BaProjectStatus @default(ACTIVE)
+  // Project-wide SQL dialect used by skills that emit SQL (FTC test data,
+  // verification scripts). Values: "postgresql" | "mysql" | "sqlserver" |
+  // "oracle" | "ansi". Default Postgres matches the app's own DB.
+  sqlDialect  String          @default("postgresql")
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -164,6 +168,9 @@ model BaModule {
   // v4 — LLD completion tracked independently of the existing status machine
   lldCompletedAt  DateTime?
   lldArtifactId   String?
+  // v4.2 — FTC (Functional Test Cases) completion, same independence as LLD
+  ftcCompletedAt  DateTime?
+  ftcArtifactId   String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -174,6 +181,7 @@ model BaModule {
   tbdFutureEntries BaTbdFutureEntry[]
   subtasks         BaSubTask[]
   lldConfig        BaLldConfig?
+  ftcConfig        BaFtcConfig?
 
   @@unique([projectId, moduleId])
   @@map("ba_modules")
@@ -260,6 +268,7 @@ enum BaArtifactType {
   PRD
   RTM
   LLD
+  FTC
 }
 
 enum BaArtifactStatus {
@@ -287,6 +296,7 @@ model BaArtifact {
   sections     BaArtifactSection[]
   subtasks     BaSubTask[]
   pseudoFiles  BaPseudoFile[]
+  testCases    BaTestCase[]
 
   @@map("ba_artifacts")
 }
@@ -365,6 +375,14 @@ model BaRtmRow {
   layer             String?   // Frontend / Backend / Database / Integration / Testing
   pseudoFileIds     String[]  @default([])
   pseudoFilePaths   String[]  @default([])
+  // FTC trace — populated after SKILL-07-FTC. testCaseIds already existed for
+  // pre-FTC SubTask test-case references; new columns below track the FTC
+  // artifact + OWASP coverage per RTM row.
+  ftcArtifactId     String?   // ba_artifacts.id of the active FTC bundle
+  ftcTestCaseIds    String[]  @default([])  // BaTestCase.id values
+  ftcTestCaseRefs   String[]  @default([])  // human-readable TC-001, TC-002-INT-01, ...
+  owaspWebCategories String[] @default([])  // A01, A03, ...
+  owaspLlmCategories String[] @default([])  // LLM01, LLM06, ...
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -572,4 +590,103 @@ model BaPseudoFile {
   @@unique([artifactDbId, path])
   @@index([artifactDbId])
   @@map("ba_pseudo_files")
+}
+
+// ─── v4.2: FTC Configuration + Test Cases + Attachments ─────────────────────
+
+model BaFtcConfig {
+  id                   String    @id @default(uuid())
+  moduleDbId           String    @unique
+  module               BaModule  @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  // Test framework + coverage scope
+  testingFramework     String?   // Playwright | Cypress | Selenium | pytest | JUnit | TestNG | Manual
+  coverageTarget       String?   // Smoke | Regression | Full
+  // OWASP preferences (MVP: Web Top 10 + LLM Top 10)
+  owaspWebEnabled      Boolean   @default(true)
+  owaspLlmEnabled      Boolean   @default(true)
+  excludedOwaspWeb     String[]  @default([])  // e.g. ["A10"]
+  excludedOwaspLlm     String[]  @default([])  // e.g. ["LLM08"]
+  // When true and an LLD artifact exists for the module, generate white-box TCs
+  includeLldReferences Boolean   @default(true)
+  // FTC template — optional uploaded structural template (master data entry id)
+  ftcTemplateId        String?
+  // Free-form tester/architect notes (beyond the narrative field)
+  customNotes          String?   @db.Text
+  // Narrative-driven FTC (mirrors LLD narrative flow — additive)
+  narrative            String?   @db.Text
+  useAsAdditional      Boolean   @default(true)
+  attachments          BaFtcConfigAttachment[]
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@map("ba_ftc_configs")
+}
+
+model BaFtcConfigAttachment {
+  id              String       @id @default(uuid())
+  ftcConfigId     String
+  ftcConfig       BaFtcConfig  @relation(fields: [ftcConfigId], references: [id], onDelete: Cascade)
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageBackend  String
+  storageKey      String
+  extractedText   String?      @db.Text
+  extractionNote  String?
+  createdAt       DateTime     @default(now())
+
+  @@index([ftcConfigId])
+  @@map("ba_ftc_config_attachments")
+}
+
+// Individual functional test case produced by SKILL-07-FTC. Parallel to
+// BaPseudoFile but with structured fields suited to FTC: steps, expected,
+// SQL setup/verify, OWASP tags, integration flag, playwright hints, and
+// many-to-many traceability to features / stories / subtasks / pseudo files.
+model BaTestCase {
+  id                   String     @id @default(uuid())
+  artifactDbId         String
+  artifact             BaArtifact @relation(fields: [artifactDbId], references: [id], onDelete: Cascade)
+  testCaseId           String     // human-readable: TC-001, TC-001-INT-01
+  title                String
+  category             String?    // Functional | Integration | Security | Data | UI | Performance | ...
+  scope                String     @default("black_box") // black_box | white_box
+  priority             String?    // P0 | P1 | P2
+  preconditions        String?    @db.Text
+  steps                String     @db.Text // markdown-formatted numbered steps
+  expected             String     @db.Text // markdown-formatted expected result
+  // SQL helpers. Dialect comes from BaProject.sqlDialect.
+  sqlSetup             String?    @db.Text // run before the test (insert fixtures, create tenant, …)
+  sqlVerify            String?    @db.Text // run after the test (assert row state, audit entries, …)
+  // Integration sub-test flag — these carry a parent testCaseId like TC-001
+  isIntegrationTest    Boolean    @default(false)
+  parentTestCaseId     String?    // the parent TC this integration case belongs to
+  // OWASP tags (web A01-A10 or LLM LLM01-LLM10, null when not applicable)
+  owaspCategory        String?
+  // Playwright automation hints (selectors + actions + assertions). Plain text
+  // for MVP; v2 may render these into runnable .spec.ts.
+  playwrightHint       String?    @db.Text
+  // Hints for the future v5.1 TDD codegen skill (what unit-level assertions
+  // this functional case implies). Plain text; codegen parses later.
+  developerHints       String?    @db.Text
+  // Many-to-many traceability via opaque id arrays. IDs come from BaArtifact
+  // parse time (FRD feature ids, EPIC ids, story ids, subtask ids, pseudo file ids).
+  linkedFeatureIds     String[]   @default([])
+  linkedEpicIds        String[]   @default([])
+  linkedStoryIds       String[]   @default([])
+  linkedSubtaskIds     String[]   @default([])
+  linkedPseudoFileIds  String[]   @default([])
+  linkedLldArtifactId  String?    // when the TC is white-box, which LLD it references
+  tags                 String[]   @default([])
+  // Raw AI output for this TC (before any human edits), and the edited copy
+  aiContent            String     @db.Text
+  editedContent        String?    @db.Text
+  isHumanModified      Boolean    @default(false)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  @@unique([artifactDbId, testCaseId])
+  @@index([artifactDbId])
+  @@index([parentTestCaseId])
+  @@map("ba_test_cases")
 }
