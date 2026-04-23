@@ -480,7 +480,123 @@ Exception Flows (shown as alt blocks in UML):
 
 **Rule:** Every Backend and Integration SubTask must have Section 21 populated. Frontend SubTasks may omit this section. TBD-Future participants are included with their assumed interfaces and marked [TBD-Future].
 
-#### Section 22 — Test Case IDs **[AUTOMATION CRITICAL]**
+#### Section 22 — End-to-End Integration Flow **[AUTOMATION CRITICAL — Sprint Sequencing]**
+
+This section is MANDATORY for EVERY SubTask regardless of team type (FE, BE, IN, QA). It provides the complete picture of how all SubTasks within the same User Story (or closely related feature flow) connect end-to-end. Every developer — frontend, backend, or QA — sees the same content so they understand where their piece fits.
+
+**Rule:** This section is IDENTICAL across all SubTasks for the same User Story / feature flow. When one SubTask's Section 22 is written, copy it verbatim into every other SubTask in the same flow.
+
+---
+
+##### Part A — Flow Chain
+
+A sequential arrow diagram showing every SubTask in the complete user action flow, from the FE component that initiates the action through every BE layer to the response handling. Each step is labelled with team, SubTask ID, class, method, and any TBD-Future flags.
+
+```
+End-to-End Flow: Admin Assigns Task (US-013)
+
+[FE] ST-US013-FE-01  TaskAssignmentForm.render()
+  │  User fills form fields and clicks "Assign Task Now"
+  ▼
+[FE] ST-US013-FE-05  TaskAssignmentForm.handleSubmit()
+  │  Validates client-side, calls POST /api/tasks
+  ▼
+[BE] ST-US013-BE-07  TaskController.createTask()
+  │  Receives HTTP request, extracts DTO, delegates to service
+  ▼
+[BE] ST-US013-BE-08  AuthGuard.canActivate()
+  │  Verifies caller has ADMIN role
+  ▼
+[BE] ST-US013-BE-05  TaskService.validateInputs()
+  │  Applies TASK_TYPE_REQUIRED, DUE_DATE_MUST_BE_FUTURE, NOTES_MAX_LENGTH
+  ▼
+[BE] ST-US013-BE-04  TaskService.createTask()
+  │  Core business logic — orchestrates the full creation flow
+  ▼
+[BE] ST-US013-BE-06  ProfessionalService.getProfessionalById()  [TBD-Future — TBD-001]
+  │  Validates assignee exists and is active (stub until MOD-03)
+  ▼
+[BE] ST-US013-BE-03  TaskRepository.save()
+  │  Persists Task entity to database
+  ▼
+[IN] ST-US013-IN-02  NotificationServiceClient.sendTaskAssignment()
+  │  Dispatches notification to assigned professional
+  ▼
+[BE] ST-US013-BE-06  AuditLogService.logAdminAction()
+  │  Records admin action for audit trail
+  ▼
+[BE] ST-US013-BE-07  TaskController → returns TaskConfirmationResponse
+  │  HTTP 201 with taskId, timestamp, notificationStatus
+  ▼
+[FE] ST-US013-FE-04  TaskAssignmentForm.handleResponse()
+  │  Shows success toast, navigates back to queue
+```
+
+---
+
+##### Part B — Dependency Table
+
+| SubTask ID | Team | Layer | Class | Depends On | Depended On By | Status |
+|-----------|------|-------|-------|-----------|---------------|--------|
+| ST-US013-BE-01 | BE | Database | Migration | — | ST-US013-BE-02 | CONFIRMED |
+| ST-US013-BE-02 | BE | Entity | TaskEntity | ST-US013-BE-01 | ST-US013-BE-03, BE-04 | CONFIRMED |
+| ST-US013-BE-03 | BE | Repository | TaskRepository | ST-US013-BE-02 | ST-US013-BE-04 | CONFIRMED |
+| ST-US013-BE-04 | BE | Service | TaskService | ST-US013-BE-03, BE-05, BE-06 | ST-US013-BE-07 | CONFIRMED-PARTIAL |
+| ST-US013-BE-05 | BE | Validation | TaskService | — | ST-US013-BE-04 | CONFIRMED |
+| ST-US013-BE-06 | BE | Integration | TaskService | — | ST-US013-BE-04 | CONFIRMED-PARTIAL [TBD-001] |
+| ST-US013-BE-07 | BE | Controller | TaskController | ST-US013-BE-04, BE-08 | ST-US013-FE-05 | CONFIRMED |
+| ST-US013-BE-08 | BE | Auth | AuthGuard | — | ST-US013-BE-07 | CONFIRMED |
+| ST-US013-BE-09 | BE | Exception | Exceptions | — | ST-US013-BE-04, BE-05 | CONFIRMED |
+| ST-US013-FE-01 | FE | Component | TaskAssignmentForm | ST-US013-BE-07 (API ready) | — | CONFIRMED |
+| ST-US013-FE-05 | FE | Integration | TaskAssignmentForm | ST-US013-BE-07 | ST-US013-FE-04 | CONFIRMED |
+| ST-US013-IN-02 | IN | Connector | NotificationClient | — | ST-US013-BE-04 | CONFIRMED |
+| ST-US013-QA-01 | QA | Test | — | All above | — | CONFIRMED |
+
+Reading this table:
+- "Depends On" = what must be done before I can start
+- "Depended On By" = what is waiting for me to finish
+- A developer picks up ST-US013-BE-04 → sees they need BE-03, BE-05, BE-06 done first → sees BE-07 is waiting for them
+
+---
+
+##### Part C — Sprint Sequencing
+
+Prioritised implementation order that `/prd` uses when building TASKS.md. This ensures correct build sequence — no SubTask starts before its dependencies are ready.
+
+```
+Sprint Sequencing — US-013: System validates and persists task record
+
+P0 (Must build first — blocking dependencies):
+  1. ST-US013-BE-01  Database schema / migration
+  2. ST-US013-BE-02  TaskEntity data model
+  3. ST-US013-BE-03  TaskRepository
+  4. ST-US013-BE-09  Exception classes
+  5. ST-US013-BE-05  Input validation rules
+
+P1 (Core logic — depends on P0):
+  6. ST-US013-BE-06  Integration calls + TBD-Future stubs
+  7. ST-US013-IN-02  NotificationServiceClient
+  8. ST-US013-BE-04  TaskService.createTask() — primary method
+  9. ST-US013-BE-08  Auth guard
+
+P2 (API + Frontend — depends on P1):
+  10. ST-US013-BE-07  TaskController (API endpoint)
+  11. ST-US013-FE-01  TaskAssignmentForm component
+  12. ST-US013-FE-05  API integration in form
+
+P3 (Tests — after implementation):
+  13. ST-US013-BE-10  Unit tests — TaskService
+  14. ST-US013-BE-11  Integration tests — API endpoint
+  15. ST-US013-FE-08  Unit tests — TaskAssignmentForm
+  16. ST-US013-FE-09  E2E test — full flow
+  17. ST-US013-QA-01 to QA-07  QA test cases
+```
+
+Rule for /prd task generation: When building TASKS.md, read Part C of every SubTask's Section 22. Tasks within the same P-level can be parallelised. Tasks in P(N) must not start before all P(N-1) tasks are complete. This prevents "blocked by dependency" issues during the sprint.
+
+---
+
+#### Section 23 — Test Case IDs **[AUTOMATION CRITICAL]**
 List of TC-IDs that verify this SubTask. Linked in source file header and RTM.
 
 For CONFIRMED-PARTIAL SubTasks, include TBD-Future stub test cases:
@@ -494,10 +610,10 @@ TC-US013-BE-006  TBD-Future stub — verify ProfessionalServiceStub returns expe
                  [Update to real integration test when MOD-03 confirmed]
 ```
 
-#### Section 23 — Acceptance Criteria
+#### Section 24 — Acceptance Criteria
 Definition of Done for this specific SubTask.
 
-#### Section 24 — Testing Notes
+#### Section 25 — Testing Notes
 How to manually verify this SubTask works. For TBD-Future SubTasks, include stub testing guidance.
 
 ---
@@ -520,7 +636,8 @@ How to manually verify this SubTask works. For TBD-Future SubTasks, include stub
 - [ ] Traceability Header has all 8 standard fields (Section 19)
 - [ ] Project Structure Definition populated — Full File Path specified (Section 20)
 - [ ] Sequence Diagram Inputs populated for all Backend and Integration SubTasks (Section 21)
-- [ ] Test Case IDs listed (Section 22)
+- [ ] End-to-End Integration Flow populated — identical across all SubTasks in same flow (Section 22)
+- [ ] Test Case IDs listed (Section 23)
 
 **TBD-Future specific checks:**
 - [ ] Every TBD-Future Integration Point has: Status, TBD-Future Ref, Referenced Module, Assumed Method, Assumed Return, Stub Implementation guidance, Resolution Action
@@ -528,6 +645,9 @@ How to manually verify this SubTask works. For TBD-Future SubTasks, include stub
 - [ ] Traceability Header includes TBD-Future Dependencies section
 - [ ] Test Case IDs include stub test cases for TBD-Future integration points (QA-07)
 - [ ] No SubTask is blocked or marked incomplete due to TBD-Future integrations
+- [ ] End-to-End Integration Flow (Section 22) includes TBD-Future steps with flags in Part A
+- [ ] Dependency Table (Part B) shows TBD-Future status for affected SubTasks
+- [ ] Sprint Sequencing (Part C) accounts for TBD-Future stubs in P1 priority
 
 ---
 
@@ -593,6 +713,8 @@ When MOD-03 is later processed and its SubTasks are approved:
 - [ ] Every Integration Point fully documented
 - [ ] Every Exception fully documented
 - [ ] Traceability Header with all fields including TBD-Future Dependencies
+- [ ] End-to-End Integration Flow (Section 22) populated with Parts A, B, C
+- [ ] Section 22 is identical across all SubTasks in the same User Story / feature flow
 
 **TBD-Future SubTasks additionally:**
 - [ ] Stub Implementation guidance in every TBD-Future Integration Point

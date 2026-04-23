@@ -11,6 +11,7 @@ import { AiService } from './ai.service';
 import { SuggestDto } from './dto/suggest.dto';
 import { ParseDto } from './dto/parse.dto';
 import { GapCheckDto } from './dto/gap-check.dto';
+import { RefineSectionDto } from '../ba-tool/dto/refine-section.dto';
 
 @Controller('ai')
 export class AiController {
@@ -20,6 +21,12 @@ export class AiController {
   @Post('suggest')
   suggest(@Body() dto: SuggestDto) {
     return this.aiService.suggest(dto);
+  }
+
+  /** POST /api/ai/ba-refine-section — refine BA artifact section text */
+  @Post('ba-refine-section')
+  baRefineSection(@Body() dto: RefineSectionDto) {
+    return this.aiService.refineBaSection(dto);
   }
 
   /** POST /api/ai/parse — parse raw text into 22-section PRD */

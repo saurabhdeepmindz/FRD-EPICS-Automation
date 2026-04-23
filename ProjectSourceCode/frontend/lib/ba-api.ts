@@ -12,10 +12,23 @@ export interface BaProject {
   name: string;
   projectCode: string;
   description: string | null;
+  productName: string | null;
+  clientName: string | null;
+  submittedBy: string | null;
+  clientLogo: string | null;
   status: 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
   createdAt: string;
   updatedAt: string;
   modules: BaModuleSummary[];
+}
+
+export interface UpdateBaProjectDto {
+  name?: string;
+  description?: string;
+  productName?: string;
+  clientName?: string;
+  submittedBy?: string;
+  clientLogo?: string;
 }
 
 export interface BaModuleSummary {
@@ -44,8 +57,11 @@ export interface BaModule {
   moduleStatus: BaModuleStatus;
   processedAt: string | null;
   approvedAt: string | null;
+  lldCompletedAt: string | null;
+  lldArtifactId: string | null;
   createdAt: string;
   updatedAt: string;
+  project?: Pick<BaProject, 'id' | 'name' | 'projectCode' | 'productName' | 'clientName' | 'submittedBy'>;
   screens: BaScreen[];
   flows: BaFlow[];
   skillExecutions: BaSkillExecution[];
@@ -96,7 +112,28 @@ export interface BaArtifact {
   artifactId: string;
   status: 'DRAFT' | 'CONFIRMED_PARTIAL' | 'CONFIRMED' | 'APPROVED';
   approvedAt: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   sections: BaArtifactSection[];
+  module?: {
+    id: string;
+    moduleId: string;
+    moduleName: string;
+    packageName: string;
+    project?: BaProject;
+    screens?: BaScreenLite[];
+  };
+}
+
+/** Lightweight screen shape attached to artifacts/subtasks — no audio/raw files. */
+export interface BaScreenLite {
+  id: string;
+  screenId: string;
+  screenTitle: string;
+  screenType: string | null;
+  fileData: string;
+  displayOrder: number;
+  textDescription: string | null;
 }
 
 export interface BaArtifactSection {
@@ -108,6 +145,8 @@ export interface BaArtifactSection {
   editedContent: string | null;
   isHumanModified: boolean;
   isLocked: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface BaTbdFutureEntry {
@@ -149,6 +188,11 @@ export interface BaRtmRow {
   integrationStatus: string | null;
   tbdFutureRef: string | null;
   tbdResolved: boolean;
+  // LLD linkage — populated after SKILL-06-LLD runs
+  lldArtifactId: string | null;
+  layer: string | null;              // Frontend / Backend / Database / Integration / Testing
+  pseudoFileIds: string[];
+  pseudoFilePaths: string[];
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
@@ -174,6 +218,11 @@ export async function getBaProject(id: string): Promise<BaProject> {
 
 export async function archiveBaProject(id: string): Promise<BaProject> {
   const { data } = await api.post<BaProject>(`/ba/projects/${id}/archive`);
+  return data;
+}
+
+export async function updateBaProject(id: string, payload: UpdateBaProjectDto): Promise<BaProject> {
+  const { data } = await api.patch<BaProject>(`/ba/projects/${id}`, payload);
   return data;
 }
 
@@ -210,16 +259,37 @@ export async function uploadBaScreen(
   return data;
 }
 
+/**
+ * Upload screens in chunks to avoid:
+ *   (a) hitting any single-request multipart size limit
+ *   (b) the frontend 30s timeout bailing while the backend is still
+ *       decoding+storing base64 images (user sees "Failed" even though
+ *       rows actually got inserted).
+ *
+ * Uploads up to CHUNK_SIZE files per request with a 5-minute per-request
+ * timeout. Returns all uploaded screens in order.
+ */
 export async function uploadBaScreensBatch(
   moduleDbId: string,
   files: File[],
+  onProgress?: (uploaded: number, total: number) => void,
 ): Promise<BaScreen[]> {
-  const formData = new FormData();
-  for (const f of files) formData.append('files', f);
-  const { data } = await api.post<BaScreen[]>(`/ba/modules/${moduleDbId}/screens/batch`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return data;
+  const CHUNK_SIZE = 5;
+  const TIMEOUT_MS = 300_000;
+  const uploaded: BaScreen[] = [];
+  for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+    const chunk = files.slice(i, i + CHUNK_SIZE);
+    const formData = new FormData();
+    for (const f of chunk) formData.append('files', f);
+    const { data } = await api.post<BaScreen[]>(
+      `/ba/modules/${moduleDbId}/screens/batch`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: TIMEOUT_MS },
+    );
+    uploaded.push(...data);
+    onProgress?.(Math.min(i + CHUNK_SIZE, files.length), files.length);
+  }
+  return uploaded;
 }
 
 export async function updateBaScreen(
@@ -370,6 +440,21 @@ export async function approveArtifact(artifactDbId: string): Promise<BaArtifact>
   return data;
 }
 
+// ─── AI refine-section ──────────────────────────────────────────────────────
+
+export interface BaRefineSectionPayload {
+  artifactType: string;
+  sectionLabel: string;
+  currentText: string;
+  moduleContext?: string;
+  instruction?: string;
+}
+
+export async function baRefineSection(payload: BaRefineSectionPayload): Promise<{ suggestion: string; model: string }> {
+  const { data } = await api.post<{ suggestion: string; model: string }>(`/ai/ba-refine-section`, payload);
+  return data;
+}
+
 // ─── TBD-Future Registry ─────────────────────────────────────────────────────
 
 export async function listTbdEntries(projectId: string): Promise<BaTbdFutureEntry[]> {
@@ -442,7 +527,16 @@ export interface BaSubTask {
   methodName: string | null;
   approvedAt: string | null;
   createdAt: string;
+  updatedAt: string;
   sections?: BaSubTaskSection[];
+  module?: {
+    id: string;
+    moduleId: string;
+    moduleName: string;
+    packageName: string;
+    project?: BaProject;
+    screens?: BaScreenLite[];
+  };
 }
 
 export interface BaSubTaskSection {
@@ -453,6 +547,8 @@ export interface BaSubTaskSection {
   aiContent: string;
   editedContent: string | null;
   isHumanModified: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SprintSequence {
@@ -505,4 +601,432 @@ export const SKILL_LABELS: Record<string, string> = {
   'SKILL-02-S': 'EPIC Generation',
   'SKILL-04': 'User Stories',
   'SKILL-05': 'SubTasks',
+  'SKILL-06-LLD': 'Low-Level Design',
 };
+
+// ─── v4: Architect Console (master data + templates) ─────────────────────────
+
+export type BaMasterDataCategory =
+  | 'FRONTEND_STACK'
+  | 'BACKEND_STACK'
+  | 'DATABASE'
+  | 'STREAMING'
+  | 'CACHING'
+  | 'STORAGE'
+  | 'CLOUD'
+  | 'ARCHITECTURE'
+  | 'PROJECT_STRUCTURE'
+  | 'BACKEND_TEMPLATE'
+  | 'FRONTEND_TEMPLATE'
+  | 'LLD_TEMPLATE'
+  | 'CODING_GUIDELINES';
+
+export type BaMasterDataScope = 'GLOBAL' | 'PROJECT';
+export type BaTemplateModifier = 'AI' | 'HUMAN';
+
+export const TECH_STACK_CATEGORIES: BaMasterDataCategory[] = [
+  'FRONTEND_STACK',
+  'BACKEND_STACK',
+  'DATABASE',
+  'STREAMING',
+  'CACHING',
+  'STORAGE',
+  'CLOUD',
+  'ARCHITECTURE',
+];
+
+export const TEMPLATE_CATEGORIES: BaMasterDataCategory[] = [
+  'PROJECT_STRUCTURE',
+  'BACKEND_TEMPLATE',
+  'FRONTEND_TEMPLATE',
+  'LLD_TEMPLATE',
+  'CODING_GUIDELINES',
+];
+
+export const CATEGORY_LABELS: Record<BaMasterDataCategory, string> = {
+  FRONTEND_STACK: 'Frontend Stack',
+  BACKEND_STACK: 'Backend Stack',
+  DATABASE: 'Database',
+  STREAMING: 'Streaming',
+  CACHING: 'Caching',
+  STORAGE: 'Storage',
+  CLOUD: 'Cloud',
+  ARCHITECTURE: 'Architecture',
+  PROJECT_STRUCTURE: 'Project Structure',
+  BACKEND_TEMPLATE: 'Backend Template',
+  FRONTEND_TEMPLATE: 'Frontend Template',
+  LLD_TEMPLATE: 'LLD Document Template',
+  CODING_GUIDELINES: 'Coding Guidelines',
+};
+
+export function isTechStackCategory(c: BaMasterDataCategory): boolean {
+  return TECH_STACK_CATEGORIES.includes(c);
+}
+
+export function isTemplateCategory(c: BaMasterDataCategory): boolean {
+  return TEMPLATE_CATEGORIES.includes(c);
+}
+
+export interface BaTemplate {
+  id: string;
+  category: BaMasterDataCategory;
+  name: string;
+  version: number;
+  parentTemplateId: string | null;
+  lastModifiedBy: BaTemplateModifier;
+  scope: BaMasterDataScope;
+  projectId: string | null;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BaMasterDataEntry {
+  id: string;
+  category: BaMasterDataCategory;
+  scope: BaMasterDataScope;
+  projectId: string | null;
+  name: string;
+  value: string;
+  description: string | null;
+  templateId: string | null;
+  template?: BaTemplate | null;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FuzzyMatchCandidate {
+  id: string;
+  name: string;
+  scope: BaMasterDataScope;
+  distance: number;
+}
+
+export interface CreateMasterDataEntryInput {
+  category: BaMasterDataCategory;
+  scope?: BaMasterDataScope;
+  projectId?: string | null;
+  name: string;
+  value: string;
+  description?: string;
+  templateId?: string | null;
+  force?: boolean;
+}
+
+export async function listMasterData(
+  category: BaMasterDataCategory,
+  projectId?: string,
+): Promise<BaMasterDataEntry[]> {
+  const { data } = await api.get<BaMasterDataEntry[]>('/ba/master-data', {
+    params: { category, ...(projectId ? { projectId } : {}) },
+  });
+  return data;
+}
+
+export async function createMasterDataEntry(
+  input: CreateMasterDataEntryInput,
+): Promise<BaMasterDataEntry> {
+  const { data } = await api.post<BaMasterDataEntry>('/ba/master-data', input);
+  return data;
+}
+
+export async function updateMasterDataEntry(
+  id: string,
+  patch: Partial<Pick<BaMasterDataEntry, 'name' | 'value' | 'description' | 'isArchived'>>,
+): Promise<BaMasterDataEntry> {
+  const { data } = await api.patch<BaMasterDataEntry>(`/ba/master-data/${id}`, patch);
+  return data;
+}
+
+export async function archiveMasterDataEntry(id: string): Promise<void> {
+  await api.delete(`/ba/master-data/${id}`);
+}
+
+export async function promoteMasterDataEntry(id: string): Promise<BaMasterDataEntry> {
+  const { data } = await api.post<BaMasterDataEntry>(`/ba/master-data/${id}/promote`, null, {
+    headers: { 'x-is-admin': 'true' },
+  });
+  return data;
+}
+
+export async function bulkUploadMasterData(
+  entries: CreateMasterDataEntryInput[],
+): Promise<{ ok: number; skipped: number; errors: string[] }> {
+  const { data } = await api.post<{ ok: number; skipped: number; errors: string[] }>(
+    '/ba/master-data/bulk',
+    { entries },
+  );
+  return data;
+}
+
+export async function reseedMasterDataCategory(
+  category: BaMasterDataCategory,
+): Promise<{ category: BaMasterDataCategory; seeded: number }> {
+  const { data } = await api.post<{ category: BaMasterDataCategory; seeded: number }>(
+    '/ba/master-data/reseed',
+    null,
+    { params: { category } },
+  );
+  return data;
+}
+
+export async function dedupeCheck(
+  category: BaMasterDataCategory,
+  name: string,
+  projectId?: string,
+): Promise<FuzzyMatchCandidate[]> {
+  const { data } = await api.post<FuzzyMatchCandidate[]>('/ba/master-data/dedupe-check', {
+    category,
+    name,
+    ...(projectId ? { projectId } : {}),
+  });
+  return data;
+}
+
+// ─── Templates ───────────────────────────────────────────────────────────────
+
+export async function listTemplates(
+  category: BaMasterDataCategory,
+  projectId?: string,
+): Promise<BaTemplate[]> {
+  const { data } = await api.get<BaTemplate[]>('/ba/templates', {
+    params: { category, ...(projectId ? { projectId } : {}) },
+  });
+  return data;
+}
+
+export async function getTemplate(id: string): Promise<BaTemplate> {
+  const { data } = await api.get<BaTemplate>(`/ba/templates/${id}`);
+  return data;
+}
+
+export async function getTemplateLineage(id: string): Promise<BaTemplate[]> {
+  const { data } = await api.get<BaTemplate[]>(`/ba/templates/${id}/lineage`);
+  return data;
+}
+
+export async function forkTemplate(
+  id: string,
+  payload: { projectId: string; name?: string; content?: string },
+): Promise<BaTemplate> {
+  const { data } = await api.patch<BaTemplate>(`/ba/templates/${id}`, payload);
+  return data;
+}
+
+export async function uploadTemplate(params: {
+  file: File;
+  category: BaMasterDataCategory;
+  name: string;
+  description?: string;
+  scope?: BaMasterDataScope;
+  projectId?: string;
+}): Promise<{ entry: BaMasterDataEntry; template: BaTemplate }> {
+  const form = new FormData();
+  form.append('file', params.file);
+  form.append('category', params.category);
+  form.append('name', params.name);
+  if (params.description) form.append('description', params.description);
+  if (params.scope) form.append('scope', params.scope);
+  if (params.projectId) form.append('projectId', params.projectId);
+  const { data } = await api.post<{ entry: BaMasterDataEntry; template: BaTemplate }>(
+    '/ba/templates/upload',
+    form,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120_000,
+    },
+  );
+  return data;
+}
+
+// ─── v4.1: LLD config + pseudo files + generate ──────────────────────────────
+
+export interface BaLldConfig {
+  id: string;
+  moduleDbId: string;
+  frontendStackId: string | null;
+  backendStackId: string | null;
+  databaseId: string | null;
+  streamingId: string | null;
+  cachingId: string | null;
+  storageId: string | null;
+  cloudId: string | null;
+  architectureId: string | null;
+  cloudServices: string | null;
+  projectStructureId: string | null;
+  backendTemplateId: string | null;
+  frontendTemplateId: string | null;
+  lldTemplateId: string | null;
+  codingGuidelinesId: string | null;
+  nfrValues: Record<string, string> | null;
+  customNotes: string | null;
+  // Narrative-driven LLD (additive)
+  narrative: string | null;
+  useAsAdditional: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BaLldAttachmentMeta {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  extractionNote: string | null;
+  storageBackend: string;
+  createdAt: string;
+}
+
+export interface BaLldAttachmentList {
+  attachments: BaLldAttachmentMeta[];
+  totalBytes: number;
+  maxTotalBytes: number;
+}
+
+export interface BaLldGap {
+  id: string;
+  category: string;
+  question: string;
+  suggestion: string;
+}
+
+export interface LldConfigBundle {
+  config: BaLldConfig | null;
+  moduleStatus: BaModuleStatus;
+  lldCompletedAt: string | null;
+  lldArtifactId: string | null;
+}
+
+export interface BaPseudoFile {
+  id: string;
+  artifactDbId: string;
+  path: string;
+  language: string;
+  aiContent: string;
+  editedContent: string | null;
+  isHumanModified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LldBundle {
+  artifact: (BaArtifact & { sections: BaArtifactSection[] }) | null;
+  pseudoFiles: BaPseudoFile[];
+}
+
+export async function getLldConfig(moduleDbId: string): Promise<LldConfigBundle> {
+  const { data } = await api.get<LldConfigBundle>(`/ba/modules/${moduleDbId}/lld/config`);
+  return data;
+}
+
+export async function saveLldConfig(moduleDbId: string, payload: Partial<Omit<BaLldConfig, 'id' | 'moduleDbId' | 'createdAt' | 'updatedAt'>>): Promise<BaLldConfig> {
+  const { data } = await api.put<BaLldConfig>(`/ba/modules/${moduleDbId}/lld/config`, payload);
+  return data;
+}
+
+export async function generateLld(moduleDbId: string): Promise<{ executionId: string; skill: string; status: string }> {
+  const { data } = await api.post<{ executionId: string; skill: string; status: string }>(
+    `/ba/modules/${moduleDbId}/generate-lld`,
+    null,
+    { timeout: 10_000 },
+  );
+  return data;
+}
+
+// ─── Narrative attachments + gap-check ─────────────────────────────────────
+
+export async function listLldAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {
+  const { data } = await api.get<BaLldAttachmentList>(`/ba/modules/${moduleDbId}/lld/attachments`);
+  return data;
+}
+
+export async function uploadLldAttachments(moduleDbId: string, files: File[]): Promise<BaLldAttachmentList> {
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  const { data } = await api.post<BaLldAttachmentList>(
+    `/ba/modules/${moduleDbId}/lld/attachments`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+  );
+  return data;
+}
+
+export async function deleteLldAttachment(moduleDbId: string, attachmentId: string): Promise<{ deleted: string }> {
+  const { data } = await api.delete<{ deleted: string }>(
+    `/ba/modules/${moduleDbId}/lld/attachments/${attachmentId}`,
+  );
+  return data;
+}
+
+export async function lldGapCheck(moduleDbId: string): Promise<{ gaps: BaLldGap[]; model: string }> {
+  const { data } = await api.post<{ gaps: BaLldGap[]; model: string }>(
+    `/ba/modules/${moduleDbId}/lld/gap-check`,
+    null,
+    { timeout: 120_000 },
+  );
+  return data;
+}
+
+export async function getLld(moduleDbId: string): Promise<LldBundle> {
+  const { data } = await api.get<LldBundle>(`/ba/modules/${moduleDbId}/lld`);
+  return data;
+}
+
+/** Summary row per LLD artifact attached to a module (one per stack combination). */
+export interface LldArtifactSummary {
+  id: string;
+  artifactId: string;          // e.g. LLD-MOD-01-langchain
+  status: 'DRAFT' | 'CONFIRMED_PARTIAL' | 'CONFIRMED' | 'APPROVED';
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sectionCount: number;
+  pseudoFileCount: number;
+  languages: string[];
+  isCurrent: boolean;          // true if this is the module's active LLD
+}
+
+export async function listLldsForModule(moduleDbId: string): Promise<LldArtifactSummary[]> {
+  const { data } = await api.get<LldArtifactSummary[]>(`/ba/modules/${moduleDbId}/llds`);
+  return data;
+}
+
+export async function listPseudoFilesByArtifact(artifactDbId: string): Promise<BaPseudoFile[]> {
+  const { data } = await api.get<BaPseudoFile[]>(`/ba/artifacts/${artifactDbId}/pseudo-files`);
+  return data;
+}
+
+export async function getPseudoFile(id: string): Promise<BaPseudoFile> {
+  const { data } = await api.get<BaPseudoFile>(`/ba/pseudo-files/${id}`);
+  return data;
+}
+
+/** Trigger a browser download of a blob returned by an API endpoint. */
+async function downloadBlob(path: string, filename: string): Promise<void> {
+  const response = await api.get(path, { responseType: 'blob', timeout: 120_000 });
+  const blob = new Blob([response.data]);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadPseudoFile(id: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/pseudo-files/${id}/download`, filename);
+}
+
+export function downloadPseudoFilesZip(artifactDbId: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/artifacts/${artifactDbId}/pseudo-files/zip`, filename);
+}
+
+export function downloadProjectStructureZip(artifactDbId: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/artifacts/${artifactDbId}/project-structure/zip`, filename);
+}
+
+export async function savePseudoFile(id: string, editedContent: string): Promise<BaPseudoFile> {
+  const { data } = await api.put<BaPseudoFile>(`/ba/pseudo-files/${id}`, { editedContent });
+  return data;
+}

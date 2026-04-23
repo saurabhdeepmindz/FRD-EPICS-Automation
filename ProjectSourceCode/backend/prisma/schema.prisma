@@ -122,12 +122,18 @@ model BaProject {
   name        String
   projectCode String          @unique
   description String?
+  productName String?         // Required before EPIC generation
+  clientName  String?
+  submittedBy String?
+  clientLogo  String?         @db.Text   // base64 data-URI for preview cover
   status      BaProjectStatus @default(ACTIVE)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   modules     BaModule[]
   rtmRows     BaRtmRow[]
+  masterDataEntries BaMasterDataEntry[]
+  templates   BaTemplate[]
 
   @@map("ba_projects")
 }
@@ -155,6 +161,9 @@ model BaModule {
   moduleStatus    BaModuleStatus @default(DRAFT)
   processedAt     DateTime?
   approvedAt      DateTime?
+  // v4 — LLD completion tracked independently of the existing status machine
+  lldCompletedAt  DateTime?
+  lldArtifactId   String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -164,6 +173,7 @@ model BaModule {
   artifacts        BaArtifact[]
   tbdFutureEntries BaTbdFutureEntry[]
   subtasks         BaSubTask[]
+  lldConfig        BaLldConfig?
 
   @@unique([projectId, moduleId])
   @@map("ba_modules")
@@ -249,6 +259,7 @@ enum BaArtifactType {
   SUBTASK
   PRD
   RTM
+  LLD
 }
 
 enum BaArtifactStatus {
@@ -266,11 +277,16 @@ model BaArtifact {
   artifactId   String           // e.g. FRD-MOD-02, EPIC-02, US-013
   status       BaArtifactStatus @default(DRAFT)
   approvedAt   DateTime?
+  // Snapshot of architect narrative used to produce this artifact (LLD only).
+  // Populated when the LLD was generated via the narrative flow; null for
+  // stack-only generations so existing queries are unaffected.
+  sourceNarrative String?        @db.Text
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
   sections     BaArtifactSection[]
   subtasks     BaSubTask[]
+  pseudoFiles  BaPseudoFile[]
 
   @@map("ba_artifacts")
 }
@@ -343,6 +359,12 @@ model BaRtmRow {
   integrationStatus String?
   tbdFutureRef      String?
   tbdResolved       Boolean   @default(false)
+  // LLD trace — populated after SKILL-06-LLD. Links the RTM row to pseudo-code files
+  // derived from SKILL-06 so the trace runs all the way to source.
+  lldArtifactId     String?   // ba_artifacts.id of the active LLD bundle
+  layer             String?   // Frontend / Backend / Database / Integration / Testing
+  pseudoFileIds     String[]  @default([])
+  pseudoFilePaths   String[]  @default([])
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -408,4 +430,146 @@ model BaSubTaskSection {
 
   @@unique([subtaskDbId, sectionNumber])
   @@map("ba_subtask_sections")
+}
+
+// ─── v4: Architect Console (Master Data) ─────────────────────────────────────
+
+enum BaMasterDataCategory {
+  FRONTEND_STACK
+  BACKEND_STACK
+  DATABASE
+  STREAMING
+  CACHING
+  STORAGE
+  CLOUD
+  ARCHITECTURE
+  PROJECT_STRUCTURE
+  BACKEND_TEMPLATE
+  FRONTEND_TEMPLATE
+  LLD_TEMPLATE
+  CODING_GUIDELINES
+}
+
+enum BaMasterDataScope {
+  GLOBAL
+  PROJECT
+}
+
+enum BaTemplateModifier {
+  AI
+  HUMAN
+}
+
+model BaMasterDataEntry {
+  id          String               @id @default(uuid())
+  category    BaMasterDataCategory
+  scope       BaMasterDataScope    @default(PROJECT)
+  projectId   String?
+  project     BaProject?           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  value       String
+  description String?              @db.Text
+  templateId  String?
+  template    BaTemplate?          @relation(fields: [templateId], references: [id])
+  isArchived  Boolean              @default(false)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@unique([category, scope, projectId, name])
+  @@index([category, scope])
+  @@map("ba_master_data_entries")
+}
+
+model BaTemplate {
+  id               String              @id @default(uuid())
+  category         BaMasterDataCategory
+  name             String
+  version          Int                 @default(1)
+  parentTemplateId String?
+  parent           BaTemplate?         @relation("TemplateLineage", fields: [parentTemplateId], references: [id])
+  children         BaTemplate[]        @relation("TemplateLineage")
+  lastModifiedBy   BaTemplateModifier  @default(HUMAN)
+  scope            BaMasterDataScope   @default(PROJECT)
+  projectId        String?
+  project          BaProject?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  content          String              @db.Text
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  masterDataEntries BaMasterDataEntry[]
+
+  @@index([category, scope])
+  @@map("ba_templates")
+}
+
+// ─── v4: LLD Configuration + Pseudo-code files ───────────────────────────────
+
+model BaLldConfig {
+  id                 String    @id @default(uuid())
+  moduleDbId         String    @unique
+  module             BaModule  @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  // Tech stack single-select FKs (null = skip, use AI best practices)
+  frontendStackId    String?
+  backendStackId     String?
+  databaseId         String?
+  streamingId        String?
+  cachingId          String?
+  storageId          String?
+  cloudId            String?
+  architectureId     String?
+  cloudServices      String?   @db.Text
+  // Template single-select FKs (null until Architect uploads)
+  projectStructureId String?
+  backendTemplateId  String?
+  frontendTemplateId String?
+  lldTemplateId      String?
+  codingGuidelinesId String?
+  // NFR values + free-form notes
+  nfrValues          Json?
+  customNotes        String?   @db.Text
+  // Narrative-driven LLD (additive — null = use existing stack/template-only flow)
+  narrative          String?   @db.Text
+  useAsAdditional    Boolean   @default(true)
+  attachments        BaLldConfigAttachment[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("ba_lld_configs")
+}
+
+// Architect attachments supplied alongside narrative. File bytes live on the
+// configured storage backend (disk by default, S3/GCS via env). Only metadata
+// + the extracted text live in Postgres.
+model BaLldConfigAttachment {
+  id              String       @id @default(uuid())
+  lldConfigId     String
+  lldConfig       BaLldConfig  @relation(fields: [lldConfigId], references: [id], onDelete: Cascade)
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageBackend  String       // "disk" | "s3" | "gcs"
+  storageKey      String       // path/key within the backend
+  extractedText   String?      @db.Text
+  extractionNote  String?      // why extraction failed, if applicable
+  createdAt       DateTime     @default(now())
+
+  @@index([lldConfigId])
+  @@map("ba_lld_config_attachments")
+}
+
+model BaPseudoFile {
+  id              String     @id @default(uuid())
+  artifactDbId    String
+  artifact        BaArtifact @relation(fields: [artifactDbId], references: [id], onDelete: Cascade)
+  path            String
+  language        String
+  aiContent       String     @db.Text
+  editedContent   String?    @db.Text
+  isHumanModified Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([artifactDbId, path])
+  @@index([artifactDbId])
+  @@map("ba_pseudo_files")
 }

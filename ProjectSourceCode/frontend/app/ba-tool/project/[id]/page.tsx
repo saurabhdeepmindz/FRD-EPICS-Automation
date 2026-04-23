@@ -7,11 +7,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import {
   getBaProject,
   createBaModule,
+  updateBaProject,
   type BaProject,
   MODULE_STATUS_LABELS,
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
-import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download } from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler } from 'lucide-react';
 import { api } from '@/lib/api';
 import Link from 'next/link';
 
@@ -30,6 +31,13 @@ export default function BaProjectWorkspacePage() {
   const [moduleName, setModuleName] = useState('');
   const [packageName, setPackageName] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // Project metadata edit state
+  const [editMeta, setEditMeta] = useState(false);
+  const [metaProductName, setMetaProductName] = useState('');
+  const [metaClientName, setMetaClientName] = useState('');
+  const [metaSubmittedBy, setMetaSubmittedBy] = useState('');
+  const [savingMeta, setSavingMeta] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,6 +73,34 @@ export default function BaProjectWorkspacePage() {
       setCreating(false);
     }
   }, [moduleId, moduleName, packageName, projectId, load]);
+
+  // Sync metadata edit inputs when project loads or edit opens
+  useEffect(() => {
+    if (project) {
+      setMetaProductName(project.productName ?? '');
+      setMetaClientName(project.clientName ?? '');
+      setMetaSubmittedBy(project.submittedBy ?? '');
+    }
+  }, [project]);
+
+  const handleSaveMeta = useCallback(async () => {
+    setSavingMeta(true);
+    try {
+      await updateBaProject(projectId, {
+        productName: metaProductName.trim(),
+        clientName: metaClientName.trim(),
+        submittedBy: metaSubmittedBy.trim(),
+      });
+      setEditMeta(false);
+      load();
+    } catch {
+      setError('Failed to save project metadata');
+    } finally {
+      setSavingMeta(false);
+    }
+  }, [projectId, metaProductName, metaClientName, metaSubmittedBy, load]);
+
+  const metaComplete = Boolean(project?.productName?.trim());
 
   // Auto-suggest next module ID
   useEffect(() => {
@@ -109,6 +145,12 @@ export default function BaProjectWorkspacePage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" asChild title="Architect Console — design standards & templates">
+            <Link href={`/ba-tool/project/${projectId}/master-data`}>
+              <Ruler className="h-3.5 w-3.5 mr-1" />
+              Architect Console
+            </Link>
+          </Button>
           <Button size="sm" variant="outline" asChild>
             <Link href={`/ba-tool/project/${projectId}/rtm`}>
               <BarChart3 className="h-3.5 w-3.5 mr-1" />
@@ -253,6 +295,109 @@ export default function BaProjectWorkspacePage() {
                 Select a module from the sidebar to start uploading screens and running the skill chain.
                 Each module follows a 6-step process: Screen Upload → Screen Analysis → FRD → EPICs → User Stories → SubTasks.
               </p>
+
+              {/* Project Metadata — required before EPIC generation */}
+              <Card className="mb-6" data-testid="project-metadata-card">
+                <CardContent className="p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Project Metadata</h3>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Captured in generated EPIC / User Story / SubTask documents. <span className="text-red-600">Product Name is required before EPIC generation.</span>
+                      </p>
+                    </div>
+                    {!editMeta && (
+                      <Button size="sm" variant="ghost" onClick={() => setEditMeta(true)}>
+                        <Edit3 className="h-3.5 w-3.5 mr-1" />
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+
+                  {!metaComplete && !editMeta && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-800">
+                        Please fill in the required fields below before running EPIC generation.
+                      </p>
+                    </div>
+                  )}
+
+                  {editMeta ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-muted-foreground">Product Name *</label>
+                          <input
+                            type="text"
+                            value={metaProductName}
+                            onChange={(e) => setMetaProductName(e.target.value)}
+                            placeholder="e.g., [AI] Highway Illumination Black Spot Detection"
+                            className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-muted-foreground">Client Name</label>
+                          <input
+                            type="text"
+                            value={metaClientName}
+                            onChange={(e) => setMetaClientName(e.target.value)}
+                            placeholder="e.g., Acme Corp"
+                            className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Submitted By</label>
+                        <input
+                          type="text"
+                          value={metaSubmittedBy}
+                          onChange={(e) => setMetaSubmittedBy(e.target.value)}
+                          placeholder="e.g., John Smith"
+                          className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={handleSaveMeta} disabled={savingMeta || !metaProductName.trim()}>
+                          {savingMeta ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+                          Save
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => {
+                          setEditMeta(false);
+                          setMetaProductName(project.productName ?? '');
+                          setMetaClientName(project.clientName ?? '');
+                          setMetaSubmittedBy(project.submittedBy ?? '');
+                        }}>Cancel</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                      <div>
+                        <span className="text-muted-foreground">Product Name:</span>{' '}
+                        <span className={project.productName ? 'text-foreground font-medium' : 'text-red-600 italic'}>
+                          {project.productName || 'Not set'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Client Name:</span>{' '}
+                        <span className={project.clientName ? 'text-foreground' : 'text-muted-foreground/60 italic'}>
+                          {project.clientName || '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Submitted By:</span>{' '}
+                        <span className={project.submittedBy ? 'text-foreground' : 'text-muted-foreground/60 italic'}>
+                          {project.submittedBy || '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Project Code:</span>{' '}
+                        <span className="font-mono text-foreground">{project.projectCode}</span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* Quick stats */}
               <div className="grid grid-cols-3 gap-4 mb-8">

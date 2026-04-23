@@ -1,0 +1,10 @@
+{
+  "$schema-version": 1,
+  "category": "ARCHITECTURE",
+  "description": "High-level architecture patterns for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "Modular Monolith", "value": "modular_monolith", "description": "Single deployable with clear module boundaries; simplest ops, refactorable later." },
+    { "name": "Microservices",    "value": "microservices",    "description": "Independently deployable services; autonomy at the cost of operational complexity." },
+    { "name": "Event-Driven",     "value": "event_driven",     "description": "Services coordinate via events on a broker; decoupled, eventually consistent." }
+  ]
+}

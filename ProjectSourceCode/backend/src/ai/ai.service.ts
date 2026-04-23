@@ -29,6 +29,19 @@ export interface TranscribeResponse {
   provider: string;
 }
 
+export interface BaRefineSectionRequest {
+  artifactType: string;
+  sectionLabel: string;
+  currentText: string;
+  moduleContext?: string;
+  instruction?: string;
+}
+
+export interface BaRefineSectionResponse {
+  suggestion: string;
+  model: string;
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -105,6 +118,34 @@ export class AiService {
         );
       }
       this.logger.error('AI service unreachable for /gap-check', error);
+      throw new HttpException('AI service unavailable', 502);
+    }
+  }
+
+  /** Proxy to Python /ba/refine-section endpoint — refine BA artifact section text */
+  async refineBaSection(dto: BaRefineSectionRequest): Promise<BaRefineSectionResponse> {
+    try {
+      const { data } = await axios.post<BaRefineSectionResponse>(
+        `${this.aiServiceUrl}/ba/refine-section`,
+        {
+          artifactType: dto.artifactType,
+          sectionLabel: dto.sectionLabel,
+          currentText: dto.currentText,
+          moduleContext: dto.moduleContext ?? '',
+          instruction: dto.instruction ?? '',
+        },
+        { timeout: 60_000 },
+      );
+      return data;
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error) && error.response) {
+        this.logger.error(`AI /ba/refine-section returned ${error.response.status}`);
+        throw new HttpException(
+          error.response.data?.detail ?? 'AI refine error',
+          error.response.status,
+        );
+      }
+      this.logger.error('AI service unreachable for /ba/refine-section', error);
       throw new HttpException('AI service unavailable', 502);
     }
   }

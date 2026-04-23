@@ -1,6 +1,9 @@
 'use client';
 
+import { useEffect, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+
+const MERMAID_LANGUAGES = new Set(['mermaid', 'uml']);
 
 interface MarkdownRendererProps {
   content: string;
@@ -227,6 +230,16 @@ function renderCell(cell: string): React.ReactNode {
 }
 
 function CodeBlock({ language, content }: { language: string; content: string }) {
+  const langLower = (language || '').toLowerCase().trim();
+  const firstTok = langLower.split(/\s+/)[0];
+  const isMermaidLang = MERMAID_LANGUAGES.has(firstTok);
+  // Also treat content that starts with a known Mermaid diagram keyword as
+  // Mermaid even when the language tag was missing (defensive — LLMs sometimes
+  // drop the ` ```mermaid ` tag and put the diagram body straight in a fence).
+  const looksLikeMermaid = /^(classDiagram|sequenceDiagram|erDiagram|flowchart|graph|stateDiagram|journey|gantt|pie|mindmap|timeline|gitGraph|c4|requirementDiagram)\b/.test(content.trim());
+  if (isMermaidLang || looksLikeMermaid) {
+    return <MermaidBlock content={content} />;
+  }
   return (
     <div className="my-2 rounded-md border border-border overflow-hidden">
       {language && (
@@ -237,6 +250,71 @@ function CodeBlock({ language, content }: { language: string; content: string })
       <pre className="px-3 py-2 bg-muted/20 text-xs font-mono overflow-x-auto leading-relaxed">
         <code>{content}</code>
       </pre>
+    </div>
+  );
+}
+
+/**
+ * Render a Mermaid diagram client-side. Falls back to showing the raw fenced
+ * code block on parse / render error. Mermaid is loaded dynamically so the
+ * library only ships on pages that actually use it.
+ */
+function MermaidBlock({ content }: { content: string }) {
+  const id = useId().replace(/:/g, '');
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+        const { svg } = await mermaid.render(`mm-${id}`, content);
+        if (!cancelled) setSvg(svg);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Mermaid render failed');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [content, id]);
+
+  if (error) {
+    return (
+      <div className="my-2 rounded-md border border-amber-300 overflow-hidden">
+        <div className="px-3 py-1 bg-amber-50 border-b border-amber-300 text-[10px] text-amber-800 uppercase tracking-wider flex items-center justify-between">
+          <span>mermaid — render failed</span>
+          <span className="text-[9px] normal-case text-amber-700" title={error}>fallback to source</span>
+        </div>
+        <pre className="px-3 py-2 bg-amber-50/50 text-xs font-mono overflow-x-auto">
+          <code>{content}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-2 rounded-md border border-border overflow-hidden">
+      <div className="px-3 py-1 bg-muted/50 border-b border-border text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+        mermaid diagram
+      </div>
+      {svg ? (
+        // React disallows mixing children with dangerouslySetInnerHTML on the
+        // same element — keep them on separate branches.
+        <div
+          ref={ref}
+          className="px-3 py-3 bg-white overflow-x-auto flex justify-center items-center min-h-[60px]"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : (
+        <div
+          ref={ref}
+          className="px-3 py-3 bg-white overflow-x-auto flex justify-center items-center min-h-[60px]"
+        >
+          <span className="text-xs text-muted-foreground">Rendering diagram…</span>
+        </div>
+      )}
     </div>
   );
 }

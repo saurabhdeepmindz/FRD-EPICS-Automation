@@ -5,14 +5,17 @@ import { type BaArtifact } from '@/lib/ba-api';
 import { ChevronDown, ChevronUp, AlertTriangle, BookOpen, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { AiEditableSection } from './AiEditableSection';
+import { ScreensGallery, extractScreenIds, filterReferencedScreens } from './ScreensGallery';
 
 interface UserStoryArtifactViewProps {
   artifact: BaArtifact;
   activeStorySection?: string | null;
+  onUpdated?: () => void;
 }
 
 /** Map numbered section keys to structured display */
-const STORY_SECTION_CONFIG: Record<string, { label: string; category: 'header' | 'flow' | 'technical' | 'integration' | 'testing' }> = {
+export const STORY_SECTION_CONFIG: Record<string, { label: string; category: 'header' | 'flow' | 'technical' | 'integration' | 'testing' }> = {
   '1_user_story_id': { label: 'User Story ID', category: 'header' },
   '2_user_story_name': { label: 'User Story Name', category: 'header' },
   '3_user_story_description_goal': { label: 'User Story Description (Goal)', category: 'header' },
@@ -42,7 +45,7 @@ const STORY_SECTION_CONFIG: Record<string, { label: string; category: 'header' |
   '27_subtasks': { label: 'SubTasks', category: 'testing' },
 };
 
-const CATEGORY_LABELS: Record<string, { label: string; color: string }> = {
+export const CATEGORY_LABELS: Record<string, { label: string; color: string }> = {
   header: { label: 'Story Identity', color: 'border-blue-200 bg-blue-50/30' },
   flow: { label: 'User Flows & Screens', color: 'border-green-200 bg-green-50/30' },
   technical: { label: 'Technical Specification', color: 'border-purple-200 bg-purple-50/30' },
@@ -50,7 +53,7 @@ const CATEGORY_LABELS: Record<string, { label: string; color: string }> = {
   testing: { label: 'Testing & Traceability', color: 'border-emerald-200 bg-emerald-50/30' },
 };
 
-export function UserStoryArtifactView({ artifact, activeStorySection }: UserStoryArtifactViewProps) {
+export function UserStoryArtifactView({ artifact, activeStorySection, onUpdated }: UserStoryArtifactViewProps) {
   // Extract story header info from sections
   const storyId = artifact.sections.find((s) => s.sectionKey === '1_user_story_id')?.content?.trim() ?? '';
   const storyName = artifact.sections.find((s) => s.sectionKey === '2_user_story_name')?.content?.trim() ?? '';
@@ -104,6 +107,28 @@ export function UserStoryArtifactView({ artifact, activeStorySection }: UserStor
         )}
       </div>
 
+      {/* Referenced Screens — only those this User Story actually references */}
+      {(() => {
+        const allScreens = artifact.module?.screens ?? [];
+        if (allScreens.length === 0) return null;
+        const { matched } = filterReferencedScreens(
+          allScreens,
+          artifact.sections.map((s) => (s.isHumanModified && s.editedContent ? s.editedContent : s.content)),
+        );
+        if (matched.length === 0) return null;
+        return (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-foreground">Referenced Screens</h3>
+              <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                {matched.length} of {allScreens.length}
+              </span>
+            </div>
+            <ScreensGallery screens={matched} />
+          </div>
+        );
+      })()}
+
       {/* Grouped sections */}
       {(['header', 'flow', 'technical', 'integration', 'testing'] as const).map((category) => {
         const sections = grouped.groups[category];
@@ -137,6 +162,10 @@ export function UserStoryArtifactView({ artifact, activeStorySection }: UserStor
                     hasTbd={hasTbd}
                     isModified={section.isHumanModified}
                     isActive={activeStorySection === section.sectionKey}
+                    artifact={artifact}
+                    sectionKey={section.sectionKey}
+                    isAi={section.aiGenerated && !section.isHumanModified}
+                    onUpdated={onUpdated}
                   />
                 );
               })}
@@ -159,6 +188,10 @@ export function UserStoryArtifactView({ artifact, activeStorySection }: UserStor
                 isCode={false}
                 hasTbd={false}
                 isModified={section.isHumanModified}
+                artifact={artifact}
+                sectionKey={section.sectionKey}
+                isAi={section.aiGenerated && !section.isHumanModified}
+                onUpdated={onUpdated}
               />
             ))}
           </div>
@@ -169,9 +202,10 @@ export function UserStoryArtifactView({ artifact, activeStorySection }: UserStor
 }
 
 function StorySectionCard({
-  label, content, isAlgorithm, isCode, hasTbd, isModified, isActive,
+  label, content, isAlgorithm, isCode, hasTbd, isModified, isActive, artifact, sectionKey, isAi, onUpdated,
 }: {
   label: string; content: string; isAlgorithm: boolean; isCode: boolean; hasTbd: boolean; isModified: boolean; isActive?: boolean;
+  artifact?: BaArtifact; sectionKey?: string; isAi?: boolean; onUpdated?: () => void;
 }) {
   const [expanded, setExpanded] = useState(isActive ?? true);
 
@@ -194,7 +228,35 @@ function StorySectionCard({
       {expanded && (
         <div className="border-t border-border/30 px-3 py-2">
           <div className={cn('max-h-[400px] overflow-y-auto', hasTbd ? 'text-amber-900' : '')}>
-            {content ? <MarkdownRenderer content={content} /> : <span className="text-muted-foreground italic text-sm">No content</span>}
+            {content ? (
+              artifact && sectionKey ? (
+                <AiEditableSection
+                  artifact={artifact}
+                  label={label}
+                  content={content}
+                  findSection={(sections) => sections.find((s) => s.sectionKey === sectionKey)}
+                  isAi={isAi}
+                  onUpdated={onUpdated}
+                />
+              ) : (
+                <MarkdownRenderer content={content} />
+              )
+            ) : (
+              <span className="text-muted-foreground italic text-sm">No content</span>
+            )}
+            {/* Screen Reference section: show ONLY the screens this section references */}
+            {sectionKey === '14_screen_reference' && artifact?.module?.screens && artifact.module.screens.length > 0 && (() => {
+              const ids = extractScreenIds(content);
+              if (ids.length === 0) return null;
+              const matched = artifact.module.screens.filter((s) => ids.includes(s.screenId));
+              if (matched.length === 0) return null;
+              return (
+                <div className="mt-3 pt-3 border-t border-border/40">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Referenced Screens ({matched.length})</p>
+                  <ScreensGallery screens={matched} compact />
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

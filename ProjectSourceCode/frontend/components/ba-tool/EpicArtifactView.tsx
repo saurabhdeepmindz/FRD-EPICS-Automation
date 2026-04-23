@@ -4,16 +4,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { type BaArtifact } from '@/lib/ba-api';
 import { ChevronDown, ChevronUp, AlertTriangle, Layers, Cog } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { AiEditableSection } from './AiEditableSection';
+import { ScreensGallery, filterReferencedScreens } from './ScreensGallery';
 import { parseEpicContent, sortInternalSections, type EpicSectionId } from '@/lib/epic-parser';
 
 interface EpicArtifactViewProps {
   artifact: BaArtifact;
   /** Active section from TOC click — scrolls panel and highlights target */
   activeSectionId?: string | null;
+  /** Reload callback after inline edits */
+  onUpdated?: () => void;
 }
 
-export function EpicArtifactView({ artifact, activeSectionId }: EpicArtifactViewProps) {
+export function EpicArtifactView({ artifact, activeSectionId, onUpdated }: EpicArtifactViewProps) {
   const parsed = useMemo(() => parseEpicContent(artifact.sections), [artifact.sections]);
   const sortedInternalSections = useMemo(() => sortInternalSections(parsed.internalSections), [parsed.internalSections]);
   const [internalExpanded, setInternalExpanded] = useState(false);
@@ -44,6 +47,28 @@ export function EpicArtifactView({ artifact, activeSectionId }: EpicArtifactView
         </div>
       </div>
 
+      {/* ═══ Screens — only those this EPIC references (parsed from section content) ═══ */}
+      {(() => {
+        const allScreens = artifact.module?.screens ?? [];
+        if (allScreens.length === 0) return null;
+        const { matched } = filterReferencedScreens(
+          allScreens,
+          artifact.sections.map((s) => (s.isHumanModified && s.editedContent ? s.editedContent : s.content)),
+        );
+        if (matched.length === 0) return null;
+        return (
+          <div className="rounded-lg border border-border bg-card p-4" id="epic-sec-screens">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-foreground">Referenced Screens</h3>
+              <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                {matched.length} of {allScreens.length}
+              </span>
+            </div>
+            <ScreensGallery screens={matched} />
+          </div>
+        );
+      })()}
+
       {/* ═══ EPIC Content (structured sections) ═══ */}
       {parsed.sections.map((section) => (
         <EpicSection
@@ -53,6 +78,8 @@ export function EpicArtifactView({ artifact, activeSectionId }: EpicArtifactView
           content={section.content}
           highlight={section.highlight}
           isActive={activeSectionId === section.id}
+          artifact={artifact}
+          onUpdated={onUpdated}
         />
       ))}
 
@@ -85,6 +112,8 @@ export function EpicArtifactView({ artifact, activeSectionId }: EpicArtifactView
                   content={s.content}
                   defaultCollapsed
                   isActive={activeSectionId === s.key}
+                  artifact={artifact}
+                  onUpdated={onUpdated}
                 />
               ))}
             </div>
@@ -96,7 +125,7 @@ export function EpicArtifactView({ artifact, activeSectionId }: EpicArtifactView
 }
 
 function EpicSection({
-  sectionId, title, content, highlight, defaultCollapsed, isActive,
+  sectionId, title, content, highlight, defaultCollapsed, isActive, artifact, onUpdated,
 }: {
   sectionId: string;
   title: string;
@@ -104,6 +133,8 @@ function EpicSection({
   highlight?: boolean;
   defaultCollapsed?: boolean;
   isActive?: boolean;
+  artifact: BaArtifact;
+  onUpdated?: () => void;
 }) {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const hasTbd = content.includes('TBD-Future');
@@ -112,6 +143,13 @@ function EpicSection({
   useEffect(() => {
     if (isActive) setExpanded(true);
   }, [isActive]);
+
+  // Resolve the underlying BaArtifactSection for this EPIC sub-section
+  const findSection = (sections: BaArtifact['sections']) => sections.find(
+    (s) => s.sectionKey === sectionId || s.sectionLabel.toLowerCase() === title.toLowerCase(),
+  );
+  const matched = findSection(artifact.sections);
+  const isAi = Boolean(matched?.aiGenerated && !matched?.isHumanModified);
 
   return (
     <div
@@ -136,7 +174,14 @@ function EpicSection({
       </button>
       {expanded && (
         <div className="border-t border-border/50 px-4 py-3">
-          <MarkdownRenderer content={content} />
+          <AiEditableSection
+            artifact={artifact}
+            label={title}
+            content={content}
+            findSection={findSection}
+            isAi={isAi}
+            onUpdated={onUpdated}
+          />
         </div>
       )}
     </div>

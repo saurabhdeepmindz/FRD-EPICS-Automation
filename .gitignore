@@ -26,6 +26,12 @@ Thumbs.db
 
 # Claude local settings
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Runtime storage (architect attachments, generated project artifacts)
+ProjectSourceCode/backend/uploads/
+Taxcomp-ba-artifacts/
+Project-Documents/SubTasks/
 
 # Prisma
 *.db

@@ -1,0 +1,9 @@
+{
+  "$schema-version": 1,
+  "category": "STREAMING",
+  "description": "Streaming / message-broker technologies for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "Kafka",    "value": "kafka",    "description": "Distributed event streaming platform; high throughput, durable logs." },
+    { "name": "RabbitMQ", "value": "rabbitmq", "description": "AMQP-based message broker; flexible routing, classic queues & streams." }
+  ]
+}

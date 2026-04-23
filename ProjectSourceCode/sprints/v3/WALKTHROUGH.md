@@ -560,3 +560,301 @@ These are listed as INPUTS the coding AI must read during the build phase, and a
 ### Why no `/build-ba-tool` slash command exists
 
 A slash command like `/build-ba-tool` that invokes the build prompt was considered but not created. The build prompt is fed manually to a coding AI outside the BA Tool — it's a one-time operation that doesn't fit the slash-command pattern (which is designed for frequent user actions within a running app). If you do want one, the canonical location would be `.claude/commands/build-ba-tool.md` containing a tiny wrapper prompt: *"Read `BA-AUTOMATION-TOOL-BUILD-PROMPT.md` and the 6 FINAL-SKILL-\*.md files, then implement phase by phase."*
+
+---
+
+# v3 Post‑Post‑Enhancements — 2026‑04‑13 → 2026‑04‑14 Session
+
+The session after the "Build‑Time vs Runtime Architecture" doc layered six user‑facing capabilities on top of v3 without touching the skill pipeline itself. These all live in the **editor + preview + export** surface area, plus one schema migration and a handful of orchestrator hooks that populate RTM as each skill runs instead of only at the end.
+
+## Summary
+
+1. **Project Metadata (Product Name / Client Name / Submitted By / Client Logo)** — captured once per project, threaded through every skill context *and* the PDF / DOCX cover page.
+2. **AI Suggest + Mic + blue AI‑text styling** on every editable section of FRD / EPIC / User Story / SubTask, matching the PRD's `FormField` pattern.
+3. **Hierarchical section numbers in the Artifact Tree** (`1. Screen Analysis`, `2.1 FRD‑MOD‑01`, `2.1.1 F‑01‑01 Assign Tasks…`, `3.1.i1 Step 1…`) mirroring the PRD preview TOC.
+4. **Native‑React Preview page with left sidebar TOC, Document History, and per‑artifact‑type section layout** — replaces the prior iframe approach so Screens, Logo upload, TBD badges, and AI/Edited chips all render in React.
+5. **Incremental RTM** — rows now appear after FRD, get linked as EPIC / User Stories / SubTasks complete, plus a `Populate from Artifacts` backfill button for existing projects.
+6. **Screens attached to EPIC / User Story / FRD features / SubTask** — only those each artifact actually references; click‑to‑zoom lightbox in the editor and a screens block in the preview / PDF / DOCX.
+
+Plus two bug fixes:
+
+- **Screen upload failure on large modules** — frontend now chunks batch uploads (5 files/request, 5‑minute per‑request timeout) and shows `Uploading screens… N of M` progress.
+- **Screen‑ID collision after deletes** — `uploadScreen` now picks `max(existing SCR‑XX suffix) + 1` instead of `count + 1`, so gaps from prior deletes don't produce a duplicate‑key 500.
+
+## Architecture Overview
+
+```
+                                ┌────────────────────────────────────────────┐
+                                │               Frontend (3001)              │
+                                │                                            │
+   [Project page] ─────────────▶│  Project Metadata Card  ──▶ PATCH /ba/projects/:id
+                                │  Client Logo Upload                         │
+                                │                                            │
+   [Module workspace] ─────────▶│  ArtifactTree (numbered TOC)                │
+                                │  ArtifactContentPanel                       │
+                                │    ├─ ArtifactToolbar (Preview/PDF/DOCX)    │
+                                │    ├─ FrdArtifactView    + ScreensGallery   │
+                                │    ├─ EpicArtifactView   + ScreensGallery   │
+                                │    ├─ UserStoryView      + ScreensGallery   │
+                                │    └─ SectionCard        (Mic + AI Suggest) │
+                                │         └─ AiEditableSection ──▶ POST /ai/ba-refine-section
+                                │                                            │
+   [Preview page] /ba-tool/preview/[kind]/[id]                                │
+                                │  React TOC sidebar  +  Cover (logo upload) │
+                                │  Document History  +  Screens  +  Sections │
+                                │  Download PDF / DOCX / View Source          │
+                                │                                            │
+   [RTM page]    ──────────────▶│  Populate from Artifacts  ──▶ POST /ba/projects/:id/rtm/backfill
+                                └──────────────┬────────────────────────────┘
+                                               │
+                                               ▼
+                  ┌──────────────────────────────────────────────────────────┐
+                  │                    Backend (4000 — Nest)                 │
+                  │                                                           │
+                  │  BaToolService        — projects (CRUD + metadata)        │
+                  │  BaSkillOrchestrator  — skill exec + RTM hooks:           │
+                  │      SKILL-01-S → seedRtmFromFrd                          │
+                  │      SKILL-02-S → extendRtmWithEpic                       │
+                  │      SKILL-04   → extendRtmWithStories                    │
+                  │      SKILL-05   → extendRtmWithSubTasks (pre-existing)    │
+                  │      + backfillProjectRtm(projectId)                      │
+                  │                                                           │
+                  │  BaArtifactExportService — HTML template + PDF + DOCX     │
+                  │  PdfService.generatePdfFromHtml(html) ◀─── Puppeteer      │
+                  │  AiService.refineBaSection(dto)       ──▶ Python /ba/refine-section
+                  └───────────────────────────────────┬──────────────────────┘
+                                                      │
+                                                      ▼
+                              ┌───────────────────────────────────────┐
+                              │       Python AI (5000 — FastAPI)      │
+                              │   POST /ba/refine-section             │
+                              │     (preserves IDs/TBD markers)       │
+                              └───────────────────────────────────────┘
+```
+
+## Files Created/Modified
+
+### ProjectSourceCode/backend/prisma/schema.prisma
+**Purpose**: Added project‑level metadata columns used by every exported document.
+
+```prisma
+model BaProject {
+  // ...
+  productName String?   // Required before EPIC generation
+  clientName  String?
+  submittedBy String?
+  clientLogo  String?   @db.Text   // base64 data-URI for preview cover
+}
+```
+
+Pushed with `prisma db push` (shadow DB perms blocked `migrate dev` — documented in the session). No data migration needed — all columns are nullable.
+
+### ProjectSourceCode/backend/src/ba-tool/dto/update-project.dto.ts (new)
+**Purpose**: Partial‑update DTO so the project page can PATCH any subset of the four new fields.
+
+Validates: `MaxLength(200)` on text fields, `MaxLength(500_000)` on `clientLogo` (base64 data‑URI is compressed client‑side to ~200 KB).
+
+### ProjectSourceCode/backend/src/ba-tool/dto/refine-section.dto.ts (new)
+**Purpose**: Request shape for the "AI Suggest" refine endpoint. Takes `{ artifactType, sectionLabel, currentText, moduleContext?, instruction? }`.
+
+### ProjectSourceCode/backend/src/ba-tool/ba-tool.controller.ts
+**Purpose**: Adds `PATCH /api/ba/projects/:id` (project metadata). Existing `getSubTask` query updated to include `module → project → screens`.
+
+### ProjectSourceCode/backend/src/ba-tool/ba-tool.service.ts
+**Purpose**: `updateProject()` with field‑by‑field partial update; `getSubTask` and `getModule` now hydrate `module.project` and `module.screens` for preview/export consumers.
+
+### ProjectSourceCode/backend/src/ba-tool/ba-skill-orchestrator.service.ts
+**Purpose**: Two big changes.
+
+**(a) Project metadata flows into every skill's context** (`assembleContext` wrapping):
+
+```ts
+const projectMeta = {
+  projectName: mod.project?.name ?? null,
+  projectCode: mod.project?.projectCode ?? null,
+  productName: (mod.project as any)?.productName ?? null,
+  clientName:  (mod.project as any)?.clientName ?? null,
+  submittedBy: (mod.project as any)?.submittedBy ?? null,
+};
+// ...
+return { ...ctx, projectMeta };
+```
+
+So Python prompts (and thus the generated EPIC / User Story / SubTask documents) know the product and client names — no per‑skill wiring needed.
+
+**(b) Incremental RTM population.** After every skill execution, the orchestrator runs the matching RTM hook:
+
+```ts
+if (skillName === 'SKILL-01-S') await this.seedRtmFromFrd(...);
+else if (skillName === 'SKILL-02-S') await this.extendRtmWithEpic(...);
+else if (skillName === 'SKILL-04')   await this.extendRtmWithStories(...);
+// SKILL-05 already called extendRtmWithSubTasks in its post‑processing block
+```
+
+`seedRtmFromFrd` parses `F‑XX‑XX` blocks from the FRD output (regex `/#{1,4}\s+\*{0,2}(F-\d+-\d+)[:\s—-]+\s*(.+?)\*{0,2}\s*\n([\s\S]*?)(?=...|$)/gi`) and upserts one `BaRtmRow` per feature. `extendRtmWithEpic` parses the `FRD Feature IDs` field and `updateMany` of matching rows with EPIC id/name. `extendRtmWithStories` does the same via each story's `FRD Feature Reference`. All failures are logged but never fail the skill — the raw output is always preserved.
+
+**(c) `backfillProjectRtm(projectId)`** — runs the same four hooks over every module's already‑generated artifacts, so pre‑existing projects populate without re‑running skills. Returns `{ seeded, epics, stories, subtasks }`.
+
+### ProjectSourceCode/backend/src/ba-tool/ba-skill.controller.ts
+**Purpose**: Seven new routes.
+
+- `POST /api/ba/projects/:id/rtm/backfill` → orchestrator's backfill
+- `GET /api/ba/artifacts/:id/preview` → inline HTML
+- `GET /api/ba/artifacts/:id/export/pdf` → Puppeteer PDF
+- `GET /api/ba/artifacts/:id/export/docx` → html‑docx‑js DOCX
+- `GET /api/ba/subtasks/:id/preview | export/pdf | export/docx` → same three for SubTasks
+
+### ProjectSourceCode/backend/src/ba-tool/ba-artifact-export.service.ts (new)
+**Purpose**: Generic artifact → HTML/PDF/DOCX renderer, used by the preview + PDF/DOCX endpoints.
+
+Loads an artifact (or SubTask) with full `module → project → screens` includes, normalises to a `BaArtifactDoc`, runs it through `generateBaArtifactHtml()`, then optionally feeds into Puppeteer or `html‑docx‑js`. Subtask sections (`BaSubTaskSection.sectionNumber` + `aiContent`) get adapted to the same shape as `BaArtifactSection` for template reuse.
+
+### ProjectSourceCode/backend/src/ba-tool/templates/artifact-html.ts (new)
+**Purpose**: Generic HTML template for BA artifacts — cover page, Document History, ToC, sections, Referenced Screens block. Includes a minimal markdown → HTML renderer (~150 LOC, no deps) that handles pipe tables, lists, headings, code fences, bold/italic/inline code, blockquotes, IDs, and TBD‑Future highlighting.
+
+Cover page renders `doc.project.clientLogo` as an `<img>` at the top if present. The Referenced Screens block filters `module.screens` down to only those mentioned in any section's content, for FRD / EPIC / USER_STORY / SUBTASK (Screen Analysis is excluded because it *is* the screens).
+
+### ProjectSourceCode/backend/src/ai/ai.controller.ts / ai.service.ts
+**Purpose**: New `POST /api/ai/ba-refine-section` proxy that wraps the Python `/ba/refine-section` endpoint. Lets the frontend call a single BA‑aware "AI Suggest" endpoint instead of trying to reuse the PRD‑coupled `/ai/suggest`.
+
+### ProjectSourceCode/ai-service/main.py
+**Purpose**: New Python endpoint `POST /ba/refine-section` using a BA‑tuned system prompt:
+
+```text
+You are a senior business analyst and technical writer.
+You refine, correct and improve a single section of a BA deliverable (FRD, EPIC,
+User Story, or SubTask) while preserving its intent, factual content and any
+identifiers (like F-01-01, EPIC-MOD-01, FR-xxx, TBD-Future markers, module IDs).
+Rules: preserve IDs and TBD markers verbatim; don't invent features;
+return ONLY the refined text — no preamble, no code fences.
+```
+
+Temperature 0.3, max_tokens 3000.
+
+### ProjectSourceCode/backend/src/export/pdf.service.ts
+**Purpose**: Extracted `generatePdfFromHtml(html, { headerLabel })` for reuse by both the PRD and BA‑Tool export paths. PRD path still goes through `generatePdf(prd, history)`, which now delegates to the new method after building the HTML. Puppeteer launch config (headless, sandbox flags) and header/footer templates are unchanged.
+
+### ProjectSourceCode/backend/src/export/export.module.ts
+**Purpose**: Added `exports: [PdfService]` so `BaToolModule` can import and reuse the same Puppeteer launcher (no second Chromium instance).
+
+### ProjectSourceCode/backend/src/ba-tool/ba-tool.module.ts
+**Purpose**: `imports: [ExportModule]` and registered `BaArtifactExportService`.
+
+### ProjectSourceCode/frontend/lib/ba-api.ts
+**Purpose**: Types + API helpers for every new backend capability.
+
+Added `BaProject.productName/clientName/submittedBy/clientLogo`, `BaScreenLite`, `BaModule.project`, `BaModule.screens`, `UpdateBaProjectDto`, `BaRefineSectionPayload`. New helpers:
+
+- `updateBaProject(id, payload)` — PATCH metadata (incl. logo as base64)
+- `baRefineSection({ artifactType, sectionLabel, currentText, moduleContext })` — wire the AI Suggest button
+- `uploadBaScreensBatch(moduleDbId, files, onProgress)` — now **chunks into 5 files per request with 5‑minute per‑request timeout** and reports progress
+
+### ProjectSourceCode/frontend/app/ba-tool/project/[id]/page.tsx
+**Purpose**: Adds the "Project Metadata" card (Product Name*, Client Name, Submitted By) with edit/save/cancel, and an amber "Please fill in the required fields" banner when Product Name is empty. Blocks EPIC generation downstream by propagating metadata through `getArtifact` / `getModule`.
+
+### ProjectSourceCode/frontend/app/ba-tool/project/[id]/module/[moduleId]/page.tsx
+**Purpose**: Passes `moduleScreens={mod.screens}` into `ArtifactContentPanel` so structured artifact views can show thumbnails. Added an amber guard banner + `canStart` gate for step 3 (EPIC) when `productName` is empty.
+
+### ProjectSourceCode/frontend/app/ba-tool/project/[id]/module/[moduleId]/subtask/[subtaskId]/page.tsx
+**Purpose**: Preview / PDF / DOCX buttons on the SubTask detail page header.
+
+### ProjectSourceCode/frontend/app/ba-tool/project/[id]/rtm/page.tsx
+**Purpose**: New **Populate from Artifacts** button next to Export CSV. Calls `POST /api/ba/projects/:id/rtm/backfill`, shows an alert summarising `seeded / epics / stories / subtasks`, then reloads the table.
+
+### ProjectSourceCode/frontend/app/ba-tool/preview/[kind]/[id]/page.tsx (new)
+**Purpose**: Native‑React preview page — the centrepiece of the session.
+
+- **Left sidebar TOC** with Cover Page, Document History, (conditional) Screens, and then numbered sections computed from `doc.artifactType` using the *same parsers the editor views use*:
+  - `FRD` → `parseFrdContent` → one entry per `F‑XX‑XX` feature + Business Rules/Validations/TBD Registry/Internal Processing group
+  - `EPIC` → `parseEpicContent` + `sortInternalSections` → 12 structured sections + EPIC Internal Processing group
+  - `USER_STORY` → `STORY_SECTION_CONFIG` + `CATEGORY_LABELS` → grouped (Story Identity, User Flows & Screens, Technical Specification, Integrations, Testing & Traceability)
+  - `SUBTASK` / `SCREEN_ANALYSIS` → raw sections in stored order
+- **Cover page** with "Click to upload Client Logo" dashed box (client‑side canvas resize to 400 px PNG, then PATCH), Product Name / Project Code / Module / Client Name / Submitted By / Date / Status chip.
+- **Document History** table (last 50 AI / Edited entries, coloured badges).
+- **Referenced Screens** block (conditional, only shows when the artifact references ≥1 screen).
+- **Section bodies** via `MarkdownRenderer` with AI (blue text) / Edited (amber) styling preserved, `Automation Critical` and `TBD‑Future` pill badges on applicable sections.
+- **Toolbar**: Source (raw backend HTML in new tab), PDF, DOCX — all streaming blobs from the backend.
+
+### ProjectSourceCode/frontend/components/ba-tool/ScreensGallery.tsx (new)
+**Purpose**: Reusable thumbnail grid + click‑to‑zoom lightbox. Used by EPIC / User Story / FRD views and the preview page. Helper `extractScreenIds(text)` scans any content block for `SCR-XX` mentions; `filterReferencedScreens(screens, blocks)` returns only the matching screens.
+
+### ProjectSourceCode/frontend/components/ba-tool/AiEditableSection.tsx (new)
+**Purpose**: Drop‑in editor with **Mic button + AI Suggest button + Edit/Save/Cancel + blue AI‑text styling**. Resolves its backing `BaArtifactSection` via a caller‑supplied `findSection(sections)` predicate, so the same component works for FRD / EPIC / User Story (each uses a different section key or label match).
+
+### ProjectSourceCode/frontend/components/ba-tool/ArtifactTree.tsx
+**Purpose**: Hierarchical section numbers (`1.`, `1.1`, `1.1.1`, `1.1.i1` for internal processing) inside the tree. Numbers rendered in a muted `font-mono` span before each label so existing IDs (F‑XX‑XX, SCR‑XX) and status pills still visible.
+
+### ProjectSourceCode/frontend/components/ba-tool/ArtifactContentPanel.tsx
+**Purpose**: Big component — orchestrates every structured editor view.
+
+- Adds `moduleScreens` prop + `withScreens(artifact)` helper that splices screens into every artifact passed down, since `getModule`'s shape doesn't include them.
+- Adds an `ArtifactToolbar` (Preview / PDF / DOCX) above each structured view.
+- `SectionCard` (generic/fallback) now has **Mic + AI Suggest** in the header, blue text + helper line for AI content.
+
+### ProjectSourceCode/frontend/components/ba-tool/FrdArtifactView.tsx
+**Purpose**: FRD feature cards now:
+- Show a **compact thumbnail grid** right under each feature's `Screen Reference` field, filtered to the exact SCR‑XX IDs that feature cites.
+- `CollapsibleSection` (Business Rules / Validations / TBD Registry) renders via `AiEditableSection` so tables format properly and each card has Mic + AI Suggest + blue/amber styling.
+- Step N / Introduction / Output Checklist etc. now grouped under a collapsed **FRD Internal Processing** panel.
+
+### ProjectSourceCode/frontend/components/ba-tool/EpicArtifactView.tsx
+**Purpose**: Module Screens card at the top (only screens actually referenced by any EPIC section). Every `EpicSection` wraps its content in `AiEditableSection` with `findSection` matching by `sectionKey` or label.
+
+### ProjectSourceCode/frontend/components/ba-tool/UserStoryArtifactView.tsx
+**Purpose**: Top‑level "Referenced Screens" card. Exposes `STORY_SECTION_CONFIG` and `CATEGORY_LABELS` as `export` so the preview page can reuse them. `StorySectionCard` now wraps content in `AiEditableSection` matching by `sectionKey`. Section 14 (Screen Reference) renders only the specifically cited screens in a compact thumbnail row.
+
+### ProjectSourceCode/frontend/components/ba-tool/ScreenUploader.tsx
+**Purpose**: Upload reliability. Progress counter (`Uploading screens… N of M`) in the drop‑zone, chunked uploads via the new `uploadBaScreensBatch(onProgress)`. On failure the list is still reloaded so partially‑committed screens show, and the alert surfaces the actual HTTP error message instead of a generic failure.
+
+## Data Flow
+
+**Creating a new project and running the skill pipeline with incremental RTM:**
+
+1. User creates project → fills in Product Name / Client Name / Submitted By on project page → `PATCH /api/ba/projects/:id`.
+2. User opens module, uploads screens → chunked 5/request.
+3. User runs SKILL‑00 (Screen Analysis), SKILL‑01‑S (FRD).
+4. **Immediately after FRD finishes**: orchestrator parses features and writes 6 rows into `BaRtmRow`. RTM page shows Feature + Module columns populated.
+5. User runs SKILL‑02‑S (EPIC). Orchestrator parses `FRD Feature IDs` and `updateMany` → EPIC column fills in.
+6. User runs SKILL‑04 (User Stories). Orchestrator parses each story's `FRD Feature Reference` → Story columns fill in.
+7. User runs SKILL‑05 (SubTasks). Pre‑existing hook fills SubTask / Team / Class / Source File / Test Cases / TBD columns.
+
+**Viewing a generated EPIC:**
+
+1. User clicks EPIC in tree → `ArtifactContentPanel` routes to `EpicArtifactView` with `withScreens(artifact)`.
+2. Top card shows Referenced Screens filtered via `filterReferencedScreens`.
+3. Each structured section (Summary, Business Context, …) rendered via `AiEditableSection`. User clicks "AI Suggest" → `POST /api/ai/ba-refine-section` → Python refines → response populates the textarea → user clicks Save → `updateArtifactSection`.
+
+**Previewing + downloading:**
+
+1. User clicks Preview in the toolbar → `/ba-tool/preview/artifact/:id` opens in a new tab.
+2. Page fetches `getArtifact(id)` (now includes `module.project` and `module.screens`).
+3. React renders cover + Document History + Screens + sections via the per‑type TOC computation.
+4. User clicks PDF → `GET /api/ba/artifacts/:id/export/pdf` → backend renders HTML → Puppeteer → PDF blob streamed back → browser downloads.
+
+## Test Coverage
+
+No unit tests were added in this session. Verification was end‑to‑end smoke testing against a real project:
+
+- `GET /api/ba/artifacts/6d0dedce.../preview` → `200`, HTML contains 3 `screen-tile` blocks matching FRD‑MOD‑01's SCR‑01 / 03 / 04 references.
+- `GET /api/ba/artifacts/2ea0ced8.../preview` (EPIC) → only SCR‑01 referenced (correct).
+- `POST /api/ba/projects/3c5d3ded.../rtm/backfill` → `{seeded: 6, epics: 3, stories: 3, subtasks: 16}` on the live Tax Compass project.
+- Puppeteer PDF of FRD‑MOD‑01 → 461 KB, header label "Functional Requirements Document — FRD-MOD-01_MOD-01", cover page and ToC intact.
+
+## Known Limitations
+
+- **Document History is synthesized**, not a true audit log. It's reconstructed from each section's `createdAt/updatedAt` and `isHumanModified/aiGenerated` flags. If you need a line‑by‑line revision trail like PRD's `PrdAuditLog`, you'll want a new `BaArtifactAuditLog` model.
+- **`prisma migrate dev` still blocked** by shadow DB permissions — session used `prisma db push`. Production deploys need the shadow DB grant or a proper migration folder.
+- **AI Suggest is not streamed** — the user waits for the full refined text. Streaming would need a Python SSE endpoint and Nest proxy with `StreamingResponse`.
+- **Screen references are string‑matched** (`SCR-\d+`). If a BA writes "SCR-1" (no zero‑pad) or "Screen 3", it won't resolve. The parser is easy to extend but right now is strict.
+- **Chunked upload is sequential**, not parallel — upload time is bounded by sum of chunk durations. Fine for 20–50 screens, could be improved with `Promise.all` for chunks of non‑overlapping file sets.
+- **No visual indicator that RTM is being populated** after a skill run — the orchestrator logs say "RTM: seeded N rows" but the RTM page doesn't auto‑refresh. User has to re‑open it or hit Populate from Artifacts.
+- **The backend Nest watch intermittently dies with EADDRINUSE when a previous process lingers** — the fix is `taskkill /PID <N> /F && NODE_OPTIONS="--max-old-space-size=4096" npm run start:dev`.
+
+## What's Next
+
+- **Real audit log** → new `BaArtifactAuditLog` Prisma model mirroring `PrdAuditLog`, written from `updateArtifactSection`. Document History would then show actual change entries with `before → after` diffs.
+- **Streaming AI Suggest** via SSE so long refinements feel live.
+- **RTM live‑refresh** (SSE or WebSocket) so the user doesn't have to reload after each skill.
+- **Screen‑reference resolver** that normalises `SCR-1`, `Screen 3`, `Signup Screen` to canonical SCR‑XX via fuzzy match on `screenTitle`.
+- **Parallel chunked uploads** (3–4 chunks concurrent) to cut upload time on large projects.
+- **Full Puppeteer pool** for concurrent PDF generation — currently each request launches its own Chromium, which is slow at volume.

@@ -5,8 +5,9 @@ import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { getBaSubTask, type BaSubTask } from '@/lib/ba-api';
 import { SubTaskDetailView } from '@/components/ba-tool/SubTaskDetailView';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Eye, Download } from 'lucide-react';
 import Link from 'next/link';
+import { api } from '@/lib/api';
 
 export default function SubTaskDetailPage() {
   const params = useParams<{ id: string; moduleId: string; subtaskId: string }>();
@@ -52,7 +53,7 @@ export default function SubTaskDetailPage() {
 
   return (
     <div className="min-h-screen bg-background" data-testid="subtask-detail-page">
-      <header className="border-b border-border bg-card px-6 py-3">
+      <header className="border-b border-border bg-card px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" asChild>
             <Link href={`/ba-tool/project/${projectId}/module/${moduleDbId}`}>
@@ -61,6 +62,44 @@ export default function SubTaskDetailPage() {
             </Link>
           </Button>
           <h1 className="text-sm font-semibold">{subtask.subtaskId} — {subtask.subtaskName}</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" asChild>
+            <Link href={`/ba-tool/preview/subtask/${subtaskDbId}?back=/ba-tool/project/${projectId}/module/${moduleDbId}/subtask/${subtaskDbId}`} target="_blank">
+              <Eye className="h-3.5 w-3.5 mr-1" />
+              Preview
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" onClick={async () => {
+            try {
+              const r = await api.get(`/ba/subtasks/${subtaskDbId}/export/pdf`, { responseType: 'blob', timeout: 120_000 });
+              const blob = new Blob([r.data], { type: 'application/pdf' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${subtask.subtaskId}.pdf`;
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch { alert('Download failed'); }
+          }}>
+            <Download className="h-3.5 w-3.5 mr-1" />
+            PDF
+          </Button>
+          <Button size="sm" onClick={async () => {
+            try {
+              const r = await api.get(`/ba/subtasks/${subtaskDbId}/export/docx`, { responseType: 'blob', timeout: 120_000 });
+              const blob = new Blob([r.data], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${subtask.subtaskId}.docx`;
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch { alert('Download failed'); }
+          }}>
+            <Download className="h-3.5 w-3.5 mr-1" />
+            DOCX
+          </Button>
         </div>
       </header>
       <div className="max-w-4xl mx-auto px-6 py-6">

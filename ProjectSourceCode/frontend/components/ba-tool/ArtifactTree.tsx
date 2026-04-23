@@ -1,11 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { useMemo } from 'react';
-import { SKILL_LABELS, type BaArtifact, type BaArtifactSection, type BaSkillExecution } from '@/lib/ba-api';
+import { useEffect, useState } from 'react';
+import { SKILL_LABELS, listPseudoFilesByArtifact, type BaArtifact, type BaArtifactSection, type BaPseudoFile, type BaSkillExecution } from '@/lib/ba-api';
 import { parseFrdContent, type ParsedFeature } from '@/lib/frd-parser';
 import { parseEpicContent, type EpicSectionId } from '@/lib/epic-parser';
-import { ChevronRight, ChevronDown, FileText, Layers, BookOpen, ListChecks, Cog, Sparkles, User, AlertTriangle } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, Layers, BookOpen, ListChecks, Cog, Sparkles, User, AlertTriangle, Compass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // ─── Tree node types ─────────────────────────────────────────────────────────
@@ -68,7 +67,7 @@ interface ArtifactTreeProps {
 // ─── Build tree from executions + artifacts ──────────────────────────────────
 
 function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): SkillNode[] {
-  const skillOrder = ['SKILL-00', 'SKILL-01-S', 'SKILL-02-S', 'SKILL-04', 'SKILL-05'];
+  const skillOrder = ['SKILL-00', 'SKILL-01-S', 'SKILL-02-S', 'SKILL-04', 'SKILL-05', 'SKILL-06-LLD'];
   const completedSkills = executions.filter(
     (e) => e.status === 'AWAITING_REVIEW' || e.status === 'APPROVED' || e.status === 'COMPLETED',
   );
@@ -167,6 +166,7 @@ function getArtifactsForSkill(skillName: string, artifacts: BaArtifact[]): BaArt
     'SKILL-02-S': 'EPIC',
     'SKILL-04': 'USER_STORY',
     'SKILL-05': 'SUBTASK',
+    'SKILL-06-LLD': 'LLD',
   };
   const type = typeMap[skillName];
   if (!type) return [];
@@ -211,6 +211,7 @@ const SKILL_ICONS: Record<string, typeof FileText> = {
   'SKILL-02-S': Layers,
   'SKILL-04': BookOpen,
   'SKILL-05': Cog,
+  'SKILL-06-LLD': Compass,
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -223,6 +224,29 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
     return map;
   });
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
+  const [expandedPseudo, setExpandedPseudo] = useState<Record<string, boolean>>({});
+  // Pseudo files per LLD artifact — fetched asynchronously once per artifact.
+  const [pseudoFilesByArtifact, setPseudoFilesByArtifact] = useState<Record<string, BaPseudoFile[]>>({});
+
+  // Fetch pseudo files for every LLD artifact so they can appear as tree children.
+  useEffect(() => {
+    let cancelled = false;
+    const lldArtifacts = artifacts.filter((a) => a.artifactType === 'LLD');
+    (async () => {
+      for (const a of lldArtifacts) {
+        if (pseudoFilesByArtifact[a.id]) continue; // already loaded
+        try {
+          const files = await listPseudoFilesByArtifact(a.id);
+          if (cancelled) return;
+          setPseudoFilesByArtifact((prev) => ({ ...prev, [a.id]: files }));
+        } catch {
+          // swallow — tree just won't show pseudo file children for that LLD
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifacts.map((a) => `${a.id}:${a.artifactType}`).join('|')]);
 
   if (tree.length === 0) {
     return (
@@ -236,7 +260,8 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
 
   return (
     <nav className="py-1 text-[13px]" data-testid="artifact-tree">
-      {tree.map((skillNode) => {
+      {tree.map((skillNode, skillIdx) => {
+        const skillNum = `${skillIdx + 1}`;
         const isSkillExpanded = expandedSkills[skillNode.skillName] ?? true;
         const SkillIcon = SKILL_ICONS[skillNode.skillName] ?? FileText;
         const isSkillActive = activeNode?.type === 'skill' && activeNode.skillName === skillNode.skillName;
@@ -259,6 +284,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                 )}
               >
                 <SkillIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="text-muted-foreground shrink-0 font-mono text-[11px]">{skillNum}.</span>
                 <span className="truncate font-medium">{skillNode.label}</span>
                 <span className={cn(
                   'ml-auto text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0',
@@ -272,7 +298,8 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
             {/* ── Level 1: Artifacts ── */}
             {isSkillExpanded && (
               <div className="ml-5 border-l border-border/50">
-                {skillNode.artifacts.map((artifactNode) => {
+                {skillNode.artifacts.map((artifactNode, artifactIdx) => {
+                  const artifactNum = `${skillNum}.${artifactIdx + 1}`;
                   const isArtifactExpanded = expandedArtifacts[artifactNode.artifact.id] ??
                     (activeNode?.artifactId === artifactNode.artifact.id);
                   const isArtifactActive = activeNode?.type === 'artifact' && activeNode.artifactId === artifactNode.artifact.id;
@@ -304,6 +331,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                           )}
                         >
                           <ArtifactIcon className="h-3 w-3 shrink-0" />
+                          <span className="text-muted-foreground shrink-0 font-mono text-[10px]">{artifactNum}</span>
                           <span className="truncate">{artifactNode.label}</span>
                           {artifactNode.teamBadge && (
                             <span className={cn(
@@ -328,7 +356,8 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                       {/* ── Level 2: FRD Features (for FRD artifacts) ── */}
                       {isArtifactExpanded && artifactNode.features.length > 0 && (
                         <div className="ml-5 border-l border-border/30">
-                          {artifactNode.features.map((feat) => {
+                          {artifactNode.features.map((feat, featIdx) => {
+                            const featNum = `${artifactNum}.${featIdx + 1}`;
                             const isFeatureActive = activeNode?.type === 'section'
                               && activeNode.artifactId === artifactNode.artifact.id
                               && activeNode.sectionId === feat.featureId;
@@ -354,6 +383,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                                 )}
                               >
+                                <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{featNum}</span>
                                 <span className="font-mono text-primary shrink-0">{feat.featureId}</span>
                                 <span className="truncate">{feat.featureName}</span>
                                 {feat.priority && (
@@ -373,7 +403,8 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                       {/* ── Level 2: EPIC Structured Sections (TOC) ── */}
                       {isArtifactExpanded && artifactNode.epicSections && artifactNode.epicSections.length > 0 && (
                         <div className="ml-5 border-l border-border/30">
-                          {artifactNode.epicSections.map((sec) => {
+                          {artifactNode.epicSections.map((sec, secIdx) => {
+                            const secNum = `${artifactNum}.${secIdx + 1}`;
                             const isActive = activeNode?.type === 'section'
                               && activeNode.artifactId === artifactNode.artifact.id
                               && activeNode.sectionId === sec.id;
@@ -392,6 +423,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                                 )}
                               >
+                                <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{secNum}</span>
                                 <span className="truncate">{sec.label}</span>
                                 {sec.highlight && (
                                   <span className="text-[7px] bg-primary/20 text-primary px-1 rounded shrink-0">Critical</span>
@@ -410,7 +442,8 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                 <Cog className="h-2.5 w-2.5" />
                                 Internal Processing
                               </div>
-                              {artifactNode.epicInternalSections.map((sec) => {
+                              {artifactNode.epicInternalSections.map((sec, intIdx) => {
+                                const intNum = `${artifactNum}.i${intIdx + 1}`;
                                 const isActive = activeNode?.type === 'section'
                                   && activeNode.artifactId === artifactNode.artifact.id
                                   && activeNode.sectionId === sec.id;
@@ -429,6 +462,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                         : 'text-muted-foreground/70 hover:text-foreground hover:bg-muted/50',
                                     )}
                                   >
+                                    <span className="text-muted-foreground/60 shrink-0 font-mono text-[9px]">{intNum}</span>
                                     <span className="truncate">{sec.label}</span>
                                   </button>
                                 );
@@ -441,7 +475,8 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                       {/* ── Level 2: Sections (for non-FRD, non-EPIC artifacts) ── */}
                       {isArtifactExpanded && artifactNode.children.length > 0 && (
                         <div className="ml-5 border-l border-border/30">
-                          {artifactNode.children.map((sectionNode) => {
+                          {artifactNode.children.map((sectionNode, childIdx) => {
+                            const childNum = `${artifactNum}.${childIdx + 1}`;
                             const isSectionActive = activeNode?.type === 'section' && activeNode.sectionId === sectionNode.section.id;
 
                             return (
@@ -459,6 +494,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                                 )}
                               >
+                                <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{childNum}</span>
                                 <span className="truncate">{sectionNode.label}</span>
                                 {sectionNode.isAi && (
                                   <Sparkles className="h-2.5 w-2.5 text-blue-500 shrink-0" />
@@ -469,6 +505,82 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                               </button>
                             );
                           })}
+                          {/* Synthetic "Pseudo-Code Files" node for LLD artifacts.
+                              Pseudo files live in a separate table — loaded
+                              asynchronously into pseudoFilesByArtifact. Each
+                              file appears as its own child node (6.X.Y.Z). */}
+                          {artifactNode.artifact.artifactType === 'LLD' && (() => {
+                            const pseudoNum = `${artifactNum}.${artifactNode.children.length + 1}`;
+                            const artifactDbId = artifactNode.artifact.id;
+                            const files = pseudoFilesByArtifact[artifactDbId] ?? [];
+                            const isPseudoRootActive = activeNode?.type === 'section'
+                              && activeNode.artifactId === artifactDbId
+                              && activeNode.sectionId === '__pseudo_code_files__';
+                            const isPseudoExpanded = expandedPseudo[artifactDbId] ?? isPseudoRootActive;
+                            return (
+                              <>
+                                <div className="flex items-center">
+                                  {files.length > 0 ? (
+                                    <button
+                                      onClick={() => setExpandedPseudo((p) => ({ ...p, [artifactDbId]: !(p[artifactDbId] ?? isPseudoRootActive) }))}
+                                      className="pl-2 pr-0 py-1 text-muted-foreground hover:text-foreground"
+                                    >
+                                      {isPseudoExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                    </button>
+                                  ) : (
+                                    <span className="w-[18px] pl-2" />
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      onNodeSelect({ type: 'section', artifactId: artifactDbId, sectionId: '__pseudo_code_files__' });
+                                      if (!isPseudoExpanded) setExpandedPseudo((p) => ({ ...p, [artifactDbId]: true }));
+                                    }}
+                                    className={cn(
+                                      'flex-1 flex items-center gap-1.5 pl-1 pr-2 py-1 text-left text-[11px] transition-colors',
+                                      isPseudoRootActive
+                                        ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                    )}
+                                  >
+                                    <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{pseudoNum}</span>
+                                    <span className="truncate">Pseudo-Code Files</span>
+                                    <Cog className="h-2.5 w-2.5 text-muted-foreground/60 shrink-0" />
+                                    <span className="ml-auto text-[9px] text-muted-foreground/50 shrink-0">{files.length}</span>
+                                  </button>
+                                </div>
+                                {isPseudoExpanded && files.length > 0 && (
+                                  <div className="ml-5 border-l border-border/30">
+                                    {files.map((f, fIdx) => {
+                                      const fileNum = `${pseudoNum}.${fIdx + 1}`;
+                                      const basename = f.path.split('/').pop() ?? 'file';
+                                      const isFileActive = activeNode?.type === 'section'
+                                        && activeNode.artifactId === artifactDbId
+                                        && activeNode.sectionId === `__pseudo_code_files__:${f.id}`;
+                                      return (
+                                        <button
+                                          key={f.id}
+                                          onClick={() => onNodeSelect({ type: 'section', artifactId: artifactDbId, sectionId: `__pseudo_code_files__:${f.id}` })}
+                                          className={cn(
+                                            'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                            isFileActive
+                                              ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                          )}
+                                          title={f.path}
+                                        >
+                                          <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{fileNum}</span>
+                                          <span className="truncate">{basename}</span>
+                                          {f.isHumanModified && (
+                                            <User className="h-2.5 w-2.5 text-amber-500 shrink-0" />
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>

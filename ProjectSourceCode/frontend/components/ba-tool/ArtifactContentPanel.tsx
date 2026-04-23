@@ -1,35 +1,103 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   updateArtifactSection,
+  baRefineSection,
+  downloadProjectStructureZip,
+  downloadPseudoFile,
+  downloadPseudoFilesZip,
+  listPseudoFilesByArtifact,
+  savePseudoFile,
   type BaArtifact,
   type BaArtifactSection,
+  type BaPseudoFile,
+  type BaScreen,
   type BaSkillExecution,
   SKILL_LABELS,
-  type BaModuleStatus,
 } from '@/lib/ba-api';
 import type { TreeNodeId } from './ArtifactTree';
 import { FrdArtifactView } from './FrdArtifactView';
 import { EpicArtifactView } from './EpicArtifactView';
 import { UserStoryArtifactView } from './UserStoryArtifactView';
-import { Edit3, Save, X, Sparkles, User, Lock, FileText, CheckCircle2 } from 'lucide-react';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { MicButton } from '@/components/forms/MicButton';
+import { AISuggestButton } from '@/components/forms/AISuggestButton';
+import { Edit3, Save, X, Sparkles, User, Lock, FileText, Eye, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { api } from '@/lib/api';
 
 interface ArtifactContentPanelProps {
   activeNode: TreeNodeId | null;
   executions: BaSkillExecution[];
   artifacts: BaArtifact[];
+  moduleScreens?: BaScreen[];
   onSectionUpdated: () => void;
+}
+
+function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
+  const pathname = usePathname();
+  const backParam = pathname ? `?back=${encodeURIComponent(pathname)}` : '';
+  const previewHref = `/ba-tool/preview/artifact/${artifact.id}${backParam}`;
+
+  const download = async (format: 'pdf' | 'docx') => {
+    try {
+      const response = await api.get(`/ba/artifacts/${artifact.id}/export/${format}`, {
+        responseType: 'blob', timeout: 120_000,
+      });
+      const type = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      const blob = new Blob([response.data], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${artifact.artifactId}.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert(`Download failed. Check backend is running.`);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-end gap-2 mb-3 pb-3 border-b border-border">
+      <Button size="sm" variant="outline" asChild>
+        <Link href={previewHref} target="_blank">
+          <Eye className="h-3.5 w-3.5 mr-1" />
+          Preview
+        </Link>
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => download('pdf')}>
+        <Download className="h-3.5 w-3.5 mr-1" />
+        PDF
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => download('docx')}>
+        <Download className="h-3.5 w-3.5 mr-1" />
+        DOCX
+      </Button>
+    </div>
+  );
 }
 
 export function ArtifactContentPanel({
   activeNode,
   executions,
   artifacts,
+  moduleScreens = [],
   onSectionUpdated,
 }: ArtifactContentPanelProps) {
+  // Adapt module screens (BaScreen) to the lighter shape EpicArtifactView/UserStoryArtifactView use
+  const screensLite = moduleScreens.map((s) => ({
+    id: s.id,
+    screenId: s.screenId,
+    screenTitle: s.screenTitle,
+    screenType: s.screenType,
+    fileData: s.fileData,
+    displayOrder: s.displayOrder,
+    textDescription: s.textDescription,
+  }));
   // No selection
   if (!activeNode) {
     return (
@@ -53,6 +121,21 @@ export function ArtifactContentPanel({
     );
   }
 
+  // Helper: enrich artifact with module.screens so structured views can render thumbnails.
+  // The /api/ba/modules/:id call doesn't attach module.screens to each artifact;
+  // we splice them in here from the parent module's screens list.
+  const withScreens = (a: BaArtifact): BaArtifact => ({
+    ...a,
+    module: {
+      id: a.module?.id ?? '',
+      moduleId: a.module?.moduleId ?? '',
+      moduleName: a.module?.moduleName ?? '',
+      packageName: a.module?.packageName ?? '',
+      project: a.module?.project,
+      screens: screensLite,
+    },
+  });
+
   // Artifact-level overview
   if (activeNode.type === 'artifact' && activeNode.artifactId) {
     const artifact = artifacts.find((a) => a.id === activeNode.artifactId);
@@ -64,7 +147,8 @@ export function ArtifactContentPanel({
       const activeFeatureId = activeNode.sectionId?.startsWith('F-') ? activeNode.sectionId : null;
       return (
         <div className="p-6 overflow-y-auto h-full">
-          <FrdArtifactView artifact={artifact} activeFeatureId={activeFeatureId} />
+          <ArtifactToolbar artifact={artifact} />
+          <FrdArtifactView artifact={withScreens(artifact)} activeFeatureId={activeFeatureId} onUpdated={onSectionUpdated} />
         </div>
       );
     }
@@ -73,7 +157,8 @@ export function ArtifactContentPanel({
     if (artifact.artifactType === 'EPIC') {
       return (
         <div className="p-6 overflow-y-auto h-full">
-          <EpicArtifactView artifact={artifact} />
+          <ArtifactToolbar artifact={artifact} />
+          <EpicArtifactView artifact={withScreens(artifact)} onUpdated={onSectionUpdated} />
         </div>
       );
     }
@@ -82,18 +167,25 @@ export function ArtifactContentPanel({
     if (artifact.artifactType === 'USER_STORY') {
       return (
         <div className="p-6 overflow-y-auto h-full">
-          <UserStoryArtifactView artifact={artifact} />
+          <ArtifactToolbar artifact={artifact} />
+          <UserStoryArtifactView artifact={withScreens(artifact)} onUpdated={onSectionUpdated} />
         </div>
       );
     }
 
-    // All other artifacts use generic section cards
+    // All other artifacts use generic section cards. LLD artifacts also get
+    // a pseudo-code-files appendix with numbered sub-sections + downloads.
+    const bottomPad = artifact.artifactType === 'LLD' ? 'pb-32' : 'pb-6';
     return (
-      <div className="p-6 space-y-4 overflow-y-auto h-full">
+      <div className={cn('p-6 space-y-4 overflow-y-auto h-full', bottomPad)}>
+        <ArtifactToolbar artifact={artifact} />
         <ArtifactHeader artifact={artifact} />
         {artifact.sections.map((section) => (
-          <SectionCard key={section.id} section={section} onUpdated={onSectionUpdated} />
+          <SectionCard key={section.id} section={section} artifactType={artifact.artifactType} artifactId={artifact.id} moduleContext={artifact.artifactId} onUpdated={onSectionUpdated} />
         ))}
+        {artifact.artifactType === 'LLD' && (
+          <LldPseudoFilesCard artifactDbId={artifact.id} artifactId={artifact.artifactId} sectionStartIndex={artifact.sections.length + 1} />
+        )}
       </div>
     );
   }
@@ -102,11 +194,30 @@ export function ArtifactContentPanel({
   if (activeNode.type === 'section' && activeNode.sectionId) {
     const artifact = artifacts.find((a) => a.id === activeNode.artifactId);
 
+    // LLD synthetic "Pseudo-Code Files" node — render the pseudo-file card.
+    // Accepts either the bare key (section-level click) or `__pseudo_code_files__:<fileId>`
+    // (individual file click from tree), in which case we focus + scroll that file.
+    if (artifact?.artifactType === 'LLD' && activeNode.sectionId?.startsWith('__pseudo_code_files__')) {
+      const [, focusFileId] = activeNode.sectionId.split(':');
+      return (
+        <div className="p-6 space-y-4 overflow-y-auto h-full pb-32">
+          <ArtifactToolbar artifact={artifact} />
+          <LldPseudoFilesCard
+            artifactDbId={artifact.id}
+            artifactId={artifact.artifactId}
+            sectionStartIndex={artifact.sections.length + 1}
+            focusFileId={focusFileId || undefined}
+          />
+        </div>
+      );
+    }
+
     // FRD feature click (F-XX-XX) — route to FRD view with active feature
     if (artifact?.artifactType === 'FRD' && activeNode.sectionId.startsWith('F-')) {
       return (
         <div className="p-6 overflow-y-auto h-full">
-          <FrdArtifactView artifact={artifact} activeFeatureId={activeNode.sectionId} />
+          <ArtifactToolbar artifact={artifact} />
+          <FrdArtifactView artifact={withScreens(artifact)} activeFeatureId={activeNode.sectionId} onUpdated={onSectionUpdated} />
         </div>
       );
     }
@@ -115,7 +226,21 @@ export function ArtifactContentPanel({
     if (artifact?.artifactType === 'EPIC') {
       return (
         <div className="p-6 overflow-y-auto h-full">
-          <EpicArtifactView artifact={artifact} activeSectionId={activeNode.sectionId} />
+          <ArtifactToolbar artifact={artifact} />
+          <EpicArtifactView artifact={withScreens(artifact)} activeSectionId={activeNode.sectionId} onUpdated={onSectionUpdated} />
+        </div>
+      );
+    }
+
+    // User Story section click — route to structured story view with active section
+    if (artifact?.artifactType === 'USER_STORY') {
+      // sectionId may be the ba_artifact_sections.id (from tree) — resolve to sectionKey
+      const matched = artifact.sections.find((s) => s.id === activeNode.sectionId);
+      const activeSectionKey = matched?.sectionKey ?? activeNode.sectionId;
+      return (
+        <div className="p-6 overflow-y-auto h-full">
+          <ArtifactToolbar artifact={artifact} />
+          <UserStoryArtifactView artifact={withScreens(artifact)} activeStorySection={activeSectionKey} onUpdated={onSectionUpdated} />
         </div>
       );
     }
@@ -124,10 +249,11 @@ export function ArtifactContentPanel({
     if (!section) return <EmptyState message="Section not found" />;
     return (
       <div className="p-6 overflow-y-auto h-full">
+        {artifact && <ArtifactToolbar artifact={artifact} />}
         <div className="mb-4">
           <p className="text-xs text-muted-foreground font-mono">{artifact?.artifactId}</p>
         </div>
-        <SectionCard section={section} onUpdated={onSectionUpdated} defaultExpanded />
+        <SectionCard section={section} artifactType={artifact?.artifactType} artifactId={artifact?.id} moduleContext={artifact?.artifactId} onUpdated={onSectionUpdated} defaultExpanded />
       </div>
     );
   }
@@ -181,9 +307,7 @@ function SkillOverview({ skillName, label, execution }: { skillName: string; lab
             <p className="text-xs text-muted-foreground">{execution.humanDocument.length.toLocaleString()} characters</p>
           </div>
           <div className="px-4 py-4 max-h-[60vh] overflow-y-auto">
-            <pre className="whitespace-pre-wrap text-xs text-foreground leading-relaxed font-sans">
-              {execution.humanDocument}
-            </pre>
+            <MarkdownRenderer content={execution.humanDocument} />
           </div>
         </div>
       )}
@@ -218,20 +342,30 @@ function ArtifactHeader({ artifact }: { artifact: BaArtifact }) {
 
 function SectionCard({
   section,
+  artifactType,
+  artifactId,
+  moduleContext,
   onUpdated,
   defaultExpanded = false,
 }: {
   section: BaArtifactSection;
+  artifactType?: string;
+  /** Db id of the parent artifact — needed for LLD download buttons */
+  artifactId?: string;
+  moduleContext?: string;
   onUpdated: () => void;
   defaultExpanded?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(section.editedContent ?? section.content);
   const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
 
   const displayContent = section.isHumanModified && section.editedContent
     ? section.editedContent
     : section.content;
+
+  const isAiDisplay = Boolean(section.aiGenerated) && !section.isHumanModified;
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -246,32 +380,74 @@ function SectionCard({
     }
   }, [section.id, editContent, onUpdated]);
 
+  const handleAISuggest = useCallback(async () => {
+    setSuggesting(true);
+    try {
+      const { suggestion } = await baRefineSection({
+        artifactType: artifactType ?? 'SECTION',
+        sectionLabel: section.sectionLabel,
+        currentText: editing ? editContent : displayContent,
+        moduleContext: moduleContext ?? '',
+      });
+      if (!editing) setEditing(true);
+      setEditContent(suggestion);
+    } catch {
+      alert('AI Suggest failed. Check AI service is running.');
+    } finally {
+      setSuggesting(false);
+    }
+  }, [artifactType, section.sectionLabel, editing, editContent, displayContent, moduleContext]);
+
+  const handleMicTranscribed = useCallback((text: string) => {
+    if (!editing) setEditing(true);
+    setEditContent((prev) => (prev ? `${prev}\n${text}` : text));
+  }, [editing]);
+
   return (
     <div className={cn(
       'rounded-lg border overflow-hidden',
       section.isLocked ? 'border-border/50 bg-muted/20' : 'border-border bg-card',
     )}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-foreground">{section.sectionLabel}</h3>
-          {section.aiGenerated && !section.isHumanModified && (
-            <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="text-sm font-semibold text-foreground truncate">{section.sectionLabel}</h3>
+          {isAiDisplay && (
+            <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full shrink-0">
               <Sparkles className="h-2.5 w-2.5" /> AI
             </span>
           )}
           {section.isHumanModified && (
-            <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+            <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full shrink-0">
               <User className="h-2.5 w-2.5" /> Edited
             </span>
           )}
-          {section.isLocked && <Lock className="h-3 w-3 text-muted-foreground" />}
+          {section.isLocked && <Lock className="h-3 w-3 text-muted-foreground shrink-0" />}
         </div>
-        {!section.isLocked && !editing && (
-          <Button size="sm" variant="ghost" onClick={() => setEditing(true)} className="h-7">
-            <Edit3 className="h-3 w-3 mr-1" />
-            Edit
-          </Button>
+        {!section.isLocked && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* LLD Project Structure — Download ZIP of tree + placeholder files */}
+            {artifactType === 'LLD' && section.sectionKey === 'project_structure' && artifactId && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7"
+                onClick={() => downloadProjectStructureZip(artifactId, 'project-structure.zip').catch(() => alert('Download failed'))}
+                title="Download project structure as ZIP (empty folders + placeholder files)"
+              >
+                <Download className="h-3 w-3 mr-1" />
+                Download structure
+              </Button>
+            )}
+            <MicButton onTranscribed={handleMicTranscribed} />
+            <AISuggestButton onClick={handleAISuggest} loading={suggesting} />
+            {!editing && (
+              <Button size="sm" variant="ghost" onClick={() => setEditing(true)} className="h-7">
+                <Edit3 className="h-3 w-3 mr-1" />
+                Edit
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -283,8 +459,14 @@ function SectionCard({
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
               rows={Math.min(20, Math.max(8, displayContent.split('\n').length + 2))}
-              className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background resize-y focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+              className={cn(
+                'w-full rounded-md border border-input px-3 py-2 text-sm bg-background resize-y focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono',
+                isAiDisplay && 'text-blue-600',
+              )}
             />
+            {isAiDisplay && (
+              <p className="text-[11px] text-blue-600">AI-generated content — edit as needed</p>
+            )}
             <div className="flex gap-2">
               <Button size="sm" onClick={handleSave} disabled={saving}>
                 {saving ? <span className="h-3.5 w-3.5 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Save className="h-3.5 w-3.5 mr-1" />}
@@ -296,8 +478,11 @@ function SectionCard({
             </div>
           </div>
         ) : (
-          <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground max-h-[500px] overflow-y-auto">
-            {renderFormattedContent(displayContent)}
+          <div className={cn(
+            'text-sm leading-relaxed max-h-[500px] overflow-y-auto',
+            isAiDisplay ? 'text-blue-600' : 'text-foreground',
+          )}>
+            <MarkdownRenderer content={displayContent} />
           </div>
         )}
       </div>
@@ -305,23 +490,248 @@ function SectionCard({
   );
 }
 
-// ─── Content formatter ───────────────────────────────────────────────────────
+// ─── LLD Pseudo-Code Files card (editor view) ───────────────────────────────
 
-function renderFormattedContent(content: string): React.ReactNode {
-  const lines = content.split('\n');
-  return lines.map((line, idx) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('### ')) return <div key={idx} className="text-xs font-bold text-foreground mt-3 mb-1">{trimmed.slice(4)}</div>;
-    if (trimmed.startsWith('## ')) return <div key={idx} className="text-sm font-bold text-foreground mt-4 mb-1 border-b border-border/50 pb-1">{trimmed.slice(3)}</div>;
-    if (trimmed.startsWith('# ')) return <div key={idx} className="text-base font-bold text-foreground mt-4 mb-2">{trimmed.slice(2)}</div>;
-    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) return <div key={idx} className="text-sm pl-4 before:content-['•'] before:mr-2 before:text-muted-foreground">{trimmed.slice(2)}</div>;
-    const numMatch = trimmed.match(/^(\d+)\.\s+(.+)/);
-    if (numMatch) return <div key={idx} className="text-sm pl-4"><span className="text-muted-foreground font-mono mr-2">{numMatch[1]}.</span>{numMatch[2]}</div>;
-    if (trimmed.match(/^(FR-|F-|EPIC-|US-|ST-)/)) return <div key={idx} className="text-sm font-mono text-primary bg-primary/5 px-2 py-0.5 rounded mt-1">{trimmed}</div>;
-    if (trimmed.includes('TBD-Future') || trimmed.includes('[TBD-Future')) return <div key={idx} className="text-sm bg-amber-50 text-amber-800 px-2 py-0.5 rounded mt-1">{trimmed}</div>;
-    if (trimmed === '') return <div key={idx} className="h-2" />;
-    return <div key={idx} className="text-sm">{line}</div>;
-  });
+function LldPseudoFilesCard({
+  artifactDbId,
+  artifactId,
+  sectionStartIndex,
+  focusFileId,
+}: {
+  artifactDbId: string;
+  artifactId: string;
+  sectionStartIndex: number;
+  /** If set, scroll the matching file sub-section into view after render. */
+  focusFileId?: string;
+}) {
+  const [files, setFiles] = useState<BaPseudoFile[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await listPseudoFilesByArtifact(artifactDbId);
+        if (!cancelled) setFiles(data);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [artifactDbId]);
+
+  // When a specific file is focused (via tree click), scroll it into view and
+  // highlight briefly. Runs after files load.
+  useEffect(() => {
+    if (!focusFileId || files.length === 0) return;
+    const el = document.getElementById(`pf-${focusFileId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.classList.add('ring-2', 'ring-primary');
+    const t = setTimeout(() => el.classList.remove('ring-2', 'ring-primary'), 2000);
+    return () => clearTimeout(t);
+  }, [focusFileId, files.length]);
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+        Loading pseudo-code files…
+      </div>
+    );
+  }
+  if (files.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="text-sm font-semibold text-foreground">
+            {sectionStartIndex}. Pseudo-Code Files
+          </h3>
+          <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-medium">
+            {files.length} file{files.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7"
+          onClick={() => downloadPseudoFilesZip(artifactDbId, `${artifactId}-pseudo-files.zip`).catch(() => alert('Download failed'))}
+          title="Download all pseudo-code files as ZIP, placed in the project structure from Section 16"
+        >
+          <Download className="h-3 w-3 mr-1" />
+          Download all
+        </Button>
+      </div>
+      <div className="p-4 space-y-4">
+        {files.map((f, idx) => (
+          <LldPseudoFileItem
+            key={f.id}
+            file={f}
+            index={idx + 1}
+            sectionStartIndex={sectionStartIndex}
+            onSaved={(updated) => {
+              setFiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Single pseudo-code file row with inline edit + mic + AI suggest ─────────
+
+function LldPseudoFileItem({
+  file,
+  index,
+  sectionStartIndex,
+  onSaved,
+}: {
+  file: BaPseudoFile;
+  index: number;
+  sectionStartIndex: number;
+  onSaved: (updated: BaPseudoFile) => void;
+}) {
+  const basename = file.path.split('/').pop() ?? 'file';
+  const displayContent = file.isHumanModified && file.editedContent ? file.editedContent : file.aiContent;
+
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState(displayContent);
+  const [instruction, setInstruction] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+
+  // Keep editContent in sync when the parent file prop changes (e.g. after another edit pass).
+  useEffect(() => {
+    if (!editing) setEditContent(displayContent);
+  }, [displayContent, editing]);
+
+  const handleMicTranscribed = useCallback((text: string) => {
+    if (!editing) setEditing(true);
+    // Mic dictation goes into the AI instruction banner — NOT into the code body,
+    // so we don't pollute a Python/TS source file with an English sentence.
+    setInstruction((prev) => (prev ? `${prev} ${text}` : text));
+  }, [editing]);
+
+  const handleAISuggest = useCallback(async () => {
+    setSuggesting(true);
+    try {
+      const { suggestion } = await baRefineSection({
+        artifactType: 'PSEUDO_CODE',
+        sectionLabel: `${basename} (${file.language})`,
+        currentText: editing ? editContent : displayContent,
+        moduleContext: `Pseudo-code file at path: ${file.path}. Language: ${file.language}. Preserve code formatting and language syntax. Output only the refined code without explanation or markdown fences.`,
+        instruction: instruction || undefined,
+      });
+      if (!editing) setEditing(true);
+      setEditContent(suggestion);
+      setInstruction('');
+    } catch {
+      alert('AI Suggest failed. Check AI service is running.');
+    } finally {
+      setSuggesting(false);
+    }
+  }, [basename, file.language, file.path, editing, editContent, displayContent, instruction]);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    try {
+      const updated = await savePseudoFile(file.id, editContent);
+      setEditing(false);
+      setInstruction('');
+      onSaved(updated);
+    } catch {
+      alert('Failed to save pseudo-code file');
+    } finally {
+      setSaving(false);
+    }
+  }, [file.id, editContent, onSaved]);
+
+  const handleCancel = useCallback(() => {
+    setEditContent(displayContent);
+    setInstruction('');
+    setEditing(false);
+  }, [displayContent]);
+
+  return (
+    <div id={`pf-${file.id}`} className="rounded-md border border-border/60 overflow-hidden scroll-mt-4 transition-all">
+      <div className="flex items-center justify-between px-3 py-2 bg-muted/10 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h4 className="text-sm font-semibold text-foreground shrink-0">
+            {sectionStartIndex}.{index} {basename}
+          </h4>
+          <code className="text-[10px] font-mono text-muted-foreground truncate">{file.path}</code>
+          <span className="text-[9px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded uppercase shrink-0">{file.language}</span>
+          {file.isHumanModified && (
+            <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0">Edited</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <MicButton onTranscribed={handleMicTranscribed} />
+          <AISuggestButton onClick={handleAISuggest} loading={suggesting} />
+          {!editing && (
+            <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(true)}>
+              <Edit3 className="h-3 w-3 mr-1" />
+              Edit
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7"
+            onClick={() => downloadPseudoFile(file.id, basename).catch(() => alert('Download failed'))}
+            title={`Download ${basename}`}
+          >
+            <Download className="h-3 w-3 mr-1" />
+            Download
+          </Button>
+        </div>
+      </div>
+
+      {/* Mic-dictated AI instruction banner — visible while editing with text captured */}
+      {editing && instruction && (
+        <div className="px-3 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+          <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <span className="font-medium">AI instruction:</span> {instruction}
+            <button
+              type="button"
+              onClick={() => setInstruction('')}
+              className="ml-2 text-amber-700 underline hover:text-amber-900"
+            >
+              clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {editing ? (
+        <div className="p-3 space-y-2">
+          <textarea
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            rows={Math.min(28, Math.max(12, editContent.split('\n').length + 1))}
+            className="w-full rounded-md border border-input px-3 py-2 text-xs bg-background font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? <span className="h-3.5 w-3.5 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={handleCancel}>
+              <X className="h-3.5 w-3.5 mr-1" /> Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <pre className="px-3 py-2 text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-[500px] bg-muted/5">
+          {displayContent}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 // ─── Empty State ─────────────────────────────────────────────────────────────

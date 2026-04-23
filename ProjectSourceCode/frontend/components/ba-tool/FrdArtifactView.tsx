@@ -3,18 +3,42 @@
 import { useEffect, useMemo, useState } from 'react';
 import { type BaArtifact } from '@/lib/ba-api';
 import { parseFrdContent, type ParsedFeature, type ParsedFrdModule } from '@/lib/frd-parser';
-import { ChevronDown, ChevronUp, AlertTriangle, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronUp, AlertTriangle, Cog } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { AiEditableSection } from './AiEditableSection';
+import { ScreensGallery, extractScreenIds } from './ScreensGallery';
+
+// Sections from the FRD skill that describe the *process* of producing the FRD
+// rather than the FRD deliverable itself. These get grouped under
+// "Internal FRD Processing" (collapsed by default), mirroring EPIC view.
+const INTERNAL_SECTION_REGEX = /^(step\s*\d+|introduction|output\s*checklist|update\s*compact\s*module\s*index|validate\s*the\s*frd|obtain\s*customer\s*sign[\s-]?off|customer\s*sign[\s-]?off|sign[\s-]?off|definition\s*of\s*done)/i;
+
+function isInternalSection(label: string): boolean {
+  return INTERNAL_SECTION_REGEX.test(label.trim());
+}
 
 interface FrdArtifactViewProps {
   artifact: BaArtifact;
   activeFeatureId?: string | null;
+  onUpdated?: () => void;
 }
 
-export function FrdArtifactView({ artifact, activeFeatureId }: FrdArtifactViewProps) {
+export function FrdArtifactView({ artifact, activeFeatureId, onUpdated }: FrdArtifactViewProps) {
   const parsed = useMemo<ParsedFrdModule>(() =>
     parseFrdContent(artifact.sections), [artifact.sections],
   );
+
+  const { deliverableSections, internalSections } = useMemo(() => {
+    const deliverable: typeof parsed.otherSections = [];
+    const internal: typeof parsed.otherSections = [];
+    for (const s of parsed.otherSections) {
+      (isInternalSection(s.label) ? internal : deliverable).push(s);
+    }
+    return { deliverableSections: deliverable, internalSections: internal };
+  }, [parsed.otherSections]);
+
+  const [internalExpanded, setInternalExpanded] = useState(false);
 
   // Auto-scroll to active feature when selected from tree
   useEffect(() => {
@@ -64,6 +88,7 @@ export function FrdArtifactView({ artifact, activeFeatureId }: FrdArtifactViewPr
               key={feature.featureId}
               feature={feature}
               isActive={activeFeatureId === feature.featureId}
+              screens={artifact.module?.screens}
             />
           ))}
         </div>
@@ -71,23 +96,52 @@ export function FrdArtifactView({ artifact, activeFeatureId }: FrdArtifactViewPr
 
       {/* Business Rules */}
       {parsed.businessRules && (
-        <CollapsibleSection title="Business Rules" content={parsed.businessRules} />
+        <CollapsibleSection title="Business Rules" content={parsed.businessRules} artifact={artifact} onUpdated={onUpdated} />
       )}
 
       {/* Validations */}
       {parsed.validations && (
-        <CollapsibleSection title="Validations" content={parsed.validations} />
+        <CollapsibleSection title="Validations" content={parsed.validations} artifact={artifact} onUpdated={onUpdated} />
       )}
 
       {/* TBD-Future Registry */}
       {parsed.tbdFutureRegistry && (
-        <CollapsibleSection title="TBD-Future Integration Registry" content={parsed.tbdFutureRegistry} badgeColor="amber" />
+        <CollapsibleSection title="TBD-Future Integration Registry" content={parsed.tbdFutureRegistry} badgeColor="amber" artifact={artifact} onUpdated={onUpdated} />
       )}
 
-      {/* Other sections */}
-      {parsed.otherSections.map((section, idx) => (
-        <CollapsibleSection key={idx} title={section.label} content={section.content} />
+      {/* Other deliverable sections */}
+      {deliverableSections.map((section, idx) => (
+        <CollapsibleSection key={idx} title={section.label} content={section.content} artifact={artifact} onUpdated={onUpdated} />
       ))}
+
+      {/* ═══ FRD Internal Processing ═══ */}
+      {internalSections.length > 0 && (
+        <div className="rounded-lg border border-border bg-muted/20 overflow-hidden">
+          <button
+            onClick={() => setInternalExpanded((p) => !p)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/40 transition-colors text-left"
+          >
+            <div className="flex items-center gap-2">
+              <Cog className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold text-foreground">FRD Internal Processing</span>
+              <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                {internalSections.length} steps
+              </span>
+            </div>
+            {internalExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          {internalExpanded && (
+            <div className="border-t border-border/50 p-3 space-y-2">
+              <p className="text-[11px] text-muted-foreground italic mb-2">
+                These are the skill&apos;s internal processing steps and validations, not part of the FRD deliverable itself.
+              </p>
+              {internalSections.map((s, idx) => (
+                <CollapsibleSection key={idx} title={s.label} content={s.content} defaultCollapsed artifact={artifact} onUpdated={onUpdated} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Fallback if no features parsed */}
       {parsed.features.length === 0 && (
@@ -106,8 +160,16 @@ export function FrdArtifactView({ artifact, activeFeatureId }: FrdArtifactViewPr
 
 // ─── Feature Card (matches PRD Generator style) ──────────────────────────────
 
-function FeatureCard({ feature, isActive }: { feature: ParsedFeature; isActive: boolean }) {
+function FeatureCard({ feature, isActive, screens }: { feature: ParsedFeature; isActive: boolean; screens?: import('@/lib/ba-api').BaScreenLite[] }) {
   const [expanded, setExpanded] = useState(isActive);
+
+  // Resolve SCR-XX refs in this feature's Screen Reference to actual module screens
+  const referencedScreens = (() => {
+    if (!screens || screens.length === 0 || !feature.screenRef) return [];
+    const ids = extractScreenIds(feature.screenRef);
+    if (ids.length === 0) return [];
+    return screens.filter((s) => ids.includes(s.screenId));
+  })();
 
   const priorityColor = feature.priority.toLowerCase().includes('must')
     ? 'bg-red-100 text-red-700'
@@ -162,9 +224,19 @@ function FeatureCard({ feature, isActive }: { feature: ParsedFeature; isActive: 
             <FeatureField label="Description" value={feature.description} />
           )}
 
-          {/* Screen Reference */}
+          {/* Screen Reference — show SCR-XX text plus actual screen thumbnails */}
           {feature.screenRef && (
-            <FeatureField label="Screen Reference" value={feature.screenRef} />
+            <div className="px-4 py-2.5 border-t border-border/50">
+              <span className="text-xs font-semibold text-muted-foreground">Screen Reference</span>
+              <div className="mt-1 text-sm text-foreground">
+                <MarkdownRenderer content={feature.screenRef} />
+              </div>
+              {referencedScreens.length > 0 && (
+                <div className="mt-3">
+                  <ScreensGallery screens={referencedScreens} compact />
+                </div>
+              )}
+            </div>
           )}
 
           {/* Trigger */}
@@ -197,10 +269,10 @@ function FeatureCard({ feature, isActive }: { feature: ParsedFeature; isActive: 
             <div className="px-4 py-2.5 border-t border-border/50">
               <span className="text-xs font-semibold text-muted-foreground">Integration Signals</span>
               <div className={cn(
-                'mt-1 text-sm whitespace-pre-wrap',
+                'mt-1 text-sm',
                 feature.integrationSignals.includes('TBD-Future') ? 'text-amber-700 bg-amber-50 rounded px-2 py-1' : 'text-foreground',
               )}>
-                {feature.integrationSignals}
+                <MarkdownRenderer content={feature.integrationSignals} />
               </div>
             </div>
           )}
@@ -219,15 +291,34 @@ function FeatureField({ label, value }: { label: string; value: string }) {
   return (
     <div className="px-4 py-2.5 border-t border-border/50">
       <span className="text-xs font-semibold text-muted-foreground">{label}</span>
-      <p className="mt-1 text-sm text-foreground whitespace-pre-wrap">{value}</p>
+      <div className="mt-1 text-sm text-foreground">
+        <MarkdownRenderer content={value} />
+      </div>
     </div>
   );
 }
 
 // ─── Collapsible Section ─────────────────────────────────────────────────────
 
-function CollapsibleSection({ title, content, badgeColor }: { title: string; content: string; badgeColor?: string }) {
-  const [expanded, setExpanded] = useState(false);
+function CollapsibleSection({
+  title, content, badgeColor, defaultCollapsed = false, artifact, onUpdated,
+}: {
+  title: string;
+  content: string;
+  badgeColor?: string;
+  defaultCollapsed?: boolean;
+  artifact?: BaArtifact;
+  onUpdated?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(!defaultCollapsed);
+
+  const findSection = (sections: BaArtifact['sections']) => sections.find(
+    (s) => s.sectionLabel.toLowerCase() === title.toLowerCase()
+      || s.sectionKey.toLowerCase() === title.toLowerCase().replace(/\s+/g, '_'),
+  );
+  const matched = artifact ? findSection(artifact.sections) : undefined;
+  const isAi = Boolean(matched?.aiGenerated && !matched?.isHumanModified);
+
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
       <button
@@ -242,7 +333,18 @@ function CollapsibleSection({ title, content, badgeColor }: { title: string; con
       </button>
       {expanded && (
         <div className="border-t border-border px-4 py-3">
-          <pre className="text-sm whitespace-pre-wrap text-foreground font-sans leading-relaxed">{content}</pre>
+          {artifact ? (
+            <AiEditableSection
+              artifact={artifact}
+              label={title}
+              content={content}
+              findSection={findSection}
+              isAi={isAi}
+              onUpdated={onUpdated}
+            />
+          ) : (
+            <MarkdownRenderer content={content} />
+          )}
         </div>
       )}
     </div>

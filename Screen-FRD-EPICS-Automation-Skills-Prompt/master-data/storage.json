@@ -1,0 +1,11 @@
+{
+  "$schema-version": 1,
+  "category": "STORAGE",
+  "description": "Object-storage technologies for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "MinIO",       "value": "minio",       "description": "S3-compatible self-hosted object storage." },
+    { "name": "Amazon S3",   "value": "s3",          "description": "AWS object storage; multi-AZ durability." },
+    { "name": "Azure Blob",  "value": "azureblob",   "description": "Azure object storage; tiered (hot/cool/archive)." },
+    { "name": "Google Cloud Storage", "value": "gcs", "description": "GCP object storage; multi-region + nearline/coldline tiers." }
+  ]
+}

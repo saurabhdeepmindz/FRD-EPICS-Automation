@@ -1,0 +1,9 @@
+{
+  "$schema-version": 1,
+  "category": "CACHING",
+  "description": "Cache technologies for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "Redis",     "value": "redis",     "description": "In-memory key-value store; pub/sub, streams, Lua scripting." },
+    { "name": "Memcached", "value": "memcached", "description": "Simple distributed in-memory cache; LRU eviction." }
+  ]
+}

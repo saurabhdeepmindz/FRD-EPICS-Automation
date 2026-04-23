@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from fastapi.responses import StreamingResponse
 import json
+import os
 
 from config import Settings, get_settings
 from stt_providers import get_stt_provider, STTProvider
@@ -185,6 +186,17 @@ def _parse_ai_json(raw: str) -> dict:
     if cleaned.startswith("json"):
         cleaned = cleaned[4:].strip()
     return json.loads(cleaned)
+
+
+def _strip_code_fences(raw: str) -> str:
+    """If the model wrapped output in a ```lang ... ``` fence, unwrap it."""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        # drop first fence line (```python, ```ts, or just ```)
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.rstrip() + "\n"
 
 
 @app.post("/parse", response_model=ParseResponse, tags=["ai"])
@@ -393,6 +405,253 @@ async def format_transcript(
     logger.info("Formatted transcript: %d → %d chars", len(body.transcript), len(formatted))
 
     return FormatTranscriptResponse(formattedText=formatted)
+
+
+# ─── BA Tool: Refine artifact section text ──────────────────────────────────
+
+class BaRefineSectionRequest(BaseModel):
+    artifactType: str = Field(..., description="FRD | EPIC | USER_STORY | SUBTASK | SCREEN_ANALYSIS | PSEUDO_CODE")
+    sectionLabel: str = Field(..., max_length=300)
+    currentText: str = Field(..., max_length=20000)
+    moduleContext: str = Field(default="", max_length=4000)
+    instruction: str = Field(default="", max_length=2000, description="Optional refinement instruction")
+
+
+class BaRefineSectionResponse(BaseModel):
+    suggestion: str
+    model: str
+
+
+BA_REFINE_SYSTEM_PROMPT = """You are a senior business analyst and technical writer.
+You refine, correct and improve a single section of a BA deliverable (FRD, EPIC,
+User Story, or SubTask) while preserving its intent, factual content and any
+identifiers (like F-01-01, EPIC-MOD-01, FR-xxx, TBD-Future markers, module IDs).
+
+Rules:
+- Keep the same structural markdown (headings, lists, tables) as the input unless the user instruction explicitly asks otherwise.
+- Preserve all IDs, cross-references, and TBD-Future markers verbatim.
+- Tighten language, fix grammar, remove redundancy, clarify ambiguity.
+- Do NOT invent new facts, new features, or new integrations that are not implied by the existing text or module context.
+- Return ONLY the refined section text — no preamble, no trailing commentary, no code-fence wrappers.
+"""
+
+PSEUDO_CODE_REFINE_SYSTEM_PROMPT = """You are a senior software engineer refining a single
+pseudo-code / source file inside a low-level design (LLD). The user will provide the
+current file contents, the file path and language via module context, and (optionally)
+a plain-English instruction describing the change they want.
+
+Rules:
+- Preserve the file's language and syntax exactly (Python, TypeScript/TSX, Java, YAML, etc.).
+- Preserve the Traceability block (FRD, EPIC, US, ST IDs) and any Collaborators comment.
+- Preserve TBD-Future markers and stub traceability. Do NOT silently remove TBDs.
+- If no instruction is given, do a light clean-up: fix obvious typos, tighten docstrings, normalize indentation, but DO NOT change logic or signatures.
+- If an instruction IS given, apply only that change plus any trivial formatting cleanup it implies. Do not refactor unrelated code.
+- Return ONLY the refined file contents — no preamble, no explanation, no markdown code fences. Output must be valid source code for the stated language.
+"""
+
+
+@app.post("/ba/refine-section", response_model=BaRefineSectionResponse, tags=["ba"])
+async def ba_refine_section(
+    body: BaRefineSectionRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> BaRefineSectionResponse:
+    parts = [
+        f"Artifact type: {body.artifactType}",
+        f"Section: {body.sectionLabel}",
+    ]
+    if body.moduleContext.strip():
+        parts.append(f"Module context:\n{body.moduleContext.strip()}")
+    if body.instruction.strip():
+        parts.append(f"User instruction: {body.instruction.strip()}")
+    parts.append(f"Current section text:\n{body.currentText}")
+    user_msg = "\n\n".join(parts)
+
+    system_prompt = (
+        PSEUDO_CODE_REFINE_SYSTEM_PROMPT
+        if body.artifactType.upper() == "PSEUDO_CODE"
+        else BA_REFINE_SYSTEM_PROMPT
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=3000,
+            temperature=0.3,
+        )
+    except openai.OpenAIError as exc:
+        logger.error("BA refine-section error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"AI refine failed: {exc}") from exc
+
+    suggestion = (response.choices[0].message.content or "").strip()
+    # Strip stray markdown code fences if the model ignored the instruction
+    if body.artifactType.upper() == "PSEUDO_CODE":
+        suggestion = _strip_code_fences(suggestion)
+    return BaRefineSectionResponse(suggestion=suggestion, model=settings.OPENAI_MODEL)
+
+
+# ─── BA Tool: LLD Gap-Check + Image OCR ─────────────────────────────────────
+
+class LldGapCheckRequest(BaseModel):
+    moduleContext: str = Field(..., max_length=8000, description="Module + tech stack summary")
+    narrative: str = Field(..., max_length=20000, description="Architect's free-form narrative")
+    attachmentText: str = Field(default="", max_length=40000, description="Concatenated extracted text from attachments")
+    useAsAdditional: bool = Field(default=True, description="True = narrative augments default LLD; False = narrative is the primary input")
+
+
+class LldGap(BaseModel):
+    id: str
+    category: str      # e.g. "Security", "Data Model", "Integration", "Non-Functional"
+    question: str      # what to ask the architect
+    suggestion: str    # the suggested direction / default answer the AI would pick
+
+
+class LldGapCheckResponse(BaseModel):
+    gaps: list[LldGap]
+    model: str
+
+
+LLD_CANONICAL_SECTIONS = [
+    "Summary", "Technology Stack", "Class Diagram", "Sequence Diagrams",
+    "Data Model Definitions", "Schema Diagram", "Integration Points",
+    "API Contract Manifest", "Non-Functional Requirements", "Cross-Cutting Concerns",
+    "Env Var / Secret Catalog", "Test Scaffold Hints", "Build / CI Hooks",
+    "Project Structure", "Open Questions / TBD-Future Reconciliation",
+    "Applied Best-Practice Defaults", "Traceability Summary",
+]
+
+
+LLD_GAP_CHECK_SYSTEM_PROMPT = """You are a senior software architect performing a gap analysis.
+The architect has provided a free-form narrative (and optionally attachment text) describing
+what they want in the Low-Level Design. You must compare this against the standard LLD
+framework the downstream generator will produce and identify gaps in BOTH directions:
+
+  (A) Framework expectations the narrative does NOT address (e.g., architect wrote nothing
+      about authentication, rate limiting, or data retention — ask about it).
+  (B) Narrative mentions things the 19-section canonical LLD doesn't natively cover as a
+      top-level section (e.g., "custom messaging bus adapter", "vector DB integration").
+      For these, ask whether to fold them under §11 Integration Points (preferred) or treat
+      them as additional narrative.
+
+Framework canonical sections:
+{sections}
+
+Rules for your output:
+- Return STRICT JSON only: {{"gaps": [{{"id": "g1", "category": "...", "question": "...", "suggestion": "..."}}, ...]}}
+- id values are "g1", "g2", "g3" … in order.
+- category is one of: Security, Data Model, Integration, Non-Functional, Observability, Testing, Scope, Custom.
+- question is ONE specific question to the architect (no compound "and" questions).
+- suggestion is the sensible default the generator WOULD pick if the architect says "just use the default".
+- Prefer 5-10 high-signal gaps over 20 nitpicks. Skip anything the narrative already answers.
+- If the narrative is very short or vague, include 1 gap with category "Scope" asking for more context.
+- Output ONLY JSON. No preamble, no markdown fences, no trailing commentary.
+"""
+
+
+@app.post("/ba/lld-gap-check", response_model=LldGapCheckResponse, tags=["ba"])
+async def ba_lld_gap_check(
+    body: LldGapCheckRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> LldGapCheckResponse:
+    system_prompt = LLD_GAP_CHECK_SYSTEM_PROMPT.format(
+        sections="\n".join(f"  {i+1}. {s}" for i, s in enumerate(LLD_CANONICAL_SECTIONS))
+    )
+    mode = "additional-context" if body.useAsAdditional else "narrative-first"
+    user_parts = [
+        f"Mode: {mode}",
+        f"Module / Stack context:\n{body.moduleContext}",
+        f"Architect narrative:\n{body.narrative}",
+    ]
+    if body.attachmentText.strip():
+        user_parts.append(f"Attachment extracts (truncated):\n{body.attachmentText[:20000]}")
+    user_msg = "\n\n".join(user_parts)
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=2500,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+    except openai.OpenAIError as exc:
+        logger.error("LLD gap-check error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"LLD gap-check failed: {exc}") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("LLD gap-check JSON parse failure: %s", raw[:500])
+        raise HTTPException(status_code=502, detail="AI returned malformed JSON") from exc
+
+    gaps = [LldGap(**g) for g in parsed.get("gaps", []) if g.get("question")]
+    return LldGapCheckResponse(gaps=gaps, model=settings.OPENAI_MODEL)
+
+
+class ExtractImageTextRequest(BaseModel):
+    dataUrl: str = Field(..., description="data:<mime>;base64,<payload>")
+
+
+class ExtractImageTextResponse(BaseModel):
+    text: str
+    provider: str
+
+
+@app.post("/ba/extract-image-text", response_model=ExtractImageTextResponse, tags=["ba"])
+async def ba_extract_image_text(
+    body: ExtractImageTextRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> ExtractImageTextResponse:
+    """
+    Transcribe text content from an image attachment. Provider is selected via
+    env LLD_OCR_PROVIDER (openai | gemini | tesseract). Only `openai` is wired
+    today; the others raise 501 so the caller can display a helpful note.
+    """
+    provider = (os.getenv("LLD_OCR_PROVIDER") or "openai").lower()
+    if provider == "openai":
+        try:
+            response = await client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an OCR + visual-content transcriber. Transcribe ALL visible text "
+                            "in the image verbatim, preserving line breaks and lists. If the image contains "
+                            "diagrams or charts, also describe them in plain prose under a heading "
+                            "'## Visual description'. Output plain text only, no markdown fences."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Transcribe and describe this attachment."},
+                            {"type": "image_url", "image_url": {"url": body.dataUrl}},
+                        ],
+                    },
+                ],
+                max_tokens=2000,
+                temperature=0.0,
+            )
+            text = (response.choices[0].message.content or "").strip()
+            return ExtractImageTextResponse(text=text, provider="openai")
+        except openai.OpenAIError as exc:
+            logger.error("Image OCR (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail=f"Image OCR failed: {exc}") from exc
+
+    # Gemini / Tesseract adapters intentionally left as stubs — wire in when
+    # LLD_OCR_PROVIDER is set and credentials are present.
+    raise HTTPException(status_code=501, detail=f"OCR provider '{provider}' not implemented")
 
 
 # ─── BA Tool: Skill Execution endpoint ──────────────────────────────────────

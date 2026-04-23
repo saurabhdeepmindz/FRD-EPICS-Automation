@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -14,6 +15,7 @@ import {
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { BaToolService } from './ba-tool.service';
 import { CreateBaProjectDto } from './dto/create-project.dto';
+import { UpdateBaProjectDto } from './dto/update-project.dto';
 import { CreateBaModuleDto } from './dto/create-module.dto';
 import { UpdateBaScreenDto } from './dto/update-screen.dto';
 import { CreateBaFlowDto } from './dto/create-flow.dto';
@@ -40,6 +42,12 @@ export class BaToolController {
   @Get('projects/:id')
   getProject(@Param('id') id: string) {
     return this.baToolService.getProject(id);
+  }
+
+  /** PATCH /api/ba/projects/:id — update project metadata */
+  @Patch('projects/:id')
+  updateProject(@Param('id') id: string, @Body() dto: UpdateBaProjectDto) {
+    return this.baToolService.updateProject(id, dto);
   }
 
   /** Post /api/ba/projects/:id/archive — archive a project */

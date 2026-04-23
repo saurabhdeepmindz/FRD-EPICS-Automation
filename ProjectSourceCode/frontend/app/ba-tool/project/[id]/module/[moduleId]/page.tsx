@@ -13,7 +13,7 @@ import { ArtifactContentPanel } from '@/components/ba-tool/ArtifactContentPanel'
 import { SubTaskList } from '@/components/ba-tool/SubTaskList';
 import { SprintSequenceView } from '@/components/ba-tool/SprintSequenceView';
 import { useSkillExecution } from '@/hooks/useSkillExecution';
-import { ArrowLeft, Loader2, ListChecks, GitBranch } from 'lucide-react';
+import { ArrowLeft, Loader2, ListChecks, GitBranch, AlertTriangle, Compass } from 'lucide-react';
 import Link from 'next/link';
 
 const STEP_TO_SKILL: Record<number, string> = {
@@ -154,19 +154,38 @@ export default function BaModuleWorkspacePage() {
             <span className="text-xs text-muted-foreground font-mono">({mod.packageName})</span>
           </div>
         </div>
-        {/* SubTask / Sprint tabs — visible when subtasks exist */}
-        {(mod.moduleStatus === 'SUBTASKS_COMPLETE' || mod.moduleStatus === 'APPROVED') && (
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant={activeStep === 6 ? 'default' : 'outline'} onClick={() => setActiveStep(6)}>
-              <ListChecks className="h-3.5 w-3.5 mr-1" />
-              SubTasks
+        <div className="flex items-center gap-2">
+          {/* LLD button — Architect Workspace; shown once EPICs complete */}
+          {(mod.moduleStatus === 'EPICS_COMPLETE'
+            || mod.moduleStatus === 'STORIES_COMPLETE'
+            || mod.moduleStatus === 'SUBTASKS_COMPLETE'
+            || mod.moduleStatus === 'APPROVED') && (
+            <Button
+              size="sm"
+              variant="outline"
+              asChild
+              title="AI LLD Workbench — architect narrative, tech stack, templates, and LLD generation"
+            >
+              <Link href={`/ba-tool/project/${projectId}/module/${moduleDbId}/lld`}>
+                <Compass className="h-3.5 w-3.5 mr-1" />
+                AI LLD Workbench
+              </Link>
             </Button>
-            <Button size="sm" variant={activeStep === 7 ? 'default' : 'outline'} onClick={() => setActiveStep(7)}>
-              <GitBranch className="h-3.5 w-3.5 mr-1" />
-              Sprint Sequence
-            </Button>
-          </div>
-        )}
+          )}
+          {/* SubTask / Sprint tabs — visible when subtasks exist */}
+          {(mod.moduleStatus === 'SUBTASKS_COMPLETE' || mod.moduleStatus === 'APPROVED') && (
+            <>
+              <Button size="sm" variant={activeStep === 6 ? 'default' : 'outline'} onClick={() => { setActiveStep(6); setActiveTreeNode(null); }}>
+                <ListChecks className="h-3.5 w-3.5 mr-1" />
+                SubTasks
+              </Button>
+              <Button size="sm" variant={activeStep === 7 ? 'default' : 'outline'} onClick={() => { setActiveStep(7); setActiveTreeNode(null); }}>
+                <GitBranch className="h-3.5 w-3.5 mr-1" />
+                Sprint Sequence
+              </Button>
+            </>
+          )}
+        </div>
       </header>
 
       {/* Skill Stepper */}
@@ -204,6 +223,7 @@ export default function BaModuleWorkspacePage() {
               activeNode={activeTreeNode}
               executions={completedExecutions}
               artifacts={mod.artifacts}
+              moduleScreens={mod.screens}
               onSectionUpdated={load}
             />
           ) : (
@@ -257,25 +277,46 @@ export default function BaModuleWorkspacePage() {
               )}
 
               {/* ═══ Steps 1-5: Skill Execution ═══ */}
-              {activeStep >= 1 && activeStep <= 5 && activeSkillName && (
-                <SkillExecutionPanel
-                  skillName={activeSkillName}
-                  moduleDbId={moduleDbId}
-                  execution={skillExec}
-                  running={skillRunning}
-                  error={skillError}
-                  canStart={canStartStep(mod.moduleStatus, activeStep)}
-                  prerequisiteMessage={
-                    activeStep === 1 && mod.moduleStatus === 'DRAFT'
-                      ? 'Upload screens and add descriptions first (Step 1).'
-                      : undefined
-                  }
-                  onStart={startSkill}
-                  onApprove={approveSkill}
-                  onRetry={startSkill}
-                  onModuleReload={load}
-                />
-              )}
+              {activeStep >= 1 && activeStep <= 5 && activeSkillName && (() => {
+                // EPIC generation (SKILL-02-S / step 3) requires project metadata
+                const epicMetaMissing = activeSkillName === 'SKILL-02-S' && !mod.project?.productName?.trim();
+                const prereq = activeStep === 1 && mod.moduleStatus === 'DRAFT'
+                  ? 'Upload screens and add descriptions first (Step 1).'
+                  : epicMetaMissing
+                    ? 'Set Product Name in Project Metadata before generating EPICs.'
+                    : undefined;
+                return (
+                  <>
+                    {epicMetaMissing && (
+                      <div className="max-w-4xl mx-auto mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-amber-900">Project metadata required</p>
+                          <p className="text-xs text-amber-800 mt-0.5">
+                            Please fill in <strong>Product Name</strong> (and optionally Client Name, Submitted By) on the project page before generating EPICs.
+                          </p>
+                        </div>
+                        <Button size="sm" variant="outline" asChild>
+                          <Link href={`/ba-tool/project/${projectId}`}>Open Project</Link>
+                        </Button>
+                      </div>
+                    )}
+                    <SkillExecutionPanel
+                      skillName={activeSkillName}
+                      moduleDbId={moduleDbId}
+                      execution={skillExec}
+                      running={skillRunning}
+                      error={skillError}
+                      canStart={canStartStep(mod.moduleStatus, activeStep) && !epicMetaMissing}
+                      prerequisiteMessage={prereq}
+                      onStart={startSkill}
+                      onApprove={approveSkill}
+                      onRetry={startSkill}
+                      onModuleReload={load}
+                    />
+                  </>
+                );
+              })()}
 
               {/* ═══ Step 6: SubTask List ═══ */}
               {activeStep === 6 && (

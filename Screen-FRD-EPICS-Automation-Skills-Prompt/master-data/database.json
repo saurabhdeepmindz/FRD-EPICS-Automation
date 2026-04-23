@@ -1,0 +1,12 @@
+{
+  "$schema-version": 1,
+  "category": "DATABASE",
+  "description": "Primary database technologies for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "PostgreSQL", "value": "postgres",  "description": "Open-source relational DB; JSONB, advanced indexing, CTEs." },
+    { "name": "MongoDB",    "value": "mongodb",   "description": "Document-oriented NoSQL; schemaless, aggregation pipelines." },
+    { "name": "MySQL",      "value": "mysql",     "description": "Relational DB; widely available, strong ecosystem." },
+    { "name": "SQLite",     "value": "sqlite",    "description": "Embedded single-file DB; ideal for prototypes and single-node apps." },
+    { "name": "MariaDB",    "value": "mariadb",   "description": "MySQL-compatible fork; community-driven." }
+  ]
+}

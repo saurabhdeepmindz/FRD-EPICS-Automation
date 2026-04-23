@@ -4,6 +4,7 @@ import { BaProjectStatus, BaModuleStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
 import { CreateBaProjectDto } from './dto/create-project.dto';
+import { UpdateBaProjectDto } from './dto/update-project.dto';
 import { CreateBaModuleDto } from './dto/create-module.dto';
 import { UpdateBaScreenDto } from './dto/update-screen.dto';
 import { CreateBaFlowDto } from './dto/create-flow.dto';
@@ -62,6 +63,21 @@ export class BaToolService {
     return project;
   }
 
+  async updateProject(id: string, dto: UpdateBaProjectDto) {
+    await this.getProject(id);
+    return this.prisma.baProject.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.productName !== undefined && { productName: dto.productName }),
+        ...(dto.clientName !== undefined && { clientName: dto.clientName }),
+        ...(dto.submittedBy !== undefined && { submittedBy: dto.submittedBy }),
+        ...(dto.clientLogo !== undefined && { clientLogo: dto.clientLogo }),
+      },
+    });
+  }
+
   async archiveProject(id: string) {
     await this.getProject(id);
     return this.prisma.baProject.update({
@@ -89,6 +105,7 @@ export class BaToolService {
     const mod = await this.prisma.baModule.findUnique({
       where: { id: moduleDbId },
       include: {
+        project: true,
         screens: { orderBy: { displayOrder: 'asc' } },
         flows: { orderBy: { createdAt: 'asc' } },
         skillExecutions: { orderBy: { createdAt: 'desc' } },
@@ -110,9 +127,26 @@ export class BaToolService {
   ) {
     await this.getModule(moduleDbId);
 
-    // Auto-assign next screen ID
-    const existingCount = await this.prisma.baScreen.count({ where: { moduleDbId } });
-    const screenId = `SCR-${String(existingCount + 1).padStart(2, '0')}`;
+    // Auto-assign next screen ID.
+    // Must use max(existing suffix) + 1, NOT count + 1 — if earlier screens
+    // were deleted (gaps like SCR-01, SCR-03, SCR-07…) count+1 collides with
+    // a still-present higher ID and trips the (moduleDbId, screenId) unique
+    // constraint → 500 on upload.
+    const existing = await this.prisma.baScreen.findMany({
+      where: { moduleDbId },
+      select: { screenId: true, displayOrder: true },
+    });
+    let maxSuffix = 0;
+    let maxOrder = -1;
+    for (const s of existing) {
+      const m = /SCR-(\d+)/i.exec(s.screenId);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > maxSuffix) maxSuffix = n;
+      }
+      if (s.displayOrder > maxOrder) maxOrder = s.displayOrder;
+    }
+    const screenId = `SCR-${String(maxSuffix + 1).padStart(2, '0')}`;
 
     const base64 = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
 
@@ -125,7 +159,7 @@ export class BaToolService {
         fileData: base64,
         fileName: file.originalname,
         mimeType: file.mimetype,
-        displayOrder: existingCount,
+        displayOrder: maxOrder + 1,
       },
     });
   }
@@ -286,7 +320,18 @@ export class BaToolService {
   async getSubTask(subtaskDbId: string) {
     const st = await this.prisma.baSubTask.findUnique({
       where: { id: subtaskDbId },
-      include: { sections: { orderBy: { sectionNumber: 'asc' } } },
+      include: {
+        sections: { orderBy: { sectionNumber: 'asc' } },
+        module: {
+          include: {
+            project: true,
+            screens: {
+              orderBy: { displayOrder: 'asc' },
+              select: { id: true, screenId: true, screenTitle: true, screenType: true, fileData: true, displayOrder: true, textDescription: true },
+            },
+          },
+        },
+      },
     });
     if (!st) throw new NotFoundException(`SubTask ${subtaskDbId} not found`);
     return st;

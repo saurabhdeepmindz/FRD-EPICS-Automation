@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { BaExecutionStatus, BaModuleStatus, BaArtifactType, BaArtifactStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubTaskParserService } from './subtask-parser.service';
+import { BaLldParserService } from './ba-lld-parser.service';
+import { BaLldNarrativeService } from './ba-lld-narrative.service';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -14,12 +16,18 @@ export const SKILL_ORDER = [
   'SKILL-02-S',  // EPICs from Screens
   'SKILL-04',    // User Stories
   'SKILL-05',    // SubTasks
+  'SKILL-06-LLD', // Low-Level Design (v4)
 ] as const;
 
 export type SkillName = (typeof SKILL_ORDER)[number];
 
-/** Maps skill name to the module status it sets on completion */
-const SKILL_STATUS_MAP: Record<SkillName, BaModuleStatus> = {
+/**
+ * Maps skill name to the module status it sets on completion.
+ * SKILL-06-LLD is excluded here — LLD completion is tracked via
+ * `BaModule.lldCompletedAt` so the main status machine (DRAFT → … → APPROVED)
+ * is unaffected and an LLD can be (re)generated at any point after EPIC.
+ */
+const SKILL_STATUS_MAP: Partial<Record<SkillName, BaModuleStatus>> = {
   'SKILL-00': BaModuleStatus.ANALYSIS_COMPLETE,
   'SKILL-01-S': BaModuleStatus.FRD_COMPLETE,
   'SKILL-02-S': BaModuleStatus.EPICS_COMPLETE,
@@ -34,15 +42,22 @@ const SKILL_ARTIFACT_MAP: Record<SkillName, BaArtifactType> = {
   'SKILL-02-S': BaArtifactType.EPIC,
   'SKILL-04': BaArtifactType.USER_STORY,
   'SKILL-05': BaArtifactType.SUBTASK,
+  'SKILL-06-LLD': BaArtifactType.LLD,
 };
 
-/** Maps skill name to required prerequisite module status */
+/**
+ * Prerequisite module status per skill.
+ * SKILL-06-LLD requires EPIC to be complete at minimum — but EPICS_COMPLETE,
+ * STORIES_COMPLETE, SUBTASKS_COMPLETE, and APPROVED are all acceptable
+ * starting points (the orchestrator checks >= EPICS_COMPLETE for SKILL-06).
+ */
 const SKILL_PREREQ_MAP: Record<SkillName, BaModuleStatus> = {
   'SKILL-00': BaModuleStatus.SCREENS_UPLOADED,
   'SKILL-01-S': BaModuleStatus.ANALYSIS_COMPLETE,
   'SKILL-02-S': BaModuleStatus.FRD_COMPLETE,
   'SKILL-04': BaModuleStatus.EPICS_COMPLETE,
   'SKILL-05': BaModuleStatus.STORIES_COMPLETE,
+  'SKILL-06-LLD': BaModuleStatus.EPICS_COMPLETE,
 };
 
 @Injectable()
@@ -55,6 +70,8 @@ export class BaSkillOrchestratorService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly subtaskParser: SubTaskParserService,
+    private readonly lldParser: BaLldParserService,
+    private readonly narrative: BaLldNarrativeService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
     // Skill files are at project root Master-Documents-Skills/ or Screen-FRD-EPICS-Automation-Skills/
@@ -152,7 +169,46 @@ export class BaSkillOrchestratorService {
       // 6. Create artifact records
       const artifact = await this.createArtifactFromOutput(moduleDbId, skillName, humanDocument, handoffPacket);
 
-      // 7. SKILL-05 post-processing: parse SubTasks, extract TBD, extend RTM
+      // 7. Incremental RTM population — runs after every skill so the
+      //    Requirements Traceability Matrix fills in column-by-column as the
+      //    pipeline progresses (features → EPIC → stories → subtasks).
+      try {
+        const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId }, include: { project: true } });
+        if (mod?.projectId) {
+          if (skillName === 'SKILL-01-S') {
+            await this.seedRtmFromFrd(moduleDbId, mod.projectId, humanDocument);
+          } else if (skillName === 'SKILL-02-S') {
+            await this.extendRtmWithEpic(moduleDbId, mod.projectId, humanDocument);
+          } else if (skillName === 'SKILL-04') {
+            await this.extendRtmWithStories(moduleDbId, mod.projectId, humanDocument);
+          }
+        }
+      } catch (rtmErr: unknown) {
+        const rMsg = rtmErr instanceof Error ? rtmErr.message : 'Unknown';
+        this.logger.warn(`Incremental RTM update failed for ${skillName}: ${rMsg}`);
+      }
+
+      // 7b. SKILL-06 post-processing: parse LLD document + pseudo files, set lldCompletedAt,
+      //     and extend RTM rows with pseudo-file links so the trace runs to source.
+      if (skillName === 'SKILL-06-LLD' && artifact) {
+        try {
+          await this.lldParser.parseAndStore(humanDocument, artifact.id);
+          await this.prisma.baModule.update({
+            where: { id: moduleDbId },
+            data: { lldCompletedAt: new Date(), lldArtifactId: artifact.id },
+          });
+          const modForRtm = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+          if (modForRtm?.projectId) {
+            await this.extendRtmWithLld(moduleDbId, modForRtm.projectId, artifact.id);
+          }
+          this.logger.log(`LLD: parsed document + pseudo files + extended RTM for module ${moduleDbId}`);
+        } catch (lldErr: unknown) {
+          const msg = lldErr instanceof Error ? lldErr.message : 'unknown error';
+          this.logger.warn(`SKILL-06 post-processing partial failure: ${msg}`);
+        }
+      }
+
+      // 7c. SKILL-05 post-processing: parse SubTasks, extract TBD, extend RTM
       if (skillName === 'SKILL-05') {
         try {
           const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId }, include: { project: true } });
@@ -176,11 +232,21 @@ export class BaSkillOrchestratorService {
         }
       }
 
-      // 8. Update module status
-      await this.prisma.baModule.update({
-        where: { id: moduleDbId },
-        data: { moduleStatus: SKILL_STATUS_MAP[skillName], processedAt: new Date() },
-      });
+      // 8. Update module status — only if this skill advances the main
+      // status machine. SKILL-06-LLD has no status mapping; LLD completion
+      // is tracked separately on BaModule.lldCompletedAt by the LLD service.
+      const nextStatus = SKILL_STATUS_MAP[skillName];
+      if (nextStatus) {
+        await this.prisma.baModule.update({
+          where: { id: moduleDbId },
+          data: { moduleStatus: nextStatus, processedAt: new Date() },
+        });
+      } else {
+        await this.prisma.baModule.update({
+          where: { id: moduleDbId },
+          data: { processedAt: new Date() },
+        });
+      }
 
       this.logger.log(`Skill ${skillName} completed for module ${moduleDbId}`);
     } catch (err: unknown) {
@@ -206,6 +272,7 @@ export class BaSkillOrchestratorService {
       'SKILL-02-S': 'FINAL-SKILL-02-S-create-epics-from-screens.md',
       'SKILL-04': 'FINAL-SKILL-04-create-user-stories-v2.md',
       'SKILL-05': 'FINAL-SKILL-05-create-subtasks-v2.md',
+      'SKILL-06-LLD': 'FINAL-SKILL-06-create-lld.md',
     };
     const fileName = fileMap[skillName];
     const filePath = path.join(this.skillFilesDir, fileName);
@@ -248,20 +315,33 @@ export class BaSkillOrchestratorService {
       where: { projectId: mod.projectId, moduleId: mod.moduleId },
     });
 
+    // Project-level metadata — captured before EPIC generation, reused by all downstream skills
+    const projectMeta = {
+      projectName: mod.project?.name ?? null,
+      projectCode: mod.project?.projectCode ?? null,
+      productName: (mod.project as { productName?: string | null })?.productName ?? null,
+      clientName: (mod.project as { clientName?: string | null })?.clientName ?? null,
+      submittedBy: (mod.project as { submittedBy?: string | null })?.submittedBy ?? null,
+    };
+
+    let ctx: Record<string, unknown>;
     switch (skillName) {
       case 'SKILL-00':
-        return this.assembleSkill00Context(mod);
+        ctx = this.assembleSkill00Context(mod); break;
       case 'SKILL-01-S':
-        return this.assembleSkill01SContext(mod, approvedModules, tbdEntries);
+        ctx = this.assembleSkill01SContext(mod, approvedModules, tbdEntries); break;
       case 'SKILL-02-S':
-        return this.assembleSkill02SContext(mod, approvedModules, tbdEntries, rtmRows);
+        ctx = this.assembleSkill02SContext(mod, approvedModules, tbdEntries, rtmRows); break;
       case 'SKILL-04':
-        return this.assembleSkill04Context(mod, approvedModules, tbdEntries, rtmRows);
+        ctx = this.assembleSkill04Context(mod, approvedModules, tbdEntries, rtmRows); break;
       case 'SKILL-05':
-        return this.assembleSkill05Context(mod, approvedModules, tbdEntries, rtmRows);
+        ctx = this.assembleSkill05Context(mod, approvedModules, tbdEntries, rtmRows); break;
+      case 'SKILL-06-LLD':
+        ctx = await this.assembleSkill06Context(moduleDbId, mod, rtmRows, tbdEntries); break;
       default:
-        return { moduleId: mod.moduleId, moduleName: mod.moduleName };
+        ctx = { moduleId: mod.moduleId, moduleName: mod.moduleName };
     }
+    return { ...ctx, projectMeta };
   }
 
   /** SKILL-00: Screen images + BA descriptions + click-through flows
@@ -391,6 +471,117 @@ export class BaSkillOrchestratorService {
     };
   }
 
+  /**
+   * SKILL-06 (LLD): pack EPIC + optional US/SubTask + RTM + TBD +
+   * Architect-selected stack + uploaded templates + NFR values.
+   */
+  private async assembleSkill06Context(
+    moduleDbId: string,
+    mod: { moduleId: string; moduleName: string; packageName: string; skillExecutions: { skillName: string; handoffPacket: unknown; humanDocument: string | null }[] },
+    rtmRows: unknown[],
+    tbdEntries: { registryId: string; integrationName: string; classification: string; referencedModule: string | null; isResolved: boolean }[],
+  ): Promise<Record<string, unknown>> {
+    const skill01SExec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-01-S');
+    const skill02SExec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-02-S');
+    const skill04Exec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-04');
+    const skill05Exec = mod.skillExecutions.find((e) => e.skillName === 'SKILL-05');
+
+    // Load LLD config for this module + resolve all referenced master-data + templates
+    const config = await this.prisma.baLldConfig.findUnique({ where: { moduleDbId } });
+
+    const resolveEntry = async (id: string | null | undefined) => {
+      if (!id) return null;
+      const e = await this.prisma.baMasterDataEntry.findUnique({
+        where: { id },
+        include: { template: true },
+      });
+      if (!e) return null;
+      return { name: e.name, value: e.value, description: e.description };
+    };
+
+    const resolveTemplate = async (id: string | null | undefined) => {
+      if (!id) return null;
+      const entry = await this.prisma.baMasterDataEntry.findUnique({
+        where: { id },
+        include: { template: true },
+      });
+      if (!entry?.template) return null;
+      return { name: entry.template.name, content: entry.template.content };
+    };
+
+    const stacks = {
+      frontend: await resolveEntry(config?.frontendStackId),
+      backend: await resolveEntry(config?.backendStackId),
+      database: await resolveEntry(config?.databaseId),
+      streaming: await resolveEntry(config?.streamingId),
+      caching: await resolveEntry(config?.cachingId),
+      storage: await resolveEntry(config?.storageId),
+      cloud: await resolveEntry(config?.cloudId),
+      architecture: await resolveEntry(config?.architectureId),
+    };
+
+    const resolvedTemplates = {
+      projectStructure: await resolveTemplate(config?.projectStructureId),
+      backend: await resolveTemplate(config?.backendTemplateId),
+      frontend: await resolveTemplate(config?.frontendTemplateId),
+      lld: await resolveTemplate(config?.lldTemplateId),
+      codingGuidelines: await resolveTemplate(config?.codingGuidelinesId),
+    };
+
+    // Narrative-driven mode: if the architect supplied a narrative, either
+    // augment the default context (useAsAdditional=true) or drop the
+    // artifact-derived packets entirely and let the narrative drive generation.
+    const { text: narrativeBlock, useAsAdditional, hasNarrative } =
+      await this.narrative.buildNarrativeContextBlock(moduleDbId);
+
+    const baseContext = {
+      moduleId: mod.moduleId,
+      moduleName: mod.moduleName,
+      packageName: mod.packageName,
+      frdHandoffPacket: skill01SExec?.handoffPacket ?? {},
+      epicHandoffPacket: skill02SExec?.handoffPacket ?? {},
+      // Stories and subtasks are OPTIONAL — null when not yet generated
+      storyHandoffPacket: skill04Exec?.handoffPacket ?? null,
+      storiesDocument: skill04Exec?.humanDocument ?? null,
+      subtaskHandoffPacket: skill05Exec?.handoffPacket ?? null,
+      subtasksDocument: skill05Exec?.humanDocument ?? null,
+      rtmRows,
+      tbdFutureRegistry: tbdEntries.filter((e) => !e.isResolved),
+      lldConfig: {
+        stacks,
+        cloudServices: config?.cloudServices ?? null,
+        nfrValues: config?.nfrValues ?? null,
+        customNotes: config?.customNotes ?? null,
+      },
+      resolvedTemplates,
+    };
+
+    if (!hasNarrative) return baseContext;
+
+    if (useAsAdditional) {
+      return {
+        ...baseContext,
+        architectNarrative: narrativeBlock,
+        narrativeMode: 'additional',
+      };
+    }
+
+    // narrative-first: keep module identity + stacks + templates so the
+    // generator respects tech choices, but skip the artifact-derived handoffs
+    // so the narrative is the primary driver.
+    return {
+      moduleId: mod.moduleId,
+      moduleName: mod.moduleName,
+      packageName: mod.packageName,
+      rtmRows: [],
+      tbdFutureRegistry: [],
+      lldConfig: baseContext.lldConfig,
+      resolvedTemplates,
+      architectNarrative: narrativeBlock,
+      narrativeMode: 'from-scratch',
+    };
+  }
+
   // ─── AI service call ───────────────────────────────────────────────────
 
   private async callAiService(systemPrompt: string, contextPacket: Record<string, unknown>): Promise<string> {
@@ -466,7 +657,40 @@ export class BaSkillOrchestratorService {
     const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
     if (!mod) return null;
 
-    const artifactId = `${artifactType}-${mod.moduleId}`;
+    let artifactId = `${artifactType}-${mod.moduleId}`;
+
+    // For LLD artifacts we allow multiple coexisting LLDs per module (one per
+    // stack combination — Java, NestJS, LangChain, …). Suffix the artifactId
+    // with a short tag derived from the saved BaLldConfig. If the same stack
+    // is regenerated, append `-vN` so the old one is preserved intact.
+    if (artifactType === BaArtifactType.LLD) {
+      const suffix = await this.deriveLldSuffix(moduleDbId);
+      const base = `${artifactType}-${mod.moduleId}-${suffix}`;
+      const existingSameStack = await this.prisma.baArtifact.findMany({
+        where: { moduleDbId, artifactType, artifactId: { startsWith: base } },
+        select: { artifactId: true },
+      });
+      if (existingSameStack.length === 0) {
+        artifactId = base;
+      } else {
+        // Next available -vN
+        let n = 2;
+        const existingIds = new Set(existingSameStack.map((a) => a.artifactId));
+        while (existingIds.has(`${base}-v${n}`)) n++;
+        artifactId = `${base}-v${n}`;
+      }
+    }
+
+    // For LLD, snapshot the architect narrative onto the artifact row so the
+    // version history remains truthful even if the configurator is edited later.
+    let sourceNarrative: string | null = null;
+    if (artifactType === BaArtifactType.LLD) {
+      const cfg = await this.prisma.baLldConfig.findUnique({
+        where: { moduleDbId },
+        select: { narrative: true },
+      });
+      sourceNarrative = cfg?.narrative?.trim() ? cfg.narrative : null;
+    }
 
     const artifact = await this.prisma.baArtifact.create({
       data: {
@@ -474,8 +698,16 @@ export class BaSkillOrchestratorService {
         artifactType,
         artifactId,
         status: BaArtifactStatus.DRAFT,
+        sourceNarrative,
       },
     });
+
+    // LLD sections are populated by BaLldParserService in the post-hook
+    // (with tidy-up + dedup). Skip the generic splitter for LLD to avoid
+    // storing every heading twice (once naively, once via the LLD parser).
+    if (artifactType === BaArtifactType.LLD) {
+      return { id: artifact.id };
+    }
 
     // Split document into sections by headings
     const sections = this.splitIntoSections(humanDocument);
@@ -492,6 +724,39 @@ export class BaSkillOrchestratorService {
     }
 
     return { id: artifact.id };
+  }
+
+  /**
+   * Derive a short suffix for the LLD artifactId from the saved BaLldConfig
+   * stacks. Priority: backend stack > frontend stack > architecture > "default".
+   * Example: "nestjs", "langchain", "java", "default". When the architect
+   * supplied a narrative, the suffix is extended with `-narrative` so the
+   * audit trail distinguishes narrative-driven runs from stack-only runs.
+   */
+  private async deriveLldSuffix(moduleDbId: string): Promise<string> {
+    const config = await this.prisma.baLldConfig.findUnique({
+      where: { moduleDbId },
+    });
+    if (!config) return 'default';
+
+    const pickId = config.backendStackId ?? config.frontendStackId ?? config.architectureId;
+    let base: string;
+    if (!pickId) {
+      base = 'default';
+    } else {
+      const entry = await this.prisma.baMasterDataEntry.findUnique({
+        where: { id: pickId },
+        select: { value: true, name: true },
+      });
+      const raw = (entry?.value ?? entry?.name ?? 'default').toLowerCase();
+      const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '');
+      base = cleaned || 'default';
+    }
+
+    if (config.narrative && config.narrative.trim()) {
+      return `${base}-narrative`;
+    }
+    return base;
   }
 
   // ─── SKILL-05 post-processing: TBD extraction + RTM extension ──────────
@@ -538,6 +803,249 @@ export class BaSkillOrchestratorService {
       }
     }
     if (newCount > 0) this.logger.log(`Extracted ${newCount} TBD-Future entries from SubTasks`);
+  }
+
+  /**
+   * After SKILL-01-S: seed one RTM row per F-XX-XX feature parsed from the FRD
+   * output. Idempotent — skips features that already have a row. This is what
+   * lets the RTM page populate incrementally instead of waiting for SKILL-05.
+   */
+  private async seedRtmFromFrd(moduleDbId: string, projectId: string, frdMarkdown: string): Promise<void> {
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) return;
+
+    const features = this.parseFrdFeatures(frdMarkdown);
+    let created = 0;
+
+    for (const f of features) {
+      const existing = await this.prisma.baRtmRow.findFirst({
+        where: { projectId, moduleId: mod.moduleId, featureId: f.featureId },
+      });
+      if (existing) {
+        // Refresh the light metadata in case the FRD was re-run
+        await this.prisma.baRtmRow.update({
+          where: { id: existing.id },
+          data: {
+            featureName: f.featureName || existing.featureName,
+            featureStatus: f.status || existing.featureStatus,
+            priority: f.priority || existing.priority,
+            screenRef: f.screenRef || existing.screenRef,
+          },
+        });
+        continue;
+      }
+      await this.prisma.baRtmRow.create({
+        data: {
+          projectId,
+          moduleId: mod.moduleId,
+          moduleName: mod.moduleName,
+          packageName: mod.packageName,
+          featureId: f.featureId,
+          featureName: f.featureName,
+          featureStatus: f.status || 'CONFIRMED',
+          priority: f.priority || 'Must',
+          screenRef: f.screenRef || '',
+        },
+      });
+      created++;
+    }
+    this.logger.log(`RTM: seeded ${created} rows from FRD (${features.length} features parsed)`);
+  }
+
+  /**
+   * After SKILL-02-S: link EPIC id/name to each RTM row whose feature ID is
+   * mentioned in the EPIC's "FRD Feature IDs" field.
+   */
+  private async extendRtmWithEpic(moduleDbId: string, projectId: string, epicMarkdown: string): Promise<void> {
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) return;
+
+    const { epicId, epicName, featureIds } = this.parseEpicSummary(epicMarkdown);
+    if (!epicId || featureIds.length === 0) {
+      this.logger.warn(`RTM: EPIC parse yielded no linkage (epicId=${epicId}, features=${featureIds.length})`);
+      return;
+    }
+
+    const result = await this.prisma.baRtmRow.updateMany({
+      where: { projectId, moduleId: mod.moduleId, featureId: { in: featureIds } },
+      data: { epicId, epicName },
+    });
+    this.logger.log(`RTM: linked EPIC ${epicId} to ${result.count} rows`);
+  }
+
+  /**
+   * After SKILL-04: link User Story id/name/type/status to matching RTM rows.
+   * Uses `FRD Feature Reference` fields in each parsed story.
+   */
+  private async extendRtmWithStories(moduleDbId: string, projectId: string, storiesMarkdown: string): Promise<void> {
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) return;
+
+    const stories = this.parseUserStories(storiesMarkdown);
+    let updated = 0;
+
+    for (const story of stories) {
+      if (!story.featureIds.length) continue;
+      const result = await this.prisma.baRtmRow.updateMany({
+        where: { projectId, moduleId: mod.moduleId, featureId: { in: story.featureIds } },
+        data: {
+          storyId: story.storyId,
+          storyName: story.storyName,
+          storyType: story.storyType,
+          storyStatus: story.storyStatus,
+        },
+      });
+      updated += result.count;
+    }
+    this.logger.log(`RTM: linked ${stories.length} stories across ${updated} rows`);
+  }
+
+  // ─── Lightweight markdown parsers (server-side RTM extraction) ────────
+
+  private parseFrdFeatures(markdown: string): Array<{ featureId: string; featureName: string; status: string; priority: string; screenRef: string }> {
+    const features: Array<{ featureId: string; featureName: string; status: string; priority: string; screenRef: string }> = [];
+    // Match ####/###/## **F-XX-XX: Name** or F-XX-XX: Name
+    const re = /#{1,4}\s+\*{0,2}(F-\d+-\d+)[:\s—-]+\s*(.+?)\*{0,2}\s*\n([\s\S]*?)(?=#{1,4}\s+\*{0,2}F-\d+-\d+|---\s*\n\s*#{1,4}\s+\*{0,2}F-|$)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(markdown)) !== null) {
+      const featureId = m[1];
+      const featureName = m[2].replace(/\*+/g, '').trim();
+      const block = m[3];
+      features.push({
+        featureId,
+        featureName,
+        status: this.extractField(block, ['Status', 'Feature Status']) || 'CONFIRMED',
+        priority: this.extractField(block, ['Priority', 'MoSCoW']) || 'Must',
+        screenRef: this.extractField(block, ['Screen Reference', 'Screen Ref', 'Screen']) || '',
+      });
+    }
+    return features;
+  }
+
+  private parseEpicSummary(markdown: string): { epicId: string; epicName: string; featureIds: string[] } {
+    const epicIdMatch = markdown.match(/\bEPIC-[A-Z0-9-]+/);
+    const epicId = epicIdMatch?.[0] ?? '';
+    const epicName = this.extractField(markdown, ['EPIC Name', 'Epic Name', 'Name']) || epicId;
+    // FRD Feature IDs field — may be comma-separated or bullet-listed
+    const ids = new Set<string>();
+    const fieldVal = this.extractField(markdown, ['FRD Feature IDs', 'FRD Feature ID', 'Feature IDs']);
+    if (fieldVal) {
+      for (const x of fieldVal.matchAll(/F-\d+-\d+/g)) ids.add(x[0]);
+    }
+    // Fallback — any F-XX-XX anywhere in the document
+    if (ids.size === 0) {
+      for (const x of markdown.matchAll(/F-\d+-\d+/g)) ids.add(x[0]);
+    }
+    return { epicId, epicName, featureIds: Array.from(ids) };
+  }
+
+  private parseUserStories(markdown: string): Array<{ storyId: string; storyName: string; storyType: string; storyStatus: string; featureIds: string[] }> {
+    const out: Array<{ storyId: string; storyName: string; storyType: string; storyStatus: string; featureIds: string[] }> = [];
+    // Split by US-XXX or #### **US-XXX:** headings
+    const re = /#{1,4}\s+\*{0,2}(US-[A-Z0-9-]+)[:\s—-]+\s*(.+?)\*{0,2}\s*\n([\s\S]*?)(?=#{1,4}\s+\*{0,2}US-[A-Z0-9-]+|$)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(markdown)) !== null) {
+      const storyId = m[1];
+      const storyName = m[2].replace(/\*+/g, '').trim();
+      const block = m[3];
+      const featureRef = this.extractField(block, ['FRD Feature Reference', 'Feature Reference', 'FRD Feature']);
+      const featureIds: string[] = [];
+      if (featureRef) for (const x of featureRef.matchAll(/F-\d+-\d+/g)) featureIds.push(x[0]);
+      out.push({
+        storyId,
+        storyName,
+        storyType: this.extractField(block, ['User Story Type', 'Story Type', 'Type']) || '',
+        storyStatus: this.extractField(block, ['User Story Status', 'Story Status', 'Status']) || 'CONFIRMED',
+        featureIds,
+      });
+    }
+    return out;
+  }
+
+  private extractField(block: string, labels: string[]): string {
+    const lowerLabels = labels.map((l) => l.toLowerCase());
+    for (const line of block.split('\n')) {
+      const cleaned = line.replace(/^\s*[-*]*\s*/, '').replace(/\*{1,2}/g, '').trim();
+      const colonIdx = cleaned.indexOf(':');
+      if (colonIdx < 1) continue;
+      const lineLabel = cleaned.substring(0, colonIdx).trim().toLowerCase();
+      const lineValue = cleaned.substring(colonIdx + 1).trim();
+      if (!lineValue) continue;
+      for (const target of lowerLabels) {
+        if (lineLabel === target || lineLabel.includes(target) || target.includes(lineLabel)) return lineValue;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Backfill RTM for a project that already has FRD/EPIC/User Story/SubTask
+   * artifacts but no RTM rows yet. Idempotent — re-runs each phase.
+   */
+  async backfillProjectRtm(projectId: string): Promise<{ seeded: number; epics: number; stories: number; subtasks: number; llds: number }> {
+    const modules = await this.prisma.baModule.findMany({
+      where: { projectId },
+      include: { artifacts: true },
+    });
+
+    let seeded = 0, epics = 0, stories = 0, subtasks = 0, llds = 0;
+
+    for (const mod of modules) {
+      // FRD → seed rows
+      const frd = mod.artifacts.find((a) => a.artifactType === 'FRD' as typeof a.artifactType);
+      if (frd) {
+        const doc = await this.buildArtifactMarkdown(frd.id);
+        const before = await this.prisma.baRtmRow.count({ where: { projectId, moduleId: mod.moduleId } });
+        await this.seedRtmFromFrd(mod.id, projectId, doc);
+        const after = await this.prisma.baRtmRow.count({ where: { projectId, moduleId: mod.moduleId } });
+        seeded += Math.max(0, after - before);
+      }
+      // EPIC → link
+      const epic = mod.artifacts.find((a) => a.artifactType === 'EPIC' as typeof a.artifactType);
+      if (epic) {
+        const doc = await this.buildArtifactMarkdown(epic.id);
+        await this.extendRtmWithEpic(mod.id, projectId, doc);
+        epics++;
+      }
+      // User Stories → link
+      const us = mod.artifacts.find((a) => a.artifactType === 'USER_STORY' as typeof a.artifactType);
+      if (us) {
+        const doc = await this.buildArtifactMarkdown(us.id);
+        await this.extendRtmWithStories(mod.id, projectId, doc);
+        stories++;
+      }
+      // SubTasks → link
+      const subtaskCount = await this.prisma.baSubTask.count({ where: { moduleDbId: mod.id } });
+      if (subtaskCount > 0) {
+        await this.extendRtmWithSubTasks(mod.id, projectId);
+        subtasks += subtaskCount;
+      }
+      // LLD → link pseudo-code files to RTM rows (uses the module's active lldArtifactId
+      // when set, otherwise the newest LLD artifact for the module)
+      const activeLldId = mod.lldArtifactId
+        ?? mod.artifacts
+          .filter((a) => a.artifactType === 'LLD' as typeof a.artifactType)
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]?.id
+        ?? null;
+      if (activeLldId) {
+        await this.extendRtmWithLld(mod.id, projectId, activeLldId);
+        llds++;
+      }
+    }
+
+    return { seeded, epics, stories, subtasks, llds };
+  }
+
+  /** Reassemble an artifact's full markdown by concatenating section content (edited > AI). */
+  private async buildArtifactMarkdown(artifactDbId: string): Promise<string> {
+    const a = await this.prisma.baArtifact.findUnique({
+      where: { id: artifactDbId },
+      include: { sections: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!a) return '';
+    return a.sections
+      .map((s) => (s.isHumanModified && s.editedContent ? s.editedContent : s.content))
+      .join('\n\n');
   }
 
   private async extendRtmWithSubTasks(moduleDbId: string, projectId: string): Promise<void> {
@@ -604,6 +1112,108 @@ export class BaSkillOrchestratorService {
       }
     }
     this.logger.log(`Extended ${updated} RTM rows with SubTask data`);
+  }
+
+  /**
+   * Link every pseudo-code file from the given LLD bundle back to the matching
+   * RTM row(s), so the trace runs FRD → EPIC → Story → SubTask → LLD source file.
+   *
+   * Matching strategy (most to least reliable):
+   *   1. Traceability block inside the file's content (ST: ST-US001-BE-03, US: US-001, FRD: F-01-06)
+   *   2. Basename match against RTM.sourceFile
+   *   3. Class-name match against RTM.primaryClass
+   */
+  private async extendRtmWithLld(
+    moduleDbId: string,
+    projectId: string,
+    lldArtifactDbId: string,
+  ): Promise<void> {
+    const pseudoFiles = await this.prisma.baPseudoFile.findMany({
+      where: { artifactDbId: lldArtifactDbId },
+      orderBy: { path: 'asc' },
+    });
+    if (pseudoFiles.length === 0) return;
+
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) return;
+
+    const rtmRows = await this.prisma.baRtmRow.findMany({
+      where: { projectId, moduleId: mod.moduleId },
+    });
+    if (rtmRows.length === 0) return;
+
+    // rowId → (fileIds, filePaths)
+    const attach: Record<string, { fileIds: Set<string>; filePaths: Set<string> }> = {};
+    const ensure = (rowId: string) => {
+      if (!attach[rowId]) attach[rowId] = { fileIds: new Set(), filePaths: new Set() };
+      return attach[rowId];
+    };
+
+    for (const f of pseudoFiles) {
+      const content = f.isHumanModified && f.editedContent ? f.editedContent : f.aiContent;
+      const basename = f.path.split('/').pop() ?? '';
+      const baseNoExt = basename.replace(/\.[^./]+$/, '');
+
+      // 1. Traceability block — pull all ST/US/FRD IDs mentioned in the file
+      const stIds = new Set<string>([...content.matchAll(/\bST-[A-Z0-9]+-[A-Z]+-\d+/g)].map((m) => m[0]));
+      const usIds = new Set<string>([...content.matchAll(/\bUS-\d+/g)].map((m) => m[0]));
+      const frdIds = new Set<string>([...content.matchAll(/\bF-\d{2}-\d{2}/g)].map((m) => m[0]));
+
+      let matchedAny = false;
+      for (const row of rtmRows) {
+        const idHit = (row.subtaskId && stIds.has(row.subtaskId))
+          || (row.storyId && usIds.has(row.storyId))
+          || (row.featureId && frdIds.has(row.featureId));
+        const nameHit = (row.sourceFile && row.sourceFile === basename)
+          || (row.primaryClass && row.primaryClass === baseNoExt);
+        if (idHit || nameHit) {
+          const bucket = ensure(row.id);
+          bucket.fileIds.add(f.id);
+          bucket.filePaths.add(f.path);
+          matchedAny = true;
+        }
+      }
+
+      if (!matchedAny) {
+        this.logger.debug(`LLD-RTM: no row matched pseudo file ${f.path}`);
+      }
+    }
+
+    let updated = 0;
+    for (const row of rtmRows) {
+      const hit = attach[row.id];
+      const layer = this.deriveRtmLayer(row.subtaskTeam, hit ? Array.from(hit.filePaths) : []);
+      await this.prisma.baRtmRow.update({
+        where: { id: row.id },
+        data: {
+          lldArtifactId: lldArtifactDbId,
+          layer,
+          pseudoFileIds: hit ? Array.from(hit.fileIds) : [],
+          pseudoFilePaths: hit ? Array.from(hit.filePaths) : [],
+        },
+      });
+      if (hit) updated++;
+    }
+    this.logger.log(`Extended ${updated}/${rtmRows.length} RTM rows with LLD pseudo files from ${lldArtifactDbId}`);
+  }
+
+  /** Derive the RTM "layer" from subtask team + file paths (path wins when available). */
+  private deriveRtmLayer(team: string | null, paths: string[]): string | null {
+    for (const p of paths) {
+      const lower = p.toLowerCase();
+      if (/schema|migration|\.sql|ddl/.test(lower)) return 'Database';
+      if (/frontend|\/ui\/|\.tsx$|\.jsx$|components?\//.test(lower)) return 'Frontend';
+      if (/integration|api\/clients|adapter|connector/.test(lower)) return 'Integration';
+      if (/\.test\.|\.spec\.|__tests__/.test(lower)) return 'Testing';
+      if (/backend|services?\/|controllers?\/|\.py$|\.java$/.test(lower)) return 'Backend';
+    }
+    switch (team) {
+      case 'FE': return 'Frontend';
+      case 'BE': return 'Backend';
+      case 'IN': return 'Integration';
+      case 'QA': return 'Testing';
+      default: return null;
+    }
   }
 
   private splitIntoSections(markdown: string): { key: string; label: string; content: string }[] {
@@ -674,7 +1284,18 @@ export class BaSkillOrchestratorService {
   async getArtifact(artifactId: string) {
     const artifact = await this.prisma.baArtifact.findUnique({
       where: { id: artifactId },
-      include: { sections: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        sections: { orderBy: { createdAt: 'asc' } },
+        module: {
+          include: {
+            project: true,
+            screens: {
+              orderBy: { displayOrder: 'asc' },
+              select: { id: true, screenId: true, screenTitle: true, screenType: true, fileData: true, displayOrder: true, textDescription: true },
+            },
+          },
+        },
+      },
     });
     if (!artifact) throw new NotFoundException(`Artifact ${artifactId} not found`);
     return artifact;

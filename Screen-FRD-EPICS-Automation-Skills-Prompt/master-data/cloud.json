@@ -1,0 +1,10 @@
+{
+  "$schema-version": 1,
+  "category": "CLOUD",
+  "description": "Cloud provider choices for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "AWS",   "value": "aws",   "description": "Amazon Web Services; broadest service catalogue." },
+    { "name": "Azure", "value": "azure", "description": "Microsoft Azure; strong enterprise/hybrid integration." },
+    { "name": "GCP",   "value": "gcp",   "description": "Google Cloud Platform; strong data & ML offerings." }
+  ]
+}

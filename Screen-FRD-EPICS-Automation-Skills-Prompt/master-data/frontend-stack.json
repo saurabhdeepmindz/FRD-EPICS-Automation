@@ -1,0 +1,12 @@
+{
+  "$schema-version": 1,
+  "category": "FRONTEND_STACK",
+  "description": "Well-known frontend frameworks for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category.",
+  "entries": [
+    { "name": "React",     "value": "react",     "description": "Meta's UI library; typically paired with Vite or Next.js." },
+    { "name": "Next.js",   "value": "nextjs",    "description": "React framework with SSR, RSC, file-based routing." },
+    { "name": "Vue",       "value": "vue",       "description": "Progressive JS framework; Vue 3 with Composition API." },
+    { "name": "Angular",   "value": "angular",   "description": "Opinionated TypeScript framework with RxJS, DI, full toolchain." },
+    { "name": "Svelte",    "value": "svelte",    "description": "Compile-time reactivity; SvelteKit for full-stack." }
+  ]
+}

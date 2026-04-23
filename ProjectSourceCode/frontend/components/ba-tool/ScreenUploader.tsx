@@ -29,6 +29,7 @@ const SCREEN_TYPES = ['Dashboard', 'Form', 'List', 'Detail', 'Modal', 'Navigatio
 
 export function ScreenUploader({ moduleDbId, screens, onScreensChanged }: ScreenUploaderProps) {
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,13 +37,21 @@ export function ScreenUploader({ moduleDbId, screens, onScreensChanged }: Screen
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
     if (imageFiles.length === 0) return;
     setUploading(true);
+    setUploadProgress({ done: 0, total: imageFiles.length });
     try {
-      await uploadBaScreensBatch(moduleDbId, imageFiles);
+      await uploadBaScreensBatch(moduleDbId, imageFiles, (done, total) => {
+        setUploadProgress({ done, total });
+      });
       onScreensChanged();
-    } catch {
-      alert('Failed to upload screens');
+    } catch (err: unknown) {
+      // Give reviewers the real error so they can distinguish size/timeout/server failures
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      // Reload anyway — the server may have persisted partial screens before the error
+      onScreensChanged();
+      alert(`Failed to upload screens: ${msg}\n\nAny screens that uploaded before the error will still appear in the list.`);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   }, [moduleDbId, onScreensChanged]);
 
@@ -76,7 +85,11 @@ export function ScreenUploader({ moduleDbId, screens, onScreensChanged }: Screen
         {uploading ? (
           <div className="flex items-center justify-center gap-2">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            <span className="text-sm text-muted-foreground">Uploading screens...</span>
+            <span className="text-sm text-muted-foreground">
+              {uploadProgress
+                ? `Uploading screens… ${uploadProgress.done} of ${uploadProgress.total}`
+                : 'Uploading screens…'}
+            </span>
           </div>
         ) : (
           <>

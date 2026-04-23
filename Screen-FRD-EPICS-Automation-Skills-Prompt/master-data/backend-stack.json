@@ -1,0 +1,15 @@
+{
+  "$schema-version": 1,
+  "category": "BACKEND_STACK",
+  "description": "Well-known backend frameworks for Architect Console dropdowns. Loaded on first boot when scope=GLOBAL is empty for this category. AI / agent-oriented backends (LangChain / LangGraph) default to Python.",
+  "entries": [
+    { "name": "NestJS",      "value": "nestjs",      "description": "Node.js / TypeScript framework; modular with DI, guards, pipes, interceptors." },
+    { "name": "Spring Boot", "value": "springboot",  "description": "Java framework for REST APIs, data access, security." },
+    { "name": "Django",      "value": "django",      "description": "Python batteries-included framework; ORM, admin, auth." },
+    { "name": "FastAPI",     "value": "fastapi",     "description": "Python async framework; Pydantic types, OpenAPI." },
+    { "name": "Express",     "value": "express",     "description": "Minimalist Node.js framework; unopinionated baseline." },
+    { "name": "Python",      "value": "python",      "description": "Plain-Python default for AI / scripting modules; no framework assumed." },
+    { "name": "LangChain",   "value": "langchain",   "description": "Python framework for LLM application orchestration; chains, tools, memory. Uses Python as the implicit language." },
+    { "name": "LangGraph",   "value": "langgraph",   "description": "Graph-based agent-workflow framework (Python); built on top of LangChain. Uses Python as the implicit language." }
+  ]
+}

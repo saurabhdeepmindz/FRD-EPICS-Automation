@@ -7,5 +7,6 @@ import { PrdModule } from '../prd/prd.module';
   imports: [PrdModule],
   controllers: [ExportController],
   providers: [PdfService],
+  exports: [PdfService],
 })
 export class ExportModule {}

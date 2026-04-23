@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { getBaProject, getProjectRtm, type BaProject, type BaRtmRow } from '@/lib/ba-api';
-import { ArrowLeft, Loader2, Download, Filter } from 'lucide-react';
+import { ArrowLeft, Loader2, Download, Filter, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
 
 export default function RtmViewerPage() {
   const params = useParams<{ id: string }>();
@@ -22,6 +23,8 @@ export default function RtmViewerPage() {
   const [filterStoryType, setFilterStoryType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterTbd, setFilterTbd] = useState<'' | 'yes' | 'no'>('');
+  const [filterLayer, setFilterLayer] = useState('');
+  const [backfilling, setBackfilling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,6 +45,7 @@ export default function RtmViewerPage() {
   const modules = useMemo(() => [...new Set(rows.map((r) => r.moduleId))].sort(), [rows]);
   const epics = useMemo(() => [...new Set(rows.filter((r) => r.epicId).map((r) => r.epicId!))].sort(), [rows]);
   const storyTypes = useMemo(() => [...new Set(rows.filter((r) => r.storyType).map((r) => r.storyType!))].sort(), [rows]);
+  const layers = useMemo(() => [...new Set(rows.filter((r) => r.layer).map((r) => r.layer!))].sort(), [rows]);
 
   // Filtered rows
   const filteredRows = useMemo(() => {
@@ -52,9 +56,10 @@ export default function RtmViewerPage() {
       if (filterStatus && r.featureStatus !== filterStatus) return false;
       if (filterTbd === 'yes' && !r.tbdFutureRef) return false;
       if (filterTbd === 'no' && r.tbdFutureRef) return false;
+      if (filterLayer && r.layer !== filterLayer) return false;
       return true;
     });
-  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd]);
+  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer]);
 
   // CSV export
   const handleExportCsv = useCallback(() => {
@@ -63,12 +68,14 @@ export default function RtmViewerPage() {
       'Screen Ref', 'EPIC ID', 'EPIC Name', 'Story ID', 'Story Name', 'Story Type', 'Story Status',
       'Primary Class', 'Source File', 'SubTask ID', 'Team', 'Method', 'Test Cases',
       'Integration Status', 'TBD-Future Ref', 'Resolved',
+      'Layer', 'LLD Source Files',
     ];
     const csvRows = filteredRows.map((r) => [
       r.moduleId, r.moduleName, r.packageName, r.featureId, r.featureName, r.featureStatus, r.priority,
       r.screenRef, r.epicId ?? '', r.epicName ?? '', r.storyId ?? '', r.storyName ?? '', r.storyType ?? '', r.storyStatus ?? '',
       r.primaryClass ?? '', r.sourceFile ?? '', r.subtaskId ?? '', r.subtaskTeam ?? '', r.methodName ?? '',
       (r.testCaseIds ?? []).join('; '), r.integrationStatus ?? '', r.tbdFutureRef ?? '', r.tbdResolved ? 'Yes' : 'No',
+      r.layer ?? '', (r.pseudoFilePaths ?? []).join('; '),
     ].map((v) => `"${v}"`).join(','));
 
     const csv = [headers.join(','), ...csvRows].join('\n');
@@ -109,6 +116,27 @@ export default function RtmViewerPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">{filteredRows.length} of {rows.length} rows</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={backfilling}
+              onClick={async () => {
+                setBackfilling(true);
+                try {
+                  const { data } = await api.post(`/ba/projects/${projectId}/rtm/backfill`);
+                  await load();
+                  alert(`RTM populated: ${data?.seeded ?? 0} new rows, linked ${data?.epics ?? 0} EPICs / ${data?.stories ?? 0} Story artifacts / ${data?.subtasks ?? 0} SubTasks / ${data?.llds ?? 0} LLDs.`);
+                } catch {
+                  alert('Backfill failed. Ensure the backend is running and the project has generated artifacts.');
+                } finally {
+                  setBackfilling(false);
+                }
+              }}
+              title="Populate RTM rows from existing FRD/EPIC/User Story/SubTask artifacts"
+            >
+              {backfilling ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
+              Populate from Artifacts
+            </Button>
             <Button size="sm" variant="outline" onClick={handleExportCsv}>
               <Download className="h-3.5 w-3.5 mr-1" />
               Export CSV
@@ -143,9 +171,13 @@ export default function RtmViewerPage() {
           <option value="yes">Has TBD-Future</option>
           <option value="no">No TBD-Future</option>
         </select>
-        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd) && (
+        <select value={filterLayer} onChange={(e) => setFilterLayer(e.target.value)} className="text-xs border border-input rounded px-2 py-1 bg-background">
+          <option value="">All Layers</option>
+          {layers.map((l) => <option key={l} value={l}>{l}</option>)}
+        </select>
+        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer) && (
           <button
-            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); }}
+            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); }}
             className="text-xs text-primary hover:underline"
           >
             Clear filters
@@ -170,13 +202,15 @@ export default function RtmViewerPage() {
               <th className="px-3 py-2 border-b border-border font-semibold">Class</th>
               <th className="px-3 py-2 border-b border-border font-semibold">SubTask</th>
               <th className="px-3 py-2 border-b border-border font-semibold">Team</th>
+              <th className="px-3 py-2 border-b border-border font-semibold">Layer</th>
+              <th className="px-3 py-2 border-b border-border font-semibold">LLD Source Files</th>
               <th className="px-3 py-2 border-b border-border font-semibold">TBD-Future</th>
             </tr>
           </thead>
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={13} className="px-3 py-12 text-center text-muted-foreground">
+                <td colSpan={15} className="px-3 py-12 text-center text-muted-foreground">
                   {rows.length === 0 ? 'No RTM data yet. Complete skill executions to populate.' : 'No rows match the current filters.'}
                 </td>
               </tr>
@@ -221,6 +255,31 @@ export default function RtmViewerPage() {
                         'bg-orange-100 text-orange-700',
                       )}>{row.subtaskTeam}</span>
                     )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {row.layer ? (
+                      <span className={cn(
+                        'px-1.5 py-0.5 rounded text-[9px] font-medium',
+                        row.layer === 'Frontend' ? 'bg-blue-100 text-blue-700' :
+                        row.layer === 'Backend' ? 'bg-purple-100 text-purple-700' :
+                        row.layer === 'Database' ? 'bg-emerald-100 text-emerald-700' :
+                        row.layer === 'Integration' ? 'bg-orange-100 text-orange-700' :
+                        row.layer === 'Testing' ? 'bg-green-100 text-green-700' :
+                        'bg-gray-100 text-gray-600',
+                      )}>{row.layer}</span>
+                    ) : '—'}
+                  </td>
+                  <td className="px-3 py-1.5 max-w-[260px]">
+                    {row.pseudoFilePaths && row.pseudoFilePaths.length > 0 ? (
+                      <div className="flex flex-col gap-0.5" title={row.pseudoFilePaths.join('\n')}>
+                        {row.pseudoFilePaths.slice(0, 3).map((p, i) => (
+                          <code key={i} className="text-[10px] font-mono text-muted-foreground truncate">{p.split('/').pop()}</code>
+                        ))}
+                        {row.pseudoFilePaths.length > 3 && (
+                          <span className="text-[9px] text-muted-foreground/70">+{row.pseudoFilePaths.length - 3} more</span>
+                        )}
+                      </div>
+                    ) : '—'}
                   </td>
                   <td className="px-3 py-1.5">
                     {row.tbdFutureRef ? (
