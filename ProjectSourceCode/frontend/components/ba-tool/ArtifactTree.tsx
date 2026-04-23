@@ -67,7 +67,7 @@ interface ArtifactTreeProps {
 // ─── Build tree from executions + artifacts ──────────────────────────────────
 
 function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): SkillNode[] {
-  const skillOrder = ['SKILL-00', 'SKILL-01-S', 'SKILL-02-S', 'SKILL-04', 'SKILL-05', 'SKILL-06-LLD'];
+  const skillOrder = ['SKILL-00', 'SKILL-01-S', 'SKILL-02-S', 'SKILL-04', 'SKILL-05', 'SKILL-06-LLD', 'SKILL-07-FTC'];
   const completedSkills = executions.filter(
     (e) => e.status === 'AWAITING_REVIEW' || e.status === 'APPROVED' || e.status === 'COMPLETED',
   );
@@ -167,6 +167,7 @@ function getArtifactsForSkill(skillName: string, artifacts: BaArtifact[]): BaArt
     'SKILL-04': 'USER_STORY',
     'SKILL-05': 'SUBTASK',
     'SKILL-06-LLD': 'LLD',
+    'SKILL-07-FTC': 'FTC',
   };
   const type = typeMap[skillName];
   if (!type) return [];
@@ -212,6 +213,7 @@ const SKILL_ICONS: Record<string, typeof FileText> = {
   'SKILL-04': BookOpen,
   'SKILL-05': Cog,
   'SKILL-06-LLD': Compass,
+  'SKILL-07-FTC': ListChecks,
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────

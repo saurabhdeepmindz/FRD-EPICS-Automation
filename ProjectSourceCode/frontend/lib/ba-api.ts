@@ -608,6 +608,7 @@ export const SKILL_LABELS: Record<string, string> = {
   'SKILL-04': 'User Stories',
   'SKILL-05': 'SubTasks',
   'SKILL-06-LLD': 'Low-Level Design',
+  'SKILL-07-FTC': 'Functional Test Cases',
 };
 
 // ─── v4: Architect Console (master data + templates) ─────────────────────────
