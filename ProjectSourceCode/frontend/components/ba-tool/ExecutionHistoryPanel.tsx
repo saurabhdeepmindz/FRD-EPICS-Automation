@@ -144,11 +144,34 @@ export function ExecutionHistoryPanel({ testCaseId, testCaseRef }: Props) {
       )}
 
       {runs.length > 0 && (
-        <ul className="divide-y divide-border/50">
-          {runs.map((run) => (
-            <RunRow key={run.id} run={run} onDelete={() => handleDeleteRun(run.id)} />
-          ))}
-        </ul>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead className="bg-muted/40 text-left text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 font-semibold">#</th>
+                <th className="px-2 py-1.5 font-semibold">Date</th>
+                <th className="px-2 py-1.5 font-semibold">Status</th>
+                <th className="px-2 py-1.5 font-semibold">Executor</th>
+                <th className="px-2 py-1.5 font-semibold">Env</th>
+                <th className="px-2 py-1.5 font-semibold">Sprint</th>
+                <th className="px-2 py-1.5 font-semibold text-right">Dur</th>
+                <th className="px-2 py-1.5 font-semibold">Defects</th>
+                <th className="px-2 py-1.5 font-semibold">Notes</th>
+                <th className="px-2 py-1.5 font-semibold"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run, idx) => (
+                <RunRow
+                  key={run.id}
+                  run={run}
+                  runNumber={runs.length - idx}
+                  onDelete={() => handleDeleteRun(run.id)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {defects.length > 0 && (
@@ -171,40 +194,72 @@ export function ExecutionHistoryPanel({ testCaseId, testCaseRef }: Props) {
   );
 }
 
-function RunRow({ run, onDelete }: { run: BaTestRun; onDelete: () => void }) {
+function RunRow({
+  run,
+  runNumber,
+  onDelete,
+}: {
+  run: BaTestRun;
+  runNumber: number;
+  onDelete: () => void;
+}) {
   const choice = STATUS_CHOICES.find((c) => c.value === run.status)!;
   const Icon = choice.icon;
+  const executedAt = new Date(run.executedAt);
+  // Short date format (Apr 23 21:15) — full ISO on hover.
+  const dateShort = executedAt.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  const dateFull = executedAt.toLocaleString();
+  const notesPreview = (run.notes ?? '').trim();
+  const notesShort = notesPreview.length > 80 ? notesPreview.slice(0, 80) + '…' : notesPreview;
+
   return (
-    <li className="flex items-start gap-2 p-2 text-xs">
-      <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold shrink-0', choice.color)}>
-        <Icon className="h-3 w-3" /> {choice.label.toUpperCase()}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 text-muted-foreground flex-wrap">
-          <span>{new Date(run.executedAt).toLocaleString()}</span>
-          {run.executor && <span>· {run.executor}</span>}
-          {run.environment && <span>· <span className="font-mono">{run.environment}</span></span>}
-          {run.sprintId && <span>· <span className="font-mono">{run.sprintId}</span></span>}
-          {typeof run.durationSec === 'number' && <span>· {run.durationSec}s</span>}
-        </div>
-        {run.notes && (
-          <p className="mt-0.5 text-foreground whitespace-pre-wrap">{run.notes}</p>
-        )}
-        {run.defects && run.defects.length > 0 && (
-          <div className="mt-1 flex items-center gap-1 flex-wrap">
+    <tr className="border-t border-border/50 hover:bg-muted/10 align-top">
+      <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground">#{runNumber}</td>
+      <td className="px-2 py-1.5 whitespace-nowrap" title={dateFull}>{dateShort}</td>
+      <td className="px-2 py-1.5">
+        <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold', choice.color)}>
+          <Icon className="h-3 w-3" /> {choice.label.toUpperCase()}
+        </span>
+      </td>
+      <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">{run.executor ?? '—'}</td>
+      <td className="px-2 py-1.5 font-mono text-[11px]">{run.environment ?? '—'}</td>
+      <td className="px-2 py-1.5 font-mono text-[11px]">{run.sprintId ?? '—'}</td>
+      <td className="px-2 py-1.5 text-right text-muted-foreground whitespace-nowrap">
+        {typeof run.durationSec === 'number' ? `${run.durationSec}s` : '—'}
+      </td>
+      <td className="px-2 py-1.5">
+        {run.defects && run.defects.length > 0 ? (
+          <div className="flex items-center gap-1 flex-wrap">
             <Bug className="h-3 w-3 text-rose-600 shrink-0" />
             {run.defects.map((d) => (
-              <span key={d.id} className="bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                {d.title.slice(0, 60)} · {d.severity} · {d.status}
+              <span
+                key={d.id}
+                title={`${d.title}${d.externalRef ? '\n' + d.externalRef : ''}`}
+                className="bg-rose-50 text-rose-700 px-1 py-0.5 rounded font-mono text-[10px]"
+              >
+                {d.severity}·{d.status.replace('_', ' ')}
               </span>
             ))}
           </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
         )}
-      </div>
-      <button onClick={onDelete} className="text-muted-foreground hover:text-red-600" title="Soft-delete run">
-        <Trash2 className="h-3 w-3" />
-      </button>
-    </li>
+      </td>
+      <td className="px-2 py-1.5 max-w-[280px]" title={notesPreview}>
+        {notesShort ? (
+          <span className="text-foreground">{notesShort}</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="px-2 py-1.5 text-right">
+        <button onClick={onDelete} className="text-muted-foreground hover:text-red-600" title="Soft-delete run">
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </td>
+    </tr>
   );
 }
 
