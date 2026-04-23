@@ -85,16 +85,33 @@ Under §6, §7, §8, embed test cases in the strict TC block format below. The f
 
 ## 4. Test Case ID Rules
 
-- **TC-001**, **TC-002**, … for top-level cases (functional + white-box + security).
+Every scenario group MUST contain **both positive and negative** test cases. Typical ratio: at least 1 positive happy-path TC + 3–5 negative TCs per scenario (empty input / invalid format / duplicate / boundary / expired-link style cases). If a scenario truly has no meaningful negative path, note that under §15 Applied Best-Practice Defaults with reasoning.
+
+### ID conventions
+
+- **TC-001**, **TC-002**, … for *positive* top-level cases (happy-path, positive equivalence classes).
+- **Neg_TC-005**, **Neg_TC-006**, … for *negative* top-level cases (invalid inputs, error states, boundary violations). The `Neg_` prefix is formatting-only — `testKind=negative` in the fenced-block header is the authoritative signal.
 - **TC-001-INT-01**, **TC-001-INT-02** for integration sub-cases under a parent TC.
-- IDs are sequential across the whole artifact — do not reset per EPIC.
+- IDs are sequential across the whole artifact — do not reset per EPIC. A single numeric sequence is shared between `TC-` and `Neg_TC-` (e.g. TC-001, TC-002, Neg_TC-003, Neg_TC-004, TC-005, …).
 - Never reuse an ID. Never invent FRD/EPIC/US/ST IDs — cite only those present in the context.
+
+### Scenario grouping
+
+Within each EPIC, group TCs by **scenarioGroup** — a short human-readable scenario label matching the CSV convention. Examples:
+- `"Signup – Starter Plan"`
+- `"Signup – Firm Plan (Payment)"`
+- `"Login"`
+- `"Forgot Password"`
+- `"New Conversation – Start Research"`
+- `"Admin Dashboard – SLA Breach Banner"`
+
+Section §5 Test Cases Index renders as EPIC → scenarioGroup → (positive block, negative block).
 
 ## 5. Test Case Block Format (strict)
 
 Every TC in the document AND every TC in the appendix MUST use this fenced block:
 
-```tc id=TC-001 parent= scope=black_box category=Functional priority=P1 owasp= isIntegrationTest=false
+```tc id=TC-001 parent= scope=black_box testKind=positive category=Functional priority=P1 owasp= isIntegrationTest=false sprintId= executionStatus=NOT_RUN scenarioGroup=Login
 title: User logs in with valid credentials
 linkedFeatureIds: F-01-02
 linkedEpicIds: EPIC-01
@@ -103,21 +120,38 @@ linkedSubtaskIds: ST-US001-BE-03
 linkedPseudoFileIds:
 linkedLldArtifactId:
 tags: auth, smoke
+supportingDocs: Login Flow Screenshot, Auth API trace
+defectIds:
 
-### Preconditions
+### Test Data
+Email: alice@acme.com
+Password: P@ssw0rd!
+
+### Pre Condition
 - Tenant `acme` exists
 - User `alice@acme.com` has been registered with password `P@ssw0rd!`
+- Application URL is accessible
 
-### Steps
-1. Navigate to `/login`.
-2. Enter email `alice@acme.com`.
-3. Enter password `P@ssw0rd!`.
-4. Click "Sign in".
+### E2E Flow
+Launch URL → Login → Enter credentials → Submit → Dashboard loaded
+
+### Test Steps
+1. Launch the application URL.
+2. Click **Login**.
+3. Enter email `alice@acme.com`.
+4. Enter password `P@ssw0rd!`.
+5. Click **Sign in**.
 
 ### Expected
 - Browser redirects to `/dashboard`.
 - Session cookie `sid` is set with `HttpOnly; Secure; SameSite=Lax`.
-- Audit row with `action='LOGIN_SUCCESS', actor='alice@acme.com'` appears in `audit_events`.
+- User greeting shows "Welcome, Alice".
+
+### Post Validation
+- Audit row with `action='LOGIN_SUCCESS', actor='alice@acme.com'` appears in `audit_events` within 10 s.
+- No `LOGIN_FAILURE` row is written.
+- `/api/auth/login` returned 200 with a JWT that expires in 24 h.
+- No verification email is re-sent (only for initial signup).
 
 ### SQL Setup
 INSERT INTO tenants (id, name) VALUES ('acme', 'Acme Corp');
@@ -143,15 +177,40 @@ Unit test: mocked user repo; verify password_hash check and audit row emission.
 
 ### Field rules
 
+Header attributes (first line of the fenced block):
+
 - **scope** — `black_box` (default) or `white_box`. Use `white_box` when the TC asserts against an internal class/method from the LLD.
+- **testKind** — `positive` (default) | `negative` | `edge`. The authoritative kind signal. `Neg_` ID prefix is formatting only.
 - **category** — one of: `Functional`, `Integration`, `Security`, `Data`, `UI`, `Performance`, `Accessibility`, `Regression`, `Smoke`.
 - **priority** — `P0` / `P1` / `P2`.
-- **owasp** — blank, or one of: `A01`, `A02`, `A03`, `A04`, `A05`, `A06`, `A07`, `A08`, `A09`, `A10` (Web 2021), `LLM01`, `LLM02`, `LLM03`, `LLM04`, `LLM05`, `LLM06`, `LLM07`, `LLM08`, `LLM09`, `LLM10` (GenAI 2025).
+- **owasp** — blank, or one of: `A01`…`A10` (Web 2021), `LLM01`…`LLM10` (GenAI 2025).
 - **parent** — blank, unless `isIntegrationTest=true`, in which case the parent TC id.
 - **isIntegrationTest** — `true` when the TC verifies an external system interaction (HTTP call to dependency, Kafka publish, DB-trigger cascade). Child IDs use `-INT-NN` suffix.
-- **SQL sections** use the dialect from `projectMeta.sqlDialect`. Keep them dialect-idiomatic; avoid proprietary extensions unless the dialect requires them.
-- **Playwright Hint** — write realistic code snippets; `await page.goto(...)`, `expect(...)`. Keep them short (5–15 lines). Skip for pure backend / SQL-only cases.
-- **Developer Hints** — 1–3 sentences about the unit-level assertions a TDD codegen skill should emit from this TC. Skip if purely end-to-end UI.
+- **sprintId** — leave blank. Populated post-generation by sprint planning (v2).
+- **executionStatus** — always `NOT_RUN` at generation time. QA flips to PASS / FAIL / BLOCKED / SKIPPED during execution (v2).
+- **scenarioGroup** — required. See §4 for examples.
+
+Header key-value lines (one per line, before the first `###`):
+
+- **title** — required. One sentence, past tense or imperative, no compound "and" titles.
+- **linkedFeatureIds / linkedEpicIds / linkedStoryIds / linkedSubtaskIds** — comma-separated. Cite only IDs present in the context.
+- **linkedPseudoFileIds / linkedLldArtifactId** — populated only for white-box TCs when `lldContext` is present.
+- **tags** — comma-separated short labels (auth, smoke, boundary, regression, …).
+- **supportingDocs** — comma-separated names of screenshots / traces / documents expected as evidence. Leave blank when none apply.
+- **defectIds** — leave blank at generation time. QA populates during execution.
+
+Sub-section blocks (each `### Heading` followed by content):
+
+- **Test Data** — concrete inputs (emails, phone numbers, card numbers, passwords). Required unless the TC is intrinsically data-free (e.g. "click cancel"). For negative TCs, list the *invalid* values being tested.
+- **Pre Condition** — numbered or bulleted list of system state the test assumes.
+- **E2E Flow** — a single arrow-summary line matching the CSV convention: `Launch URL → Action 1 → Action 2 → Outcome`. Keep under 80 chars.
+- **Test Steps** — detailed numbered steps. Each step is imperative and testable.
+- **Expected** — step-level expected outcome visible to the user (screen transitions, messages, UI state).
+- **Post Validation** — cross-cutting checks beyond the UI: emails received, DB rows written, audit entries, API responses, background jobs triggered. Distinct from `Expected` — these are the *consequences* of the test, not what the user sees immediately.
+- **Supporting Documents** — list of supplementary evidence names.
+- **SQL Setup / SQL Verify** — dialect from `projectMeta.sqlDialect`. Keep idiomatic; avoid proprietary extensions unless the dialect requires them. Skip for pure-UI validation tests.
+- **Playwright Hint** — 5–15 lines of realistic code. Skip for pure backend / SQL-only TCs.
+- **Developer Hints** — 1–3 sentences for the future v5.1 TDD codegen skill. Skip for pure end-to-end UI cases.
 
 ## 6. OWASP Coverage Rules
 

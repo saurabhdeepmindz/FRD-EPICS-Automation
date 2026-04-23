@@ -119,4 +119,99 @@ export class BaFtcService {
       data: { editedContent, isHumanModified: true },
     });
   }
+
+  /**
+   * Export an FTC artifact's test cases as CSV, matching the sample template
+   * the client supplied (same column headers + order). Three extra columns
+   * surface context the sample template lacked: OWASP, scope, linked IDs.
+   *
+   * Header order:
+   *   TC ID | Sprint ID | Status (Pass/Fail) | Test Data | Pre Condition |
+   *   Test Scenario/Module | E2E Test Cases/Test Case | Test Steps |
+   *   Post Validation / Email Validation | Document | Defects |
+   *   OWASP Category | White/Black Box | Linked IDs (F/US/ST/TC)
+   *
+   * Separator rows (matching the CSV pattern "Signup ( Starter ) Positive Tc"
+   * / "Negative Tc") are emitted between scenarioGroup + testKind transitions
+   * so the output is drop-in compatible with QA teams' existing templates.
+   */
+  async exportTestCasesCsv(artifactDbId: string): Promise<{ csv: string; filename: string }> {
+    const artifact = await this.prisma.baArtifact.findUnique({
+      where: { id: artifactDbId },
+      include: {
+        testCases: {
+          orderBy: [
+            { scenarioGroup: 'asc' },
+            { testKind: 'asc' },
+            { testCaseId: 'asc' },
+          ],
+        },
+      },
+    });
+    if (!artifact) throw new NotFoundException(`FTC artifact ${artifactDbId} not found`);
+
+    const headers = [
+      'TC ID', 'Sprint ID', 'Status (Pass/Fail)', 'Test Data', 'Pre Condition',
+      'Test Scenario/Module', 'E2E Test Cases/Test Case', 'Test Steps',
+      'Post Validation / Email Validation', 'Document', 'Defects',
+      'OWASP Category', 'Scope (White/Black)', 'Linked IDs',
+    ];
+
+    const rows: string[][] = [headers];
+
+    let lastGroup: string | null = null;
+    let lastKind: string | null = null;
+    for (const tc of artifact.testCases) {
+      const group = tc.scenarioGroup ?? 'Ungrouped';
+      const kind = tc.testKind ?? 'positive';
+      if (group !== lastGroup || kind !== lastKind) {
+        // Emit a separator row like the sample CSV
+        const kindLabel = kind === 'negative' ? 'Negative Tc' : kind === 'edge' ? 'Edge Tc' : 'Positive Tc';
+        const sep = new Array(headers.length).fill('');
+        sep[5] = `${group} — ${kindLabel}`;
+        rows.push(sep);
+        lastGroup = group;
+        lastKind = kind;
+      }
+
+      const linkedIds = [
+        ...tc.linkedFeatureIds,
+        ...tc.linkedEpicIds,
+        ...tc.linkedStoryIds,
+        ...tc.linkedSubtaskIds,
+      ].join('; ');
+
+      rows.push([
+        tc.testCaseId,
+        tc.sprintId ?? '',
+        tc.executionStatus ?? 'NOT_RUN',
+        tc.testData ?? '',
+        tc.preconditions ?? '',
+        tc.title ?? '',
+        tc.e2eFlow ?? '',
+        tc.steps ?? '',
+        [tc.expected, tc.postValidation].filter(Boolean).join('\n\n'),
+        (tc.supportingDocs ?? []).join('; '),
+        (tc.defectIds ?? []).join('; '),
+        tc.owaspCategory ?? '',
+        tc.scope ?? 'black_box',
+        linkedIds,
+      ]);
+    }
+
+    const csv = rows
+      .map((row) => row.map((cell) => this.csvEscape(cell)).join(','))
+      .join('\r\n');
+
+    const filename = `${artifact.artifactId ?? 'ftc'}-test-cases.csv`;
+    return { csv, filename };
+  }
+
+  private csvEscape(value: string): string {
+    if (value == null) return '""';
+    const s = String(value);
+    // RFC 4180: wrap in quotes, double internal quotes. Always quote so Excel
+    // handles multi-line cells (TC steps often have embedded newlines).
+    return `"${s.replace(/"/g, '""')}"`;
+  }
 }

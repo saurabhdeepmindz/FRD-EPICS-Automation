@@ -12,10 +12,14 @@ interface ParsedTestCase {
   title: string;
   parent: string | null;
   scope: 'black_box' | 'white_box';
+  testKind: 'positive' | 'negative' | 'edge';
   category: string | null;
   priority: string | null;
   owaspCategory: string | null;
   isIntegrationTest: boolean;
+  sprintId: string | null;
+  executionStatus: string;
+  scenarioGroup: string | null;
   linkedFeatureIds: string[];
   linkedEpicIds: string[];
   linkedStoryIds: string[];
@@ -23,9 +27,14 @@ interface ParsedTestCase {
   linkedPseudoFileIds: string[];
   linkedLldArtifactId: string | null;
   tags: string[];
+  supportingDocs: string[];
+  defectIds: string[];
+  testData: string | null;
+  e2eFlow: string | null;
   preconditions: string | null;
   steps: string;
   expected: string;
+  postValidation: string | null;
   sqlSetup: string | null;
   sqlVerify: string | null;
   playwrightHint: string | null;
@@ -107,10 +116,14 @@ export class BaFtcParserService {
             title: tc.title,
             parentTestCaseId: tc.parent,
             scope: tc.scope,
+            testKind: tc.testKind,
             category: tc.category,
             priority: tc.priority,
             owaspCategory: tc.owaspCategory,
             isIntegrationTest: tc.isIntegrationTest,
+            sprintId: tc.sprintId,
+            executionStatus: tc.executionStatus,
+            scenarioGroup: tc.scenarioGroup,
             linkedFeatureIds: tc.linkedFeatureIds,
             linkedEpicIds: tc.linkedEpicIds,
             linkedStoryIds: tc.linkedStoryIds,
@@ -118,9 +131,14 @@ export class BaFtcParserService {
             linkedPseudoFileIds: tc.linkedPseudoFileIds,
             linkedLldArtifactId: tc.linkedLldArtifactId,
             tags: tc.tags,
+            supportingDocs: tc.supportingDocs,
+            defectIds: tc.defectIds,
+            testData: tc.testData,
+            e2eFlow: tc.e2eFlow,
             preconditions: tc.preconditions,
             steps: tc.steps,
             expected: tc.expected,
+            postValidation: tc.postValidation,
             sqlSetup: tc.sqlSetup,
             sqlVerify: tc.sqlVerify,
             playwrightHint: tc.playwrightHint,
@@ -233,7 +251,8 @@ export class BaFtcParserService {
   }
 
   private parseOneTestCase(headerLine: string, body: string): ParsedTestCase | null {
-    // Header attrs: id=TC-001 parent= scope=black_box category=Functional priority=P1 owasp= isIntegrationTest=false
+    // Header attrs: id=TC-001 parent= scope=black_box testKind=positive category=Functional
+    //   priority=P1 owasp= isIntegrationTest=false sprintId= executionStatus=NOT_RUN scenarioGroup=Login
     const attrs = this.parseAttrs(headerLine);
     const testCaseId = attrs.id?.trim();
     if (!testCaseId) {
@@ -243,24 +262,33 @@ export class BaFtcParserService {
 
     const scopeRaw = (attrs.scope ?? 'black_box').toLowerCase();
     const scope: 'black_box' | 'white_box' = scopeRaw === 'white_box' ? 'white_box' : 'black_box';
+
+    const testKindRaw = (attrs.testKind ?? '').toLowerCase();
+    let testKind: 'positive' | 'negative' | 'edge';
+    if (testKindRaw === 'negative' || testKindRaw === 'edge' || testKindRaw === 'positive') {
+      testKind = testKindRaw;
+    } else if (/^neg_/i.test(testCaseId)) {
+      // Fall back on the `Neg_` ID convention when header attr is missing
+      testKind = 'negative';
+    } else {
+      testKind = 'positive';
+    }
+
     const isInt = /^true$/i.test(attrs.isIntegrationTest ?? 'false');
     const owaspRaw = attrs.owasp?.trim().toUpperCase() || null;
     const owasp = owaspRaw && (this.OWASP_WEB.has(owaspRaw) || this.OWASP_LLM.has(owaspRaw))
       ? owaspRaw
       : null;
 
-    // Key-value header lines (before the first `###`):
-    //   title: ...
-    //   linkedFeatureIds: F-01-02, F-01-03
-    //   linkedEpicIds: EPIC-01
-    //   tags: auth, smoke
+    const executionStatusRaw = (attrs.executionStatus ?? 'NOT_RUN').toUpperCase();
+    const VALID_STATUS = new Set(['NOT_RUN', 'PASS', 'FAIL', 'BLOCKED', 'SKIPPED']);
+    const executionStatus = VALID_STATUS.has(executionStatusRaw) ? executionStatusRaw : 'NOT_RUN';
+
     const firstH3 = body.search(/^###\s+/m);
     const headerBlock = firstH3 >= 0 ? body.slice(0, firstH3) : body;
     const restBlock = firstH3 >= 0 ? body.slice(firstH3) : '';
 
     const kv = this.parseKeyValueLines(headerBlock);
-
-    // Sub-section blocks (### Preconditions, ### Steps, ### Expected, ### SQL Setup, …)
     const sections = this.splitH3Sections(restBlock);
 
     return {
@@ -268,10 +296,14 @@ export class BaFtcParserService {
       title: kv.title ?? '',
       parent: (attrs.parent && attrs.parent.trim()) || null,
       scope,
+      testKind,
       category: attrs.category?.trim() || null,
       priority: attrs.priority?.trim() || null,
       owaspCategory: owasp,
       isIntegrationTest: isInt,
+      sprintId: (attrs.sprintId && attrs.sprintId.trim()) || null,
+      executionStatus,
+      scenarioGroup: (attrs.scenarioGroup && attrs.scenarioGroup.trim().replace(/_/g, ' ')) || null,
       linkedFeatureIds: this.splitList(kv.linkedFeatureIds),
       linkedEpicIds: this.splitList(kv.linkedEpicIds),
       linkedStoryIds: this.splitList(kv.linkedStoryIds),
@@ -279,9 +311,14 @@ export class BaFtcParserService {
       linkedPseudoFileIds: this.splitList(kv.linkedPseudoFileIds),
       linkedLldArtifactId: (kv.linkedLldArtifactId && kv.linkedLldArtifactId.trim()) || null,
       tags: this.splitList(kv.tags),
-      preconditions: sections['preconditions'] ?? null,
-      steps: sections['steps'] ?? '',
+      supportingDocs: this.splitList(kv.supportingDocs),
+      defectIds: this.splitList(kv.defectIds),
+      testData: sections['test data'] ?? null,
+      e2eFlow: sections['e2e flow'] ?? null,
+      preconditions: sections['pre condition'] ?? sections['preconditions'] ?? null,
+      steps: sections['test steps'] ?? sections['steps'] ?? '',
       expected: sections['expected'] ?? '',
+      postValidation: sections['post validation'] ?? null,
       sqlSetup: sections['sql setup'] ?? null,
       sqlVerify: sections['sql verify'] ?? null,
       playwrightHint: sections['playwright hint'] ?? null,

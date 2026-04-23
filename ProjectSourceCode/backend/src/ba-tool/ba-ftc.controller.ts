@@ -7,10 +7,12 @@ import {
   Param,
   Post,
   Put,
+  Res,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { BaFtcService, FtcConfigPayload } from './ba-ftc.service';
 import { BaFtcNarrativeService } from './ba-ftc-narrative.service';
 import { MAX_TOTAL_ATTACHMENT_BYTES } from './ba-narrative.service';
@@ -62,6 +64,21 @@ export class BaFtcController {
   @Get('artifacts/:id/test-cases')
   listTestCasesByArtifact(@Param('id') artifactDbId: string) {
     return this.ftc.listTestCases(artifactDbId);
+  }
+
+  /** GET /api/ba/artifacts/:id/test-cases/csv — export FTC test cases in the
+   *  QA-team CSV template (same columns as the supplied reference sheet).
+   */
+  @Get('artifacts/:id/test-cases/csv')
+  async exportTestCasesCsv(@Param('id') artifactDbId: string, @Res() res: Response) {
+    const { csv, filename } = await this.ftc.exportTestCasesCsv(artifactDbId);
+    // Prefix with BOM so Excel opens UTF-8 correctly on Windows.
+    const body = `﻿${csv}`;
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(body);
   }
 
   /** GET /api/ba/test-cases/:id — fetch one test case */

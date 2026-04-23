@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
-  ArrowLeft, Loader2, Save, Rocket, AlertTriangle, Sparkles, User as UserIcon,
+  ArrowLeft, Loader2, Save, Rocket, AlertTriangle, Sparkles, User as UserIcon, Download,
 } from 'lucide-react';
 import {
   getFtcConfig,
@@ -15,6 +15,7 @@ import {
   getFtc,
   listFtcsForModule,
   getBaModule,
+  downloadFtcCsv,
   type BaFtcConfig,
   type BaModule,
   type FtcConfigBundle,
@@ -207,6 +208,17 @@ export default function FtcWorkbenchPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {ftc?.artifact && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => downloadFtcCsv(ftc.artifact!.id, `${ftc.artifact!.artifactId}.csv`).catch(() => alert('CSV export failed'))}
+              title="Export test cases as CSV matching the QA team template"
+            >
+              <Download className="h-3.5 w-3.5 mr-1" />
+              Export CSV
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
             Save config
@@ -417,6 +429,21 @@ function OwaspChecklist({
 
 function FtcPreview({ testCases }: { testCases: BaTestCase[] }) {
   const [open, setOpen] = useState<string | null>(testCases[0]?.id ?? null);
+
+  // Group TCs by scenarioGroup, then within each group split into positive/negative/edge.
+  const grouped = useMemo(() => {
+    const byGroup = new Map<string, { positive: BaTestCase[]; negative: BaTestCase[]; edge: BaTestCase[] }>();
+    for (const tc of testCases) {
+      const group = tc.scenarioGroup ?? 'Ungrouped';
+      if (!byGroup.has(group)) byGroup.set(group, { positive: [], negative: [], edge: [] });
+      const bucket = byGroup.get(group)!;
+      if (tc.testKind === 'negative') bucket.negative.push(tc);
+      else if (tc.testKind === 'edge') bucket.edge.push(tc);
+      else bucket.positive.push(tc);
+    }
+    return Array.from(byGroup.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [testCases]);
+
   if (testCases.length === 0) {
     return (
       <Card>
@@ -428,60 +455,101 @@ function FtcPreview({ testCases }: { testCases: BaTestCase[] }) {
       </Card>
     );
   }
+
+  const totalPos = testCases.filter((t) => t.testKind === 'positive').length;
+  const totalNeg = testCases.filter((t) => t.testKind === 'negative').length;
+  const totalEdge = testCases.filter((t) => t.testKind === 'edge').length;
+
   return (
     <Card>
-      <CardContent className="p-4 space-y-2">
-        <h3 className="text-sm font-semibold">Test Cases ({testCases.length})</h3>
-        <div className="space-y-2">
-          {testCases.map((tc) => {
-            const isOpen = open === tc.id;
-            const display = tc.isHumanModified && tc.editedContent ? tc.editedContent : tc.aiContent;
-            return (
-              <div key={tc.id} className="rounded-md border border-border">
-                <button
-                  className="w-full flex items-center justify-between gap-2 p-2 text-left hover:bg-muted/30"
-                  onClick={() => setOpen(isOpen ? null : tc.id)}
-                >
-                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                    <span className="font-mono text-xs font-semibold">{tc.testCaseId}</span>
-                    <span className="text-xs text-foreground truncate">{tc.title}</span>
-                    <span className={cn(
-                      'text-[9px] px-1 py-0.5 rounded font-bold shrink-0',
-                      tc.scope === 'white_box' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700',
-                    )}>
-                      {tc.scope === 'white_box' ? 'WHITE' : 'BLACK'}
-                    </span>
-                    {tc.category && (
-                      <span className="text-[9px] bg-muted text-muted-foreground px-1 py-0.5 rounded">{tc.category}</span>
-                    )}
-                    {tc.owaspCategory && (
-                      <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">{tc.owaspCategory}</span>
-                    )}
-                    {tc.isIntegrationTest && (
-                      <span className="text-[9px] bg-orange-100 text-orange-700 px-1 py-0.5 rounded">INT</span>
-                    )}
-                    {tc.isHumanModified && (
-                      <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
-                        <UserIcon className="h-2.5 w-2.5" /> Edited
-                      </span>
-                    )}
-                    {!tc.isHumanModified && (
-                      <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
-                        <Sparkles className="h-2.5 w-2.5" /> AI
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground shrink-0">{isOpen ? '▼' : '▶'}</span>
-                </button>
-                {isOpen && (
-                  <div className="p-3 border-t border-border bg-muted/10 text-sm">
-                    <MarkdownRenderer content={display} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Test Cases ({testCases.length})</h3>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">{totalPos} positive</span>
+            <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">{totalNeg} negative</span>
+            {totalEdge > 0 && (
+              <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{totalEdge} edge</span>
+            )}
+          </div>
         </div>
+
+        {grouped.map(([groupName, bucket]) => (
+          <div key={groupName} className="space-y-1">
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide px-1 pt-2">
+              {groupName}
+            </div>
+            {[...bucket.positive, ...bucket.negative, ...bucket.edge].map((tc) => {
+              const isOpen = open === tc.id;
+              const display = tc.isHumanModified && tc.editedContent ? tc.editedContent : tc.aiContent;
+              return (
+                <div key={tc.id} className="rounded-md border border-border">
+                  <button
+                    className="w-full flex items-center justify-between gap-2 p-2 text-left hover:bg-muted/30"
+                    onClick={() => setOpen(isOpen ? null : tc.id)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                      <span className="font-mono text-xs font-semibold">{tc.testCaseId}</span>
+                      <span className="text-xs text-foreground truncate">{tc.title}</span>
+                      {/* testKind pill */}
+                      <span className={cn(
+                        'text-[9px] px-1 py-0.5 rounded font-bold shrink-0',
+                        tc.testKind === 'negative' ? 'bg-red-100 text-red-700' :
+                        tc.testKind === 'edge' ? 'bg-amber-100 text-amber-700' :
+                        'bg-green-100 text-green-700',
+                      )}>
+                        {tc.testKind.toUpperCase()}
+                      </span>
+                      {/* scope pill */}
+                      <span className={cn(
+                        'text-[9px] px-1 py-0.5 rounded font-bold shrink-0',
+                        tc.scope === 'white_box' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700',
+                      )}>
+                        {tc.scope === 'white_box' ? 'WHITE' : 'BLACK'}
+                      </span>
+                      {tc.category && (
+                        <span className="text-[9px] bg-muted text-muted-foreground px-1 py-0.5 rounded">{tc.category}</span>
+                      )}
+                      {tc.owaspCategory && (
+                        <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">{tc.owaspCategory}</span>
+                      )}
+                      {tc.isIntegrationTest && (
+                        <span className="text-[9px] bg-orange-100 text-orange-700 px-1 py-0.5 rounded">INT</span>
+                      )}
+                      {/* executionStatus pill */}
+                      <span className={cn(
+                        'text-[9px] px-1 py-0.5 rounded font-semibold shrink-0',
+                        tc.executionStatus === 'PASS' ? 'bg-emerald-100 text-emerald-700' :
+                        tc.executionStatus === 'FAIL' ? 'bg-rose-100 text-rose-700' :
+                        tc.executionStatus === 'BLOCKED' ? 'bg-yellow-100 text-yellow-700' :
+                        tc.executionStatus === 'SKIPPED' ? 'bg-gray-100 text-gray-600' :
+                        'bg-slate-100 text-slate-500',
+                      )}>
+                        {tc.executionStatus === 'NOT_RUN' ? 'NOT RUN' : tc.executionStatus}
+                      </span>
+                      {tc.isHumanModified && (
+                        <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
+                          <UserIcon className="h-2.5 w-2.5" /> Edited
+                        </span>
+                      )}
+                      {!tc.isHumanModified && (
+                        <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
+                          <Sparkles className="h-2.5 w-2.5" /> AI
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground shrink-0">{isOpen ? '▼' : '▶'}</span>
+                  </button>
+                  {isOpen && (
+                    <div className="p-3 border-t border-border bg-muted/10 text-sm">
+                      <MarkdownRenderer content={display} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </CardContent>
     </Card>
   );

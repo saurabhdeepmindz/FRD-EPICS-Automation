@@ -625,6 +625,7 @@ export type BaMasterDataCategory =
   | 'BACKEND_TEMPLATE'
   | 'FRONTEND_TEMPLATE'
   | 'LLD_TEMPLATE'
+  | 'FTC_TEMPLATE'
   | 'CODING_GUIDELINES';
 
 export type BaMasterDataScope = 'GLOBAL' | 'PROJECT';
@@ -646,6 +647,7 @@ export const TEMPLATE_CATEGORIES: BaMasterDataCategory[] = [
   'BACKEND_TEMPLATE',
   'FRONTEND_TEMPLATE',
   'LLD_TEMPLATE',
+  'FTC_TEMPLATE',
   'CODING_GUIDELINES',
 ];
 
@@ -662,6 +664,7 @@ export const CATEGORY_LABELS: Record<BaMasterDataCategory, string> = {
   BACKEND_TEMPLATE: 'Backend Template',
   FRONTEND_TEMPLATE: 'Frontend Template',
   LLD_TEMPLATE: 'LLD Document Template',
+  FTC_TEMPLATE: 'FTC Document Template',
   CODING_GUIDELINES: 'Coding Guidelines',
 };
 
@@ -1071,10 +1074,21 @@ export interface BaTestCase {
   title: string;
   category: string | null;
   scope: 'black_box' | 'white_box';
+  testKind: 'positive' | 'negative' | 'edge';
   priority: string | null;
+  sprintId: string | null;
+  executionStatus: string; // NOT_RUN | PASS | FAIL | BLOCKED | SKIPPED
+  lastRunAt: string | null;
+  lastRunBy: string | null;
+  defectIds: string[];
+  scenarioGroup: string | null;
+  testData: string | null;
+  e2eFlow: string | null;
   preconditions: string | null;
   steps: string;
   expected: string;
+  postValidation: string | null;
+  supportingDocs: string[];
   sqlSetup: string | null;
   sqlVerify: string | null;
   isIntegrationTest: boolean;
@@ -1155,6 +1169,10 @@ export async function listTestCasesByArtifact(artifactDbId: string): Promise<BaT
 export async function saveTestCase(id: string, editedContent: string): Promise<BaTestCase> {
   const { data } = await api.put<BaTestCase>(`/ba/test-cases/${id}`, { editedContent });
   return data;
+}
+
+export function downloadFtcCsv(artifactDbId: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/artifacts/${artifactDbId}/test-cases/csv`, filename);
 }
 
 // FTC narrative + attachments + gap-check (reuses the shared shapes)

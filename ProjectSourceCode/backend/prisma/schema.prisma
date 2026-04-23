@@ -465,6 +465,7 @@ enum BaMasterDataCategory {
   BACKEND_TEMPLATE
   FRONTEND_TEMPLATE
   LLD_TEMPLATE
+  FTC_TEMPLATE
   CODING_GUIDELINES
 }
 
@@ -647,14 +648,28 @@ model BaTestCase {
   id                   String     @id @default(uuid())
   artifactDbId         String
   artifact             BaArtifact @relation(fields: [artifactDbId], references: [id], onDelete: Cascade)
-  testCaseId           String     // human-readable: TC-001, TC-001-INT-01
+  testCaseId           String     // human-readable: TC-001, Neg_TC-005, TC-001-INT-01
   title                String
   category             String?    // Functional | Integration | Security | Data | UI | Performance | ...
   scope                String     @default("black_box") // black_box | white_box
+  testKind             String     @default("positive")  // positive | negative | edge
   priority             String?    // P0 | P1 | P2
+  // Sprint & execution tracking — sprintId + executionStatus populated in v2;
+  // schema columns reserved now so CSV export + future UI don't need another migration.
+  sprintId             String?
+  executionStatus      String     @default("NOT_RUN") // NOT_RUN | PASS | FAIL | BLOCKED | SKIPPED
+  lastRunAt            DateTime?
+  lastRunBy            String?
+  defectIds            String[]   @default([]) // JIRA / Linear / GitHub issue refs
+  // Scenario grouping (matches the CSV "Signup (Starter) Positive Tc" / "Negative Tc" pattern)
+  scenarioGroup        String?    // e.g. "Signup – Starter Plan"
+  testData             String?    @db.Text // concrete inputs: emails, phone numbers, card details, …
+  e2eFlow              String?    // arrow-summary: "Launch URL → Signup → Submit → Success"
   preconditions        String?    @db.Text
   steps                String     @db.Text // markdown-formatted numbered steps
-  expected             String     @db.Text // markdown-formatted expected result
+  expected             String     @db.Text // step-level expected outcome
+  postValidation       String?    @db.Text // cross-cutting post-checks (email received, audit row, DB state)
+  supportingDocs       String[]   @default([]) // screenshot / doc / trace names referenced by the TC
   // SQL helpers. Dialect comes from BaProject.sqlDialect.
   sqlSetup             String?    @db.Text // run before the test (insert fixtures, create tenant, …)
   sqlVerify            String?    @db.Text // run after the test (assert row state, audit entries, …)
