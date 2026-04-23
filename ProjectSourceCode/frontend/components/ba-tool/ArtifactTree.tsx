@@ -72,11 +72,21 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
     (e) => e.status === 'AWAITING_REVIEW' || e.status === 'APPROVED' || e.status === 'COMPLETED',
   );
 
+  // SKILL-06-LLD and SKILL-07-FTC are optional post-EPIC skills. We render
+  // placeholder tree nodes for both once EPICs are complete — even when no
+  // artifacts exist yet — so architects can discover them in the tree
+  // instead of having to know about the workbench buttons at the top.
+  const OPTIONAL_POST_EPIC: Set<string> = new Set(['SKILL-06-LLD', 'SKILL-07-FTC']);
+  const epicsComplete = completedSkills.some((e) => e.skillName === 'SKILL-02-S');
+
   const tree: SkillNode[] = [];
 
   for (const skillName of skillOrder) {
     const exec = completedSkills.find((e) => e.skillName === skillName);
-    if (!exec) continue;
+    const isOptional = OPTIONAL_POST_EPIC.has(skillName);
+    // Skip entirely only when: not an optional skill AND no execution exists.
+    // Optional skills show as placeholders once EPICs are done.
+    if (!exec && !(isOptional && epicsComplete)) continue;
 
     // Find artifacts for this skill
     const skillArtifacts = getArtifactsForSkill(skillName, artifacts);
@@ -151,7 +161,7 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
     tree.push({
       skillName,
       label: SKILL_LABELS[skillName] ?? skillName,
-      status: exec.status,
+      status: exec?.status ?? 'PENDING',
       artifacts: artifactNodes,
     });
   }
@@ -290,9 +300,13 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                 <span className="truncate font-medium">{skillNode.label}</span>
                 <span className={cn(
                   'ml-auto text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0',
-                  skillNode.status === 'APPROVED' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
+                  skillNode.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                  skillNode.status === 'PENDING' ? 'bg-gray-100 text-gray-500' :
+                  'bg-amber-100 text-amber-700',
                 )}>
-                  {skillNode.status === 'APPROVED' ? 'Done' : 'Review'}
+                  {skillNode.status === 'APPROVED' ? 'Done' :
+                   skillNode.status === 'PENDING' ? 'Optional' :
+                   'Review'}
                 </span>
               </button>
             </div>
