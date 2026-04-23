@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   ArrowLeft, Loader2, Save, Rocket, AlertTriangle, Sparkles, User as UserIcon, Download,
+  FlaskConical, FileCode, History, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import {
   getFtcConfig,
@@ -14,14 +15,17 @@ import {
   generateFtc,
   getFtc,
   listFtcsForModule,
+  listLldsForModule,
   getBaModule,
   downloadFtcCsv,
+  listPseudoFilesByArtifact,
   type BaFtcConfig,
   type BaModule,
   type FtcConfigBundle,
   type FtcBundle,
   type FtcArtifactSummary,
   type BaTestCase,
+  type BaPseudoFile,
 } from '@/lib/ba-api';
 import { cn } from '@/lib/utils';
 import { FtcNarrativeCard } from '@/components/ba-tool/FtcNarrativeCard';
@@ -511,7 +515,7 @@ export default function FtcWorkbenchPage() {
         )}
 
         {selectedFtc?.artifact && (
-          <FtcPreview testCases={selectedFtc.testCases ?? []} />
+          <FtcPreview testCases={selectedFtc.testCases ?? []} moduleDbId={moduleDbId} />
         )}
       </main>
     </div>
@@ -550,8 +554,90 @@ function OwaspChecklist({
   );
 }
 
-function FtcPreview({ testCases }: { testCases: BaTestCase[] }) {
+interface PseudoFileRef {
+  id: string;
+  path: string;
+  basename: string;
+  isTestFile: boolean;
+}
+
+/**
+ * Classify a pseudo-file path as production-code vs test-file by its
+ * naming + directory heuristics. Language-agnostic — Python, JS/TS, Java
+ * and Go conventions all covered.
+ */
+function classifyPseudoFile(path: string): boolean {
+  const lower = path.toLowerCase();
+  if (/(^|\/)(test|tests|__tests__|spec)(\/|$)/.test(lower)) return true;
+  const base = lower.split('/').pop() ?? lower;
+  return (
+    /^test[_-]/.test(base) ||
+    /_test\.(py|go)$/.test(base) ||
+    /\.(test|spec)\.(js|jsx|ts|tsx)$/.test(base) ||
+    /test\.(java|kt|cs|scala)$/.test(base) ||
+    /tests\.(java|kt|cs)$/.test(base) ||
+    /spec\.(kt|scala)$/.test(base)
+  );
+}
+
+function buildFileRef(pf: BaPseudoFile): PseudoFileRef {
+  const basename = pf.path.split('/').pop() ?? pf.path;
+  return { id: pf.id, path: pf.path, basename, isTestFile: classifyPseudoFile(pf.path) };
+}
+
+function FtcPreview({ testCases, moduleDbId }: { testCases: BaTestCase[]; moduleDbId: string }) {
   const [open, setOpen] = useState<string | null>(testCases[0]?.id ?? null);
+
+  // uuid → pseudo-file ref. The skill stores `linkedLldArtifactId` as the
+  // human-readable artifactId (e.g. "LLD-MOD-01-langchain-v3"), so we first
+  // need to resolve that to the DB UUID via the module's LLD list, then
+  // fetch pseudo files by UUID.
+  const [pseudoFileMap, setPseudoFileMap] = useState<Map<string, PseudoFileRef>>(new Map());
+
+  const uniqueLldRefs = useMemo(() => {
+    const set = new Set<string>();
+    for (const tc of testCases) {
+      if (tc.linkedLldArtifactId) set.add(tc.linkedLldArtifactId);
+    }
+    return Array.from(set);
+  }, [testCases]);
+
+  useEffect(() => {
+    if (uniqueLldRefs.length === 0) {
+      setPseudoFileMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      // Build human-id → DB-id map from the module's LLD list.
+      let humanIdToDbId = new Map<string, string>();
+      try {
+        const llds = await listLldsForModule(moduleDbId);
+        humanIdToDbId = new Map(llds.map((l) => [l.artifactId, l.id]));
+      } catch {
+        // If we can't list LLDs, try treating the refs as UUIDs directly.
+      }
+
+      const next = new Map<string, PseudoFileRef>();
+      for (const ref of uniqueLldRefs) {
+        const dbId = humanIdToDbId.get(ref) ?? ref; // fall back to ref itself
+        try {
+          const files = await listPseudoFilesByArtifact(dbId);
+          for (const f of files) next.set(f.id, buildFileRef(f));
+        } catch {
+          // Non-fatal — missing LLD just means UUIDs stay unresolved.
+        }
+      }
+      if (!cancelled) setPseudoFileMap(next);
+    })();
+    return () => { cancelled = true; };
+  }, [uniqueLldRefs, moduleDbId]);
+
+  const resolveFiles = useCallback((ids: string[]): PseudoFileRef[] => {
+    return ids.map((id) => pseudoFileMap.get(id) ?? {
+      id, path: id, basename: id.slice(0, 8) + '…', isTestFile: false,
+    });
+  }, [pseudoFileMap]);
 
   // Group TCs by scenarioGroup, then within each group split into positive/negative/edge.
   const grouped = useMemo(() => {
@@ -604,7 +690,6 @@ function FtcPreview({ testCases }: { testCases: BaTestCase[] }) {
             </div>
             {[...bucket.positive, ...bucket.negative, ...bucket.edge].map((tc) => {
               const isOpen = open === tc.id;
-              const display = tc.isHumanModified && tc.editedContent ? tc.editedContent : tc.aiContent;
               return (
                 <div key={tc.id} className="rounded-md border border-border">
                   <button
@@ -664,8 +749,8 @@ function FtcPreview({ testCases }: { testCases: BaTestCase[] }) {
                     <span className="text-[10px] text-muted-foreground shrink-0">{isOpen ? '▼' : '▶'}</span>
                   </button>
                   {isOpen && (
-                    <div className="p-3 border-t border-border bg-muted/10 text-sm">
-                      <MarkdownRenderer content={display} />
+                    <div className="border-t border-border bg-muted/10">
+                      <TestCaseBody tc={tc} resolveFiles={resolveFiles} />
                     </div>
                   )}
                 </div>
@@ -675,5 +760,239 @@ function FtcPreview({ testCases }: { testCases: BaTestCase[] }) {
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Structured TC body (traceability table + test-execution sections) ──────
+
+function TestCaseBody({
+  tc,
+  resolveFiles,
+}: {
+  tc: BaTestCase;
+  resolveFiles: (ids: string[]) => PseudoFileRef[];
+}) {
+  const allFiles = resolveFiles(tc.linkedPseudoFileIds ?? []);
+  const prodFiles = allFiles.filter((f) => !f.isTestFile);
+  const testFiles = allFiles.filter((f) => f.isTestFile);
+  const subtasks = tc.linkedSubtaskIds ?? [];
+  const subtaskRows = subtasks.length > 0 ? subtasks : [null]; // keep one row when no subtasks linked
+  const collapseSubtasks = subtaskRows.length > 6;
+  const subtaskCell = collapseSubtasks
+    ? [`${subtaskRows.length} SubTasks linked (hover to view)`]
+    : subtaskRows;
+
+  // Use edited content when present; otherwise fall back to the AI-generated
+  // fields. The raw aiContent is preserved in DB for audit + CSV export but
+  // hidden from the UI here.
+  return (
+    <div className="p-3 space-y-4 text-sm">
+      {/* ─── Traceability table ─── */}
+      <section>
+        <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+          Traceability
+        </h4>
+        <div className="rounded-md border border-border overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead className="bg-muted/40 text-left text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 font-semibold">FRD Feature</th>
+                <th className="px-2 py-1.5 font-semibold">EPIC</th>
+                <th className="px-2 py-1.5 font-semibold">User Story</th>
+                <th className="px-2 py-1.5 font-semibold">SubTask</th>
+                <th className="px-2 py-1.5 font-semibold">Class / File</th>
+                <th className="px-2 py-1.5 font-semibold">Test File</th>
+                <th className="px-2 py-1.5 font-semibold">LLD Version</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subtaskCell.map((st, i) => (
+                <tr key={st ?? `empty-${i}`} className="border-t border-border/50 align-top">
+                  {i === 0 && (
+                    <>
+                      <td rowSpan={subtaskCell.length} className="px-2 py-1.5 font-mono text-primary align-top">
+                        {(tc.linkedFeatureIds ?? []).join(', ') || '—'}
+                      </td>
+                      <td rowSpan={subtaskCell.length} className="px-2 py-1.5 font-mono align-top">
+                        {(tc.linkedEpicIds ?? []).join(', ') || '—'}
+                      </td>
+                      <td rowSpan={subtaskCell.length} className="px-2 py-1.5 font-mono align-top">
+                        {(tc.linkedStoryIds ?? []).join(', ') || '—'}
+                      </td>
+                    </>
+                  )}
+                  <td
+                    className="px-2 py-1.5 font-mono text-[11px]"
+                    title={collapseSubtasks ? subtasks.join('\n') : undefined}
+                  >
+                    {st ?? '—'}
+                  </td>
+                  {i === 0 && (
+                    <>
+                      <td rowSpan={subtaskCell.length} className="px-2 py-1.5 align-top">
+                        <FileList files={prodFiles} icon="code" emptyLabel="—" />
+                      </td>
+                      <td rowSpan={subtaskCell.length} className="px-2 py-1.5 align-top">
+                        <FileList files={testFiles} icon="flask" emptyLabel="—" />
+                      </td>
+                      <td rowSpan={subtaskCell.length} className="px-2 py-1.5 align-top">
+                        {tc.linkedLldArtifactId ? (
+                          <span className="inline-flex items-center bg-muted/60 text-muted-foreground px-1.5 py-0.5 rounded font-mono text-[10px]">
+                            {tc.linkedLldArtifactId}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {prodFiles.length > 0 && (
+          <p className="text-[10px] text-muted-foreground mt-1 italic">
+            Files cover all subtasks above — per-subtask file mapping is not tracked (one list applies to the whole TC).
+          </p>
+        )}
+      </section>
+
+      {/* ─── Tags + supportingDocs strip ─── */}
+      {((tc.tags?.length ?? 0) > 0 || (tc.supportingDocs?.length ?? 0) > 0) && (
+        <section className="flex items-center gap-3 flex-wrap text-[11px]">
+          {(tc.tags?.length ?? 0) > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-muted-foreground font-semibold">Tags:</span>
+              {tc.tags!.map((t) => (
+                <span key={t} className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-mono">{t}</span>
+              ))}
+            </div>
+          )}
+          {(tc.supportingDocs?.length ?? 0) > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-muted-foreground font-semibold">Docs:</span>
+              {tc.supportingDocs!.map((d) => (
+                <span key={d} className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{d}</span>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ─── Test execution sections ─── */}
+      {tc.testData && (
+        <Section title="Test Data">
+          <pre className="bg-muted/40 border border-border/60 rounded px-3 py-2 text-xs font-mono whitespace-pre-wrap">{tc.testData}</pre>
+        </Section>
+      )}
+      {tc.preconditions && (
+        <Section title="Pre Condition">
+          <MarkdownRenderer content={tc.preconditions} />
+        </Section>
+      )}
+      {tc.e2eFlow && (
+        <Section title="E2E Flow">
+          <div className="bg-primary/5 border border-primary/20 rounded px-3 py-1.5 text-xs font-mono text-primary">
+            {tc.e2eFlow}
+          </div>
+        </Section>
+      )}
+      {tc.steps && (
+        <Section title="Test Steps">
+          <div className="text-sm">
+            <MarkdownRenderer content={tc.steps} />
+          </div>
+        </Section>
+      )}
+      {tc.expected && (
+        <Section title="Expected">
+          <MarkdownRenderer content={tc.expected} />
+        </Section>
+      )}
+      {tc.postValidation && (
+        <Section title="Post Validation">
+          <MarkdownRenderer content={tc.postValidation} />
+        </Section>
+      )}
+
+      {/* ─── Collapsible deep detail (SQL, hints) ─── */}
+      {(tc.sqlSetup || tc.sqlVerify) && (
+        <Collapsible title={`SQL (${[tc.sqlSetup ? 'setup' : null, tc.sqlVerify ? 'verify' : null].filter(Boolean).join(' + ')})`}>
+          {tc.sqlSetup && (
+            <div className="mb-2">
+              <p className="text-[11px] font-semibold text-muted-foreground mb-1">Setup</p>
+              <pre className="bg-muted/40 border border-border/60 rounded px-3 py-2 text-xs font-mono whitespace-pre-wrap overflow-x-auto">{tc.sqlSetup}</pre>
+            </div>
+          )}
+          {tc.sqlVerify && (
+            <div>
+              <p className="text-[11px] font-semibold text-muted-foreground mb-1">Verify</p>
+              <pre className="bg-muted/40 border border-border/60 rounded px-3 py-2 text-xs font-mono whitespace-pre-wrap overflow-x-auto">{tc.sqlVerify}</pre>
+            </div>
+          )}
+        </Collapsible>
+      )}
+      {tc.playwrightHint && (
+        <Collapsible title="Framework Hint">
+          <pre className="bg-muted/40 border border-border/60 rounded px-3 py-2 text-xs font-mono whitespace-pre-wrap overflow-x-auto">{tc.playwrightHint}</pre>
+        </Collapsible>
+      )}
+      {tc.developerHints && (
+        <p className="text-[11px] text-muted-foreground italic border-t border-border/40 pt-2">
+          <span className="font-semibold">Developer hints:</span> {tc.developerHints}
+        </p>
+      )}
+
+      {/* ─── v2 placeholder: Execution history ─── */}
+      <div className="border-t border-dashed border-border pt-3 mt-3">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <History className="h-3.5 w-3.5" />
+          <span className="font-semibold">Execution history</span>
+          <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded text-[9px] font-bold">V2</span>
+          <span className="italic">— test runs, defect capture, AI + tester RCA land in Phase 2a.</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h5 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">{title}</h5>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+function Collapsible({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="rounded-md border border-border/60">
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[11px] font-semibold text-muted-foreground hover:bg-muted/30"
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {title}
+      </button>
+      {open && <div className="px-3 pb-3">{children}</div>}
+    </section>
+  );
+}
+
+function FileList({ files, icon, emptyLabel }: { files: PseudoFileRef[]; icon: 'code' | 'flask'; emptyLabel: string }) {
+  if (files.length === 0) return <span className="text-muted-foreground">{emptyLabel}</span>;
+  const Icon = icon === 'flask' ? FlaskConical : FileCode;
+  return (
+    <ul className="space-y-0.5">
+      {files.map((f) => (
+        <li key={f.id} className="flex items-center gap-1.5 text-[11px]" title={f.path}>
+          <Icon className="h-3 w-3 text-muted-foreground shrink-0" />
+          <span className="font-mono text-primary truncate">{f.basename}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
