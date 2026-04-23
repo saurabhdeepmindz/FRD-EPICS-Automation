@@ -775,7 +775,7 @@ export async function reseedMasterDataCategory(
 ): Promise<{ category: BaMasterDataCategory; seeded: number }> {
   const { data } = await api.post<{ category: BaMasterDataCategory; seeded: number }>(
     '/ba/master-data/reseed',
-    null,
+    {},
     { params: { category } },
   );
   return data;
@@ -938,7 +938,7 @@ export async function saveLldConfig(moduleDbId: string, payload: Partial<Omit<Ba
 export async function generateLld(moduleDbId: string): Promise<{ executionId: string; skill: string; status: string }> {
   const { data } = await api.post<{ executionId: string; skill: string; status: string }>(
     `/ba/modules/${moduleDbId}/generate-lld`,
-    null,
+    {},
     { timeout: 10_000 },
   );
   return data;
@@ -972,7 +972,7 @@ export async function deleteLldAttachment(moduleDbId: string, attachmentId: stri
 export async function lldGapCheck(moduleDbId: string): Promise<{ gaps: BaLldGap[]; model: string }> {
   const { data } = await api.post<{ gaps: BaLldGap[]; model: string }>(
     `/ba/modules/${moduleDbId}/lld/gap-check`,
-    null,
+    {},
     { timeout: 120_000 },
   );
   return data;
@@ -1146,7 +1146,7 @@ export async function saveFtcConfig(
 export async function generateFtc(moduleDbId: string): Promise<{ executionId: string; skill: string; status: string }> {
   const { data } = await api.post<{ executionId: string; skill: string; status: string }>(
     `/ba/modules/${moduleDbId}/generate-ftc`,
-    null,
+    {},
     { timeout: 10_000 },
   );
   return data;
@@ -1204,7 +1204,7 @@ export async function deleteFtcAttachment(moduleDbId: string, attachmentId: stri
 export async function ftcGapCheck(moduleDbId: string): Promise<{ gaps: BaLldGap[]; model: string }> {
   const { data } = await api.post<{ gaps: BaLldGap[]; model: string }>(
     `/ba/modules/${moduleDbId}/ftc/gap-check`,
-    null,
+    {},
     { timeout: 120_000 },
   );
   return data;
