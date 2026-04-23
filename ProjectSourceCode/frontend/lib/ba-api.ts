@@ -1219,6 +1219,182 @@ export async function analyzeAcCoverage(artifactDbId: string): Promise<AcCoverag
   return data;
 }
 
+// ─── Phase 2a — Execution tracking + defects + RCA ────────────────────────
+
+export interface BaTestRun {
+  id: string;
+  testCaseId: string;
+  sprintId: string | null;
+  executor: string | null;
+  executedAt: string;
+  status: 'PASS' | 'FAIL' | 'BLOCKED' | 'SKIPPED';
+  notes: string | null;
+  durationSec: number | null;
+  environment: string | null;
+  deletedAt: string | null;
+  defects?: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    status: string;
+    externalRef?: string | null;
+  }>;
+  testCase?: { id: string; testCaseId: string; title: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DefectSeverity = 'P0' | 'P1' | 'P2' | 'P3';
+export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'FIXED' | 'VERIFIED' | 'CLOSED' | 'WONT_FIX';
+
+export interface BaDefectAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  extractionNote: string | null;
+  storageBackend: string;
+  createdAt: string;
+}
+
+export interface BaRcaRow {
+  id: string;
+  defectId: string;
+  source: 'AI' | 'TESTER';
+  rootCause: string;
+  contributingFactors: string[];
+  proposedFix: string | null;
+  confidence: number | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BaDefect {
+  id: string;
+  testCaseId: string;
+  firstSeenRunId: string | null;
+  externalRef: string | null;
+  title: string;
+  description: string | null;
+  severity: DefectSeverity;
+  status: DefectStatus;
+  reproductionSteps: string | null;
+  environment: string | null;
+  reportedBy: string | null;
+  reportedAt: string;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  attachments?: BaDefectAttachment[];
+  rcas?: BaRcaRow[];
+  testCase?: { id: string; testCaseId: string; title: string; artifactDbId: string };
+}
+
+export interface CreateTestRunPayload {
+  status: BaTestRun['status'];
+  notes?: string | null;
+  executor?: string | null;
+  durationSec?: number | null;
+  environment?: string | null;
+  sprintId?: string | null;
+  defect?: {
+    title: string;
+    description?: string | null;
+    severity?: DefectSeverity | null;
+    externalRef?: string | null;
+    reproductionSteps?: string | null;
+    reportedBy?: string | null;
+  } | null;
+}
+
+// ── Runs
+
+export async function createTestRun(
+  testCaseId: string,
+  payload: CreateTestRunPayload,
+): Promise<{ run: BaTestRun; defectId: string | null }> {
+  const { data } = await api.post<{ run: BaTestRun; defectId: string | null }>(
+    `/ba/test-cases/${testCaseId}/runs`,
+    payload,
+    { timeout: 30_000 },
+  );
+  return data;
+}
+
+export async function listTestRunsForTc(testCaseId: string): Promise<BaTestRun[]> {
+  const { data } = await api.get<BaTestRun[]>(`/ba/test-cases/${testCaseId}/runs`);
+  return data;
+}
+
+export async function deleteTestRun(runId: string): Promise<{ deleted?: string; alreadyDeleted?: boolean }> {
+  const { data } = await api.delete<{ deleted?: string; alreadyDeleted?: boolean }>(`/ba/runs/${runId}`);
+  return data;
+}
+
+// ── Defects
+
+export async function listDefectsForTc(testCaseId: string): Promise<BaDefect[]> {
+  const { data } = await api.get<BaDefect[]>(`/ba/test-cases/${testCaseId}/defects`);
+  return data;
+}
+
+export async function getDefect(defectId: string): Promise<BaDefect> {
+  const { data } = await api.get<BaDefect>(`/ba/defects/${defectId}`);
+  return data;
+}
+
+export async function updateDefect(
+  defectId: string,
+  payload: Partial<Pick<BaDefect, 'title' | 'description' | 'severity' | 'status' | 'reproductionSteps' | 'externalRef' | 'environment'>>,
+): Promise<BaDefect> {
+  const { data } = await api.patch<BaDefect>(`/ba/defects/${defectId}`, payload);
+  return data;
+}
+
+export async function uploadDefectAttachments(
+  defectId: string,
+  files: File[],
+): Promise<{ created: Array<{ id: string; fileName: string; sizeBytes: number }>; attachments: BaDefectAttachment[] }> {
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  const { data } = await api.post(
+    `/ba/defects/${defectId}/attachments`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+  );
+  return data;
+}
+
+export async function deleteDefectAttachment(defectId: string, attachmentId: string): Promise<{ deleted: string }> {
+  const { data } = await api.delete<{ deleted: string }>(`/ba/defects/${defectId}/attachments/${attachmentId}`);
+  return data;
+}
+
+// ── RCA
+
+export async function listRcasForDefect(defectId: string): Promise<BaRcaRow[]> {
+  const { data } = await api.get<BaRcaRow[]>(`/ba/defects/${defectId}/rca`);
+  return data;
+}
+
+export async function analyzeDefectWithAi(defectId: string): Promise<{ rca: BaRcaRow; classification: string }> {
+  const { data } = await api.post<{ rca: BaRcaRow; classification: string }>(
+    `/ba/defects/${defectId}/rca/analyze`,
+    {},
+    { timeout: 120_000 },
+  );
+  return data;
+}
+
+export async function saveTesterRca(
+  defectId: string,
+  payload: { rootCause: string; contributingFactors?: string[]; proposedFix?: string | null; createdBy?: string | null },
+): Promise<BaRcaRow> {
+  const { data } = await api.post<BaRcaRow>(`/ba/defects/${defectId}/rca`, payload);
+  return data;
+}
+
 // FTC narrative + attachments + gap-check (reuses the shared shapes)
 
 export async function listFtcAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {

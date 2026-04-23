@@ -9,7 +9,8 @@ import {
   type BaPseudoFile,
   type BaTestCase,
 } from '@/lib/ba-api';
-import { ChevronDown, ChevronRight, FileCode, FlaskConical, History } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileCode, FlaskConical } from 'lucide-react';
+import { ExecutionHistoryPanel } from './ExecutionHistoryPanel';
 
 /**
  * Shared, structured per-test-case display used by:
@@ -284,14 +285,9 @@ export function TestCaseBody({
         </p>
       )}
 
-      {/* ─── v2 placeholder: Execution history ─── */}
-      <div className="border-t border-dashed border-border pt-3 mt-3">
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <History className="h-3.5 w-3.5" />
-          <span className="font-semibold">Execution history</span>
-          <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded text-[9px] font-bold">V2</span>
-          <span className="italic">— test runs, defect capture, AI + tester RCA land in Phase 2a.</span>
-        </div>
+      {/* ─── Execution history (Phase 2a) ─── */}
+      <div className="mt-3">
+        <ExecutionHistoryPanel testCaseId={tc.id} testCaseRef={tc.testCaseId} />
       </div>
     </div>
   );

@@ -862,6 +862,148 @@ async def ba_ac_coverage_check(
     return AcCoverageCheckResponse(results=results, model=settings.OPENAI_MODEL, summary=summary)
 
 
+# ─── BA Tool: RCA Analyzer (Phase 2a) ───────────────────────────────────────
+
+class RcaAnalyzeRequest(BaseModel):
+    """Send everything the AI needs to hypothesize a root cause."""
+    defectTitle: str = Field(..., max_length=300)
+    defectDescription: str = Field(default="", max_length=4000)
+    reproductionSteps: str = Field(default="", max_length=4000)
+    environment: str | None = Field(default=None, max_length=100)
+    # Failing TC context
+    testCaseId: str = Field(..., max_length=100)
+    testCaseTitle: str = Field(..., max_length=500)
+    testCaseSteps: str = Field(default="", max_length=4000)
+    testCaseExpected: str = Field(default="", max_length=4000)
+    testCasePostValidation: str = Field(default="", max_length=4000)
+    testCasePlaywrightHint: str | None = Field(default=None, max_length=4000)
+    # Optional LLD context for code-level reasoning (bounded to keep prompt small)
+    lldContext: str = Field(default="", max_length=8000)
+    # Prior RCAs on the same defect — if any — so AI can refine or dissent
+    priorAiRca: str | None = Field(default=None, max_length=2000)
+    priorTesterRca: str | None = Field(default=None, max_length=2000)
+
+
+class RcaAnalyzeResponse(BaseModel):
+    rootCause: str
+    contributingFactors: list[str]
+    proposedFix: str
+    confidence: float           # 0.0 - 1.0
+    classification: str         # code_bug | test_bug | environment | flaky | data | unclear
+    model: str
+
+
+RCA_SYSTEM_PROMPT = """You are a senior software engineer performing Root Cause Analysis on a
+failed test. Your job is to produce a crisp, actionable RCA — not a narrative essay.
+
+Classify the failure into one of these bins:
+- code_bug        — the implementation under test has a real defect
+- test_bug        — the test assertion / setup is wrong; implementation is fine
+- environment     — infra / config / network / data setup issue outside the code
+- flaky           — timing / race / retry; intermittent but real
+- data            — test fixture or seed data mismatches what the test expects
+- unclear         — insufficient evidence; recommend what to gather next
+
+Output format (STRICT JSON only, no markdown fences):
+{
+  "rootCause":           "<1-2 sentence crisp statement of the single most likely cause>",
+  "contributingFactors": ["<factor 1>", "<factor 2>", ...],     // 0-5 bullets
+  "proposedFix":         "<1-3 sentence concrete fix, referencing file/class/method when LLD context is provided>",
+  "confidence":          0.0-1.0,
+  "classification":      "<one of the bins above>"
+}
+
+Rules:
+- Be specific. "Validation is missing" is bad; "AdminId validation is bypassed when email contains a '+' because the regex at SLABreachAlertService.py:42 rejects plus signs" is good.
+- When LLD context is supplied, quote the exact class/method/file in rootCause and proposedFix.
+- If priorAiRca is present, either REFINE it with new evidence OR DISSENT with a different hypothesis — don't just restate it.
+- If priorTesterRca is present, treat it as expert human input; disagree only with evidence.
+- Confidence: 0.9+ means you'd stake a review on this; 0.5-0.7 means "most likely but verify"; <0.5 means "speculative, gather more data".
+- NEVER hallucinate code. If you cite a file/class/method, it must appear in the LLD context or be referenced in the TC.
+- Output ONLY the JSON object. No preamble, no markdown fences, no explanation.
+"""
+
+
+@app.post("/ba/rca-analyze", response_model=RcaAnalyzeResponse, tags=["ba"])
+async def ba_rca_analyze(
+    body: RcaAnalyzeRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> RcaAnalyzeResponse:
+    # Compact prompt — include only what has signal
+    sections: list[str] = [
+        f"Defect title: {body.defectTitle}",
+    ]
+    if body.defectDescription.strip():
+        sections.append(f"Defect description:\n{body.defectDescription}")
+    if body.reproductionSteps.strip():
+        sections.append(f"Reproduction steps:\n{body.reproductionSteps}")
+    if body.environment:
+        sections.append(f"Environment: {body.environment}")
+    sections.append(
+        f"Failing test case: {body.testCaseId} — {body.testCaseTitle}\n"
+        f"Steps:\n{body.testCaseSteps}\n\n"
+        f"Expected:\n{body.testCaseExpected}\n\n"
+        f"Post-validation:\n{body.testCasePostValidation}"
+    )
+    if body.testCasePlaywrightHint:
+        sections.append(f"Automation hint:\n{body.testCasePlaywrightHint}")
+    if body.lldContext.strip():
+        sections.append(f"LLD / source context (truncated):\n{body.lldContext[:8000]}")
+    if body.priorAiRca:
+        sections.append(f"Prior AI RCA (refine or dissent):\n{body.priorAiRca}")
+    if body.priorTesterRca:
+        sections.append(f"Prior tester RCA (expert human input):\n{body.priorTesterRca}")
+
+    user_msg = "\n\n".join(sections)
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": RCA_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=1200,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+    except openai.OpenAIError as exc:
+        logger.error("RCA analyze error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"RCA analyze failed: {exc}") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("RCA analyze JSON parse failure: %s", raw[:500])
+        raise HTTPException(status_code=502, detail="AI returned malformed JSON") from exc
+
+    VALID_CLASS = {"code_bug", "test_bug", "environment", "flaky", "data", "unclear"}
+    classification = (parsed.get("classification") or "unclear").lower()
+    if classification not in VALID_CLASS:
+        classification = "unclear"
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    factors = parsed.get("contributingFactors") or []
+    if not isinstance(factors, list):
+        factors = [str(factors)]
+    factors = [str(f) for f in factors if str(f).strip()]
+
+    return RcaAnalyzeResponse(
+        rootCause=str(parsed.get("rootCause") or "").strip() or "Insufficient evidence to determine root cause.",
+        contributingFactors=factors,
+        proposedFix=str(parsed.get("proposedFix") or "").strip(),
+        confidence=confidence,
+        classification=classification,
+        model=settings.OPENAI_MODEL,
+    )
+
+
 class ExtractImageTextRequest(BaseModel):
     dataUrl: str = Field(..., description="data:<mime>;base64,<payload>")
 

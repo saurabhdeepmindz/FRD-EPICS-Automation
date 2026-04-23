@@ -707,10 +707,112 @@ model BaTestCase {
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
 
+  // v4.4 Phase 2a — denormalized latest-run FK for fast RTM/status queries.
+  // Updated by BaTestRunService whenever a new run is recorded.
+  latestRunId          String?
+
+  runs                 BaTestRun[]
+  defects              BaDefect[]
+
   @@unique([artifactDbId, testCaseId])
   @@index([artifactDbId])
   @@index([parentTestCaseId])
   @@map("ba_test_cases")
+}
+
+// ─── Phase 2a — Execution tracking + defects + RCA dual-track ──────────────
+
+// One row per execution of a test case. Multiple runs per TC across time /
+// sprints; `BaTestCase.latestRunId` caches the newest non-deleted one for
+// fast status queries.
+model BaTestRun {
+  id           String      @id @default(uuid())
+  testCaseId   String
+  testCase     BaTestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  sprintId     String?     // plain text for now (e.g. "Sprint 23"); Sprint entity comes in Phase 2b
+  executor     String?
+  executedAt   DateTime    @default(now())
+  status       String      // PASS | FAIL | BLOCKED | SKIPPED
+  notes        String?     @db.Text
+  durationSec  Int?
+  environment  String?     // staging / prod / uat / custom
+  deletedAt   DateTime?   // soft-delete
+  defects     BaDefect[]  @relation("DefectFirstSeenInRun")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([testCaseId, executedAt])
+  @@index([testCaseId, deletedAt])
+  @@map("ba_test_runs")
+}
+
+// Defects raised from failed runs. externalRef points at the authoritative
+// tracker (JIRA / Linear / GitHub issue); our internal fields capture the
+// tester's immediate notes. Status + severity enforce a light workflow.
+model BaDefect {
+  id                String               @id @default(uuid())
+  testCaseId        String
+  testCase          BaTestCase           @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  firstSeenRunId    String?
+  firstSeenRun      BaTestRun?           @relation("DefectFirstSeenInRun", fields: [firstSeenRunId], references: [id], onDelete: SetNull)
+  externalRef       String?              // JIRA / Linear / GitHub issue URL
+  title             String
+  description       String?              @db.Text
+  severity          String               @default("P2") // P0 | P1 | P2 | P3
+  status            String               @default("OPEN") // OPEN | IN_PROGRESS | FIXED | VERIFIED | CLOSED | WONT_FIX
+  reproductionSteps String?              @db.Text
+  environment       String?
+  reportedBy        String?
+  reportedAt        DateTime             @default(now())
+  closedAt          DateTime?
+  attachments       BaDefectAttachment[]
+  rcas              BaRca[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([testCaseId, status])
+  @@index([firstSeenRunId])
+  @@map("ba_defects")
+}
+
+// Defect evidence. Reuses the same pluggable `AttachmentStorage` used by
+// LLD + FTC narrative attachments — only metadata + optional extracted
+// text live in Postgres.
+model BaDefectAttachment {
+  id              String   @id @default(uuid())
+  defectId        String
+  defect          BaDefect @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageBackend  String
+  storageKey      String
+  extractedText   String?  @db.Text
+  extractionNote  String?
+  createdAt       DateTime @default(now())
+
+  @@index([defectId])
+  @@map("ba_defect_attachments")
+}
+
+// Dual-track Root Cause Analysis per defect. Multiple rows allowed so
+// revisions of either track are preserved (e.g. tester rejects AI's
+// hypothesis and writes their own; both stay on record).
+model BaRca {
+  id                  String   @id @default(uuid())
+  defectId            String
+  defect              BaDefect @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  source              String   // AI | TESTER
+  rootCause           String   @db.Text
+  contributingFactors String[] @default([])
+  proposedFix         String?  @db.Text
+  confidence          Float?   // 0.0 – 1.0 for AI; null for TESTER
+  createdBy           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([defectId, source])
+  @@map("ba_rcas")
 }
 
 // AC Coverage Verification — one row per acceptance criterion from an upstream
