@@ -122,13 +122,39 @@ export default function FtcWorkbenchPage() {
     return arr.includes(code) ? arr.filter((c) => c !== code) : [...arr, code];
   };
 
+  /**
+   * Extract a useful error message from anything that can be thrown in this
+   * page — axios errors (most common) surface the backend's actual message
+   * via `response.data.message`; plain Errors fall back to `.message`; and
+   * unknowns get a safe string coercion.
+   */
+  const extractErrorMessage = (err: unknown): string => {
+    const anyErr = err as {
+      response?: { status?: number; data?: unknown };
+      message?: string;
+    };
+    if (anyErr?.response) {
+      const status = anyErr.response.status ?? '???';
+      const data = anyErr.response.data;
+      if (typeof data === 'string') return `HTTP ${status}: ${data}`;
+      if (data && typeof data === 'object') {
+        const d = data as { message?: unknown; error?: string };
+        const msg = Array.isArray(d.message) ? d.message.join('; ') : d.message ?? d.error;
+        return msg ? `HTTP ${status}: ${String(msg)}` : `HTTP ${status}`;
+      }
+      return `HTTP ${status}`;
+    }
+    if (err instanceof Error) return err.message;
+    return String(err);
+  };
+
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
       await saveFtcConfig(moduleDbId, form as Partial<BaFtcConfig>);
       await load();
-    } catch {
-      alert('Save failed. Check backend.');
+    } catch (err: unknown) {
+      alert(`Save failed — ${extractErrorMessage(err)}`);
     } finally {
       setSaving(false);
     }
@@ -137,28 +163,48 @@ export default function FtcWorkbenchPage() {
   const handleGenerate = useCallback(async () => {
     setGenerating(true);
     try {
-      await saveFtcConfig(moduleDbId, form as Partial<BaFtcConfig>);
-      const { executionId } = await generateFtc(moduleDbId);
+      // Save config first so any dropdown/checkbox changes are captured.
+      try {
+        await saveFtcConfig(moduleDbId, form as Partial<BaFtcConfig>);
+      } catch (err: unknown) {
+        throw new Error(`Save config failed — ${extractErrorMessage(err)}`);
+      }
+
+      // Kick off generation. Returns RUNNING immediately with an execution id.
+      let executionId: string;
+      try {
+        const res = await generateFtc(moduleDbId);
+        executionId = res.executionId;
+      } catch (err: unknown) {
+        throw new Error(`Kick-off failed — ${extractErrorMessage(err)}`);
+      }
+
       alert(`FTC generation started (execution ${executionId}). This can take 2-5 min — the page will refresh automatically.`);
-      // Poll every 10s up to 10 min
+
+      // Poll every 10s up to 10 min. A new artifact id (different from what
+      // we currently have loaded) signals the run finished.
+      const priorArtifactId = ftc?.artifact?.id ?? null;
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 10_000));
-        const latest = await getFtc(moduleDbId);
-        if (latest.artifact) {
-          setFtc(latest);
-          const all = await listFtcsForModule(moduleDbId);
-          setAllFtcs(all);
-          setSelectedFtcId(latest.artifact.id);
-          break;
+        try {
+          const latest = await getFtc(moduleDbId);
+          if (latest.artifact && latest.artifact.id !== priorArtifactId) {
+            setFtc(latest);
+            const all = await listFtcsForModule(moduleDbId);
+            setAllFtcs(all);
+            setSelectedFtcId(latest.artifact.id);
+            break;
+          }
+        } catch {
+          // transient poll errors — keep trying
         }
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'unknown';
-      alert(`Generate failed: ${msg}`);
+      alert(`Generate failed: ${extractErrorMessage(err)}`);
     } finally {
       setGenerating(false);
     }
-  }, [moduleDbId, form]);
+  }, [moduleDbId, form, ftc]);
 
   const selectedFtc = useMemo(() => {
     if (!selectedFtcId) return ftc;
