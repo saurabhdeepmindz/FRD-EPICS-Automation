@@ -86,7 +86,16 @@ export class BaAcCoverageService {
       throw new NotFoundException(`Artifact ${ftcArtifactDbId} is not an FTC artifact`);
     }
 
-    const acs = this.extractUpstreamAcs(artifact.module.artifacts);
+    // SubTask ACs live in a separate table — pull them alongside artifact ACs.
+    const subtasks = await this.prisma.baSubTask.findMany({
+      where: { moduleDbId: artifact.moduleDbId },
+      include: { sections: { where: { sectionKey: 'acceptance_criteria' } } },
+    });
+
+    const acs = [
+      ...this.extractUpstreamAcs(artifact.module.artifacts),
+      ...this.extractSubtaskAcs(subtasks),
+    ];
     if (acs.length === 0) {
       this.logger.warn(`analyze: no upstream ACs found for artifact ${ftcArtifactDbId}`);
       return { rows: [], summary: { covered: 0, partial: 0, uncovered: 0, total: 0 }, model: null };
@@ -156,11 +165,26 @@ export class BaAcCoverageService {
   // ─── Upstream AC extraction ─────────────────────────────────────────────
 
   /**
-   * Best-effort extraction of acceptance criteria from EPIC / User Story /
-   * SubTask artifacts' markdown sections. Looks for "Acceptance Criteria"
-   * / "Definition of Done" section labels and splits into numbered bullets.
-   * Tolerant — produces the best-effort list; uncovered ACs in the result
-   * are meaningful signal even if the regex missed some.
+   * Extract acceptance criteria from EPIC / User Story / SubTask artifacts.
+   *
+   * Deliberately EXCLUDES FRD artifacts — FRD's "Output Checklist (Definition
+   * of Done)" is BA-process metadata ("RTM saved to path", "Handoff Packet
+   * produced") and is not user-facing testable behaviour.
+   *
+   * Extraction per artifact:
+   *   1. Pick a canonical sourceRef from the first embedded id in any section
+   *      label (e.g. "US-001 — ...", "EPIC-01", "ST-US001-BE-03"). Fall back
+   *      to the artifact's own artifactId when no embedded id is found.
+   *   2. Walk each section:
+   *        a. Sections labeled "Acceptance Criteria" → try Given/When/Then
+   *           splitter first, fall back to bullet splitter.
+   *        b. Sections labeled "Definition of Done" / "Done Criteria" →
+   *           bullet splitter.
+   *        c. Any section containing `**Given**` blocks inline → G/W/T
+   *           splitter on the whole section (covers EPIC ACs embedded
+   *           inside the "Section N — ..." EPIC body).
+   *        d. `### Acceptance Criteria` or `#### Acceptance Criteria`
+   *           sub-headings inside any section → bullets.
    */
   private extractUpstreamAcs(
     artifacts: Array<{ artifactType: string; artifactId: string; sections: Array<{ sectionLabel: string; content: string }> }>,
@@ -169,23 +193,147 @@ export class BaAcCoverageService {
     for (const a of artifacts) {
       const sourceType = this.mapArtifactType(a.artifactType);
       if (!sourceType) continue;
+
+      const canonicalRef = this.findFirstEmbeddedId(a.sections) ?? a.artifactId;
+      let idxAc = 0;
+      let idxDod = 0;
+
+      const pushAc = (rawText: string, prefix: 'AC' | 'DOD') => {
+        const cleaned = this.cleanAcText(rawText);
+        if (cleaned.length < 8) return;
+        const idx = prefix === 'AC' ? ++idxAc : ++idxDod;
+        acs.push({
+          acSource: `${canonicalRef}-${prefix}-${idx}`,
+          acSourceType: sourceType,
+          acText: cleaned.slice(0, 500),
+          sourceRef: canonicalRef,
+        });
+      };
+
       for (const section of a.sections) {
-        const label = section.sectionLabel.toLowerCase();
+        const label = section.sectionLabel;
+        const content = section.content;
         const isAc = /acceptance criter/i.test(label);
         const isDod = /definition of done|done criteria/i.test(label);
-        if (!isAc && !isDod) continue;
-        const prefix = isAc ? 'AC' : 'DOD';
 
-        const bullets = this.splitBullets(section.content);
-        bullets.forEach((bullet, idx) => {
-          acs.push({
-            acSource: `${a.artifactId}-${prefix}-${idx + 1}`,
-            acSourceType: sourceType,
-            acText: bullet.slice(0, 500),
-            sourceRef: a.artifactId,
-          });
-        });
+        // (a) AC-labelled section: prefer Given/When/Then, then bullets.
+        if (isAc) {
+          const gwt = this.splitGivenWhenThen(content);
+          if (gwt.length > 0) {
+            for (const item of gwt) pushAc(item, 'AC');
+          } else {
+            for (const item of this.splitBullets(content)) pushAc(item, 'AC');
+          }
+          continue;
+        }
+
+        // (b) DoD-labelled section: bullets only.
+        if (isDod) {
+          for (const item of this.splitBullets(content)) pushAc(item, 'DOD');
+          continue;
+        }
+
+        // (c) Section body contains Given/When/Then (EPIC body pattern).
+        if (/\*\*Given\*\*/i.test(content)) {
+          for (const item of this.splitGivenWhenThen(content)) pushAc(item, 'AC');
+        }
+
+        // (d) `### Acceptance Criteria` sub-heading inside a larger section.
+        const subRegex = /^###{1,2}\s+Acceptance Criter[^\n]*\n([\s\S]*?)(?=^###{1,2}\s|\Z)/gim;
+        let m: RegExpExecArray | null;
+        while ((m = subRegex.exec(content)) !== null) {
+          const gwt = this.splitGivenWhenThen(m[1]);
+          if (gwt.length > 0) {
+            for (const item of gwt) pushAc(item, 'AC');
+          } else {
+            for (const item of this.splitBullets(m[1])) pushAc(item, 'AC');
+          }
+        }
       }
+    }
+    return acs;
+  }
+
+  /**
+   * Extract ACs from SubTask `acceptance_criteria` sections (stored in the
+   * dedicated ba_subtask_sections table, distinct from ba_artifact_sections).
+   * Each SubTask's AC section is one or more bullets or a Given/When/Then
+   * block. Uses the subtask's subtaskId as canonical sourceRef so AC rows
+   * align with TC.linkedSubtaskIds.
+   */
+  private extractSubtaskAcs(
+    subtasks: Array<{ subtaskId: string; sections: Array<{ aiContent: string; editedContent: string | null }> }>,
+  ): AcInput[] {
+    const acs: AcInput[] = [];
+    for (const st of subtasks) {
+      const section = st.sections[0];
+      if (!section) continue;
+      const content = section.editedContent || section.aiContent || '';
+      if (!content.trim()) continue;
+
+      // Try Given/When/Then first, fall back to bullets.
+      let items = this.splitGivenWhenThen(content);
+      if (items.length === 0) items = this.splitBullets(content);
+
+      items.forEach((item, idx) => {
+        const cleaned = this.cleanAcText(item);
+        if (cleaned.length < 8) return;
+        acs.push({
+          acSource: `${st.subtaskId}-AC-${idx + 1}`,
+          acSourceType: 'SUBTASK',
+          acText: cleaned.slice(0, 500),
+          sourceRef: st.subtaskId,
+        });
+      });
+    }
+    return acs;
+  }
+
+  /**
+   * Pick the first embedded story / feature / epic / subtask id from any
+   * section label in an artifact. Used as the canonical sourceRef so AC rows
+   * align with TC linkedStoryIds / linkedSubtaskIds / linkedFeatureIds.
+   */
+  private findFirstEmbeddedId(sections: Array<{ sectionLabel: string }>): string | null {
+    for (const s of sections) {
+      const id = this.extractIdFromLabel(s.sectionLabel);
+      if (id) return id;
+    }
+    return null;
+  }
+
+  /** Find a structured id inside a section label. */
+  private extractIdFromLabel(label: string): string | null {
+    // ST-US001-BE-03, US-001, EPIC-01, F-01-06 — probe specific patterns in order.
+    const patterns = [
+      /\bST-US\d+-[A-Z]+-\d+\b/,
+      /\bUS-\d+\b/,
+      /\bEPIC-\d+\b/,
+      /\bF-\d{2}-\d{2}\b/,
+    ];
+    for (const re of patterns) {
+      const m = label.match(re);
+      if (m) return m[0];
+    }
+    return null;
+  }
+
+  /**
+   * Split a Given/When/Then block into individual ACs. Each AC starts at a
+   * `**Given**` marker and runs until the next `**Given**` (or end of input).
+   * Horizontal rules (`---`) between blocks are stripped.
+   */
+  private splitGivenWhenThen(content: string): string[] {
+    const acs: string[] = [];
+    const parts = content.split(/(?=\*\*Given\*\*)/i);
+    for (const part of parts) {
+      if (!/\*\*Given\*\*/i.test(part)) continue;
+      const cleaned = part
+        .replace(/^---\s*$/gm, '')
+        .replace(/\*\*(Given|When|Then|And)\*\*\s*/g, '$1 ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (cleaned.length >= 20) acs.push(cleaned);
     }
     return acs;
   }
@@ -195,7 +343,8 @@ export class BaAcCoverageService {
       case 'EPIC': return 'EPIC';
       case 'USER_STORY': return 'USER_STORY';
       case 'SUBTASK': return 'SUBTASK';
-      case 'FRD': return 'FEATURE';
+      // FRD DoD is BA-process metadata (saved-to paths, sign-off, RTM
+      // updates) — not testable software behaviour. Do NOT include.
       default: return null;
     }
   }
@@ -226,5 +375,13 @@ export class BaAcCoverageService {
     }
     flush();
     return bullets;
+  }
+
+  /** Strip markdown checkbox prefix `[x]` / `[ ]` and leading bullet chars. */
+  private cleanAcText(s: string): string {
+    return s
+      .replace(/^[\s\-*+]*\[[ xX]\]\s*/, '')
+      .replace(/^[\s\-*+]+/, '')
+      .trim();
   }
 }

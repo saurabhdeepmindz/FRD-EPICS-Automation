@@ -287,13 +287,17 @@ This section is the single source of truth for whether the test plan covers ever
 
 ### What goes in
 
-Extract every **acceptance criterion** from the context packet:
+Extract every **acceptance criterion** from the context packet that describes **testable software behaviour**:
 
-- From **`epicHandoffPacket`** — each EPIC's "Acceptance Criteria" section, each bullet is one AC.
-- From **`storyHandoffPacket` / `storiesDocument`** — each User Story's Given/When/Then acceptance criteria.
-- From **`subtaskHandoffPacket` / `subtasksDocument`** — each SubTask's Definition of Done bullets.
+- From **`epicHandoffPacket`** — each EPIC's "Acceptance Criteria" section, each Given/When/Then block or bullet is one AC.
+- From **`storyHandoffPacket` / `storiesDocument`** — each User Story's Given/When/Then acceptance criteria (one full G/W/T+And sequence = one AC).
+- From **`subtaskHandoffPacket` / `subtasksDocument`** — each SubTask's Definition of Done bullets that describe assertable behaviour (method contracts, validation rules, error responses). Skip generic "code reviewed" / "PR merged" DoD items.
 
-Number them per-source. E.g. `US-001 AC#1`, `US-001 AC#2`, `EPIC-01 AC#1`, `ST-US001-BE-03 DoD#2`.
+**Do NOT include**:
+- FRD "Output Checklist (Definition of Done)" bullets. These are BA-process metadata ("RTM saved to path", "Handoff packet produced", "Sign-off obtained") — NOT testable software behaviour. They must never appear in the AC Coverage matrix.
+- Any workflow/handoff DoD that describes what the BA automation itself does rather than what the system-under-test does.
+
+Number them per-source. E.g. `US-001-AC-1`, `US-001-AC-2`, `EPIC-01-AC-1`, `ST-US001-BE-03-DOD-2`.
 
 ### Output format (strict — one fenced block per AC)
 
