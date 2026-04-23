@@ -138,6 +138,17 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
       const showRawChildren =
         artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC';
 
+      // For FTC artifacts, hide the five sections whose content is now
+      // surfaced via the synthetic per-category tree groups. Their raw
+      // markdown view is strictly redundant with the structured drill-down.
+      const FTC_HIDDEN_SECTION_KEYS = new Set([
+        'test_cases_index',
+        'functional_test_cases',
+        'integration_test_cases',
+        'white_box_test_cases',
+        'test_case_appendix',
+      ]);
+
       return {
         artifact,
         label: formatArtifactLabel(artifact),
@@ -148,12 +159,16 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         epicSections,
         epicInternalSections,
         children: showRawChildren
-          ? artifact.sections.map((section) => ({
-              section,
-              label: section.sectionLabel,
-              isAi: section.aiGenerated && !section.isHumanModified,
-              isEdited: section.isHumanModified,
-            }))
+          ? artifact.sections
+              .filter((s) =>
+                artifact.artifactType !== 'FTC' || !FTC_HIDDEN_SECTION_KEYS.has(s.sectionKey),
+              )
+              .map((section) => ({
+                section,
+                label: section.sectionLabel,
+                isAi: section.aiGenerated && !section.isHumanModified,
+                isEdited: section.isHumanModified,
+              }))
           : [],
       };
     });
