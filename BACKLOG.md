@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `2e4008c feat(rtm): exec verdict column + filter`
+> **Last updated:** 2026-04-24 — after `17ec30d feat(dashboard): Test Execution Health tile`
 
 Priority scale:
 
@@ -19,8 +19,8 @@ Priority scale:
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| 1 | **Dashboard tile: "Test Execution Health"** | Module/project dashboard needs a PASS/FAIL/BLOCK roll-up. Without it, managers can't see where the red is. Uses existing `executionStatus` counts. | S (~1 h) |
-| 2 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
+| 1 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
+| 2 | **Open defect without a failing run** (from user Q) | Today the only way to open a defect is via a FAIL run. Add a standalone "Open Defect" button on each TC so you can log issues discovered outside a run. | S (~1 h) |
 
 ### P1 — High
 
@@ -119,6 +119,7 @@ Priority scale:
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **Dashboard tile: Test Execution Health** — pass-rate, stacked bar, PASS/FAIL/BLOCKED/SKIPPED/NOT_RUN pills, open-defect count (with P0/P1 callout), failing + blocked TC drill-downs (top 10 each with deep links to module), new endpoint `GET /api/ba/projects/:id/execution-health` (`17ec30d`)
 - ✅ 2026-04-24 — **RTM exec verdict column + filter** — per-row PASS/FAIL/BLOCKED/MIXED/NOT_RUN pill reading denormalized `BaTestCase.executionStatus`; new CSV columns (Pass/Fail/Blocked/Skipped/Not Run) (`2e4008c`)
 - ✅ 2026-04-24 — Monday integration scope locked + deferred (decision captured in F2 section above)
 - ✅ 2026-04-24 — **AI RCA now ingests attachment evidence** (logs, OCR'd screenshots, docs); per-file 2 KB cap, 8 KB total, system prompt updated to cite filenames (`38f054f`)
