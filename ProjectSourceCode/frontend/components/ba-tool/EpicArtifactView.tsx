@@ -74,6 +74,7 @@ export function EpicArtifactView({ artifact, activeSectionId, onUpdated }: EpicA
         <EpicSection
           key={section.id}
           sectionId={section.id}
+          dbSectionKey={section.dbSectionKey}
           title={section.label}
           content={section.content}
           highlight={section.highlight}
@@ -125,9 +126,16 @@ export function EpicArtifactView({ artifact, activeSectionId, onUpdated }: EpicA
 }
 
 function EpicSection({
-  sectionId, title, content, highlight, defaultCollapsed, isActive, artifact, onUpdated,
+  sectionId, dbSectionKey, title, content, highlight, defaultCollapsed, isActive, artifact, onUpdated,
 }: {
   sectionId: string;
+  /**
+   * Optional override — the real backing DB sectionKey when the parser
+   * matched a `section_N_label` row to the canonical `sectionId`. Without
+   * this, AiEditableSection's findSection fails to locate the row and the
+   * Save button is disabled as "no backing section".
+   */
+  dbSectionKey?: string;
   title: string;
   content: string;
   highlight?: boolean;
@@ -144,9 +152,15 @@ function EpicSection({
     if (isActive) setExpanded(true);
   }, [isActive]);
 
-  // Resolve the underlying BaArtifactSection for this EPIC sub-section
+  // Resolve the underlying BaArtifactSection for this EPIC sub-section. We
+  // try (1) the explicit dbSectionKey resolved by the parser, (2) sectionKey
+  // matching the canonical id, (3) label match on sectionLabel. The first
+  // two handle both new `section_N_label` rows and legacy `epic_*` blobs.
   const findSection = (sections: BaArtifact['sections']) => sections.find(
-    (s) => s.sectionKey === sectionId || s.sectionLabel.toLowerCase() === title.toLowerCase(),
+    (s) =>
+      (dbSectionKey !== undefined && s.sectionKey === dbSectionKey) ||
+      s.sectionKey === sectionId ||
+      s.sectionLabel.toLowerCase() === title.toLowerCase(),
   );
   const matched = findSection(artifact.sections);
   const isAi = Boolean(matched?.aiGenerated && !matched?.isHumanModified);

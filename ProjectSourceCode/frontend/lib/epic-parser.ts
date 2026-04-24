@@ -26,6 +26,13 @@ export interface EpicSectionDef {
   label: string;
   content: string;
   highlight?: boolean;
+  /**
+   * When the parser matches this canonical section to an underlying DB row
+   * (e.g. `section_5_key_actors`), this is the original sectionKey. The
+   * EpicArtifactView uses it to resolve the backing row for inline edit/save,
+   * so the Save button isn't disabled as "no backing section".
+   */
+  dbSectionKey?: string;
 }
 
 export interface ParsedEpicHeader {
@@ -120,21 +127,30 @@ export function parseEpicContent(sections: { sectionKey: string; content: string
   const structured: EpicSectionDef[] = [];
   for (const def of EPIC_SECTION_ORDER) {
     let content = '';
-    // (a) try the legacy `#### Heading` regex against the blob
+    let dbSectionKey: string | undefined;
+    // (a) try the legacy `#### Heading` regex against the blob — when we
+    // find a match this way, the underlying DB row IS the blob (`epic_*`).
     for (const label of def.labels) {
       content = extractBlock(label);
-      if (content) break;
+      if (content) {
+        dbSectionKey = epicSection?.sectionKey;
+        break;
+      }
     }
-    // (b) fall back to matching a DB section row by normalised key
+    // (b) fall back to matching a DB section row by normalised key — the
+    // matched row's key is the real backing sectionKey the editor needs.
     if (!content) {
       const found = findSectionByLabels(def.labels);
       if (found.content) {
         content = found.content;
-        if (found.key) handledKeys.add(found.key);
+        if (found.key) {
+          handledKeys.add(found.key);
+          dbSectionKey = found.key;
+        }
       }
     }
     if (content) {
-      structured.push({ id: def.id, label: def.label, content, highlight: def.highlight });
+      structured.push({ id: def.id, label: def.label, content, highlight: def.highlight, dbSectionKey });
     }
   }
 
