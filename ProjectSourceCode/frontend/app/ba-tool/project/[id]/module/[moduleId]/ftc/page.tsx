@@ -28,6 +28,7 @@ import {
   type AcCoverageBundle,
 } from '@/lib/ba-api';
 import { cn } from '@/lib/utils';
+import { pushToast } from '@/hooks/useToast';
 import { FtcNarrativeCard } from '@/components/ba-tool/FtcNarrativeCard';
 import { TestCaseBody, usePseudoFileResolver } from '@/components/ba-tool/TestCaseBody';
 
@@ -165,6 +166,11 @@ export default function FtcWorkbenchPage() {
   const handleSafeExport = useCallback(async () => {
     if (!ftc?.artifact) return;
     setExportingSafe(true);
+    const t = pushToast({
+      title: 'Re-verifying AC coverage + building ZIP…',
+      description: 'AC check usually takes 15–30s.',
+      variant: 'loading',
+    });
     try {
       const fresh = await reverifyAndExportPlaywright(
         ftc.artifact.id,
@@ -172,17 +178,16 @@ export default function FtcWorkbenchPage() {
       );
       setCoverage(fresh);
       const gaps = fresh.summary.uncovered + fresh.summary.partial;
-      if (gaps > 0) {
-        alert(
-          `Playwright suite exported.\n\n` +
-          `AC Coverage (fresh): ${fresh.summary.covered}/${fresh.summary.total} covered\n` +
-          `${fresh.summary.partial} partial · ${fresh.summary.uncovered} uncovered\n\n` +
-          `The ZIP reflects the current TCs; uncovered ACs have no automation yet.`,
-        );
-      }
+      t.update({
+        title: 'Playwright suite exported',
+        description: gaps > 0
+          ? `Coverage: ${fresh.summary.covered}/${fresh.summary.total} — ${fresh.summary.partial} partial, ${fresh.summary.uncovered} uncovered.`
+          : `All ${fresh.summary.total} ACs covered.`,
+        variant: gaps > 0 ? 'default' : 'success',
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'unknown';
-      alert(`Safe export failed: ${msg}`);
+      t.update({ title: 'Safe export failed', description: msg, variant: 'destructive' });
     } finally {
       setExportingSafe(false);
     }
@@ -330,7 +335,15 @@ export default function FtcWorkbenchPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => downloadFtcCsv(ftc.artifact!.id, `${ftc.artifact!.artifactId}.csv`).catch(() => alert('CSV export failed'))}
+                onClick={async () => {
+                  const t = pushToast({ title: 'Building CSV…', variant: 'loading' });
+                  try {
+                    await downloadFtcCsv(ftc.artifact!.id, `${ftc.artifact!.artifactId}.csv`);
+                    t.update({ title: 'CSV exported', description: 'Opened in your downloads folder.', variant: 'success' });
+                  } catch (err) {
+                    t.update({ title: 'CSV export failed', description: err instanceof Error ? err.message : 'unknown', variant: 'destructive' });
+                  }
+                }}
                 title="Export test cases as CSV matching the QA team template"
               >
                 <Download className="h-3.5 w-3.5 mr-1" />
@@ -351,7 +364,21 @@ export default function FtcWorkbenchPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => downloadPlaywrightZip(ftc.artifact!.id, `${ftc.artifact!.artifactId}-playwright.zip`).catch(() => alert('Playwright export failed'))}
+                      onClick={async () => {
+                        const t = pushToast({ title: 'Building Playwright ZIP…', variant: 'loading' });
+                        try {
+                          await downloadPlaywrightZip(ftc.artifact!.id, `${ftc.artifact!.artifactId}-playwright.zip`);
+                          t.update({
+                            title: 'Playwright suite exported',
+                            description: hasCoverage && gaps > 0
+                              ? `${gaps} AC gap(s) not yet covered — re-verify + export for a checked run.`
+                              : 'Check your downloads folder.',
+                            variant: hasCoverage && gaps > 0 ? 'default' : 'success',
+                          });
+                        } catch (err) {
+                          t.update({ title: 'Playwright export failed', description: err instanceof Error ? err.message : 'unknown', variant: 'destructive' });
+                        }
+                      }}
                       title={driftTooltip}
                       className="relative"
                     >

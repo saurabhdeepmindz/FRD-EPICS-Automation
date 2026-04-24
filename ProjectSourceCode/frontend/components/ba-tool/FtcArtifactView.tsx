@@ -19,6 +19,7 @@ import {
 } from '@/lib/ba-api';
 import { cn } from '@/lib/utils';
 import { CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw, Sparkles, User as UserIcon, Play, X } from 'lucide-react';
+import { pushToast } from '@/hooks/useToast';
 import { TestCaseBody, TestCaseAccordionHeader, usePseudoFileResolver } from './TestCaseBody';
 
 interface Props {
@@ -422,9 +423,13 @@ function BulkRunDialog({ selectedTcs, onClose, onSuccess }: BulkRunDialogProps) 
   const handleSubmit = async () => {
     setSubmitting(true);
     setError(null);
+    const t = pushToast({
+      title: `Recording ${selectedTcs.length} run${selectedTcs.length > 1 ? 's' : ''}…`,
+      variant: 'loading',
+    });
     try {
       const res = await bulkCreateTestRuns({
-        testCaseIds: selectedTcs.map((t) => t.id),
+        testCaseIds: selectedTcs.map((tc) => tc.id),
         status,
         executor: executor.trim() || null,
         environment: environment.trim() || null,
@@ -432,16 +437,22 @@ function BulkRunDialog({ selectedTcs, onClose, onSuccess }: BulkRunDialogProps) 
         notes: notes.trim() || null,
       });
       if (res.created === 0) {
+        t.update({ title: 'No runs recorded', description: 'Check server logs.', variant: 'destructive' });
         setError('No runs were created. Check server logs.');
       } else {
-        if (res.missingCount > 0) {
-          alert(`Recorded ${res.created} runs. ${res.missingCount} TC(s) were not found and skipped.`);
-        }
+        t.update({
+          title: `Recorded ${res.created} run${res.created > 1 ? 's' : ''}`,
+          description: res.missingCount > 0
+            ? `${res.missingCount} TC(s) were not found and were skipped.`
+            : `Status: ${status}${sprintDbId ? ' · sprint linked' : ''}`,
+          variant: 'success',
+        });
         await onSuccess();
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       setError(msg);
+      t.update({ title: 'Bulk record run failed', description: msg, variant: 'destructive' });
     } finally {
       setSubmitting(false);
     }
@@ -591,13 +602,21 @@ function AcCoverageCard({ artifactDbId }: { artifactDbId: string }) {
 
   const handleReverify = useCallback(async () => {
     setAnalyzing(true);
+    const t = pushToast({ title: 'Re-verifying AC coverage…', description: 'Usually takes 15–30s.', variant: 'loading' });
     try {
       const res = await analyzeAcCoverage(artifactDbId);
       setBundle(res);
       setExpanded(true);
+      const gaps = res.summary.uncovered + res.summary.partial;
+      t.update({
+        title: 'AC coverage re-verified',
+        description: `${res.summary.covered}/${res.summary.total} covered` +
+          (gaps > 0 ? ` — ${res.summary.partial} partial, ${res.summary.uncovered} uncovered.` : ' — all covered.'),
+        variant: gaps > 0 ? 'default' : 'success',
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'unknown';
-      alert(`Re-verify failed: ${msg}`);
+      t.update({ title: 'Re-verify failed', description: msg, variant: 'destructive' });
     } finally {
       setAnalyzing(false);
     }

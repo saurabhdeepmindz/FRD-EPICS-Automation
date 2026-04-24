@@ -33,6 +33,7 @@ import {
   type LldArtifactSummary,
   type FuzzyMatchCandidate,
 } from '@/lib/ba-api';
+import { pushToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 import { MarkdownRenderer } from '@/components/ba-tool/MarkdownRenderer';
 import { LldNarrativeCard } from '@/components/ba-tool/LldNarrativeCard';
@@ -231,10 +232,15 @@ export default function LldConfiguratorPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => {
+                onClick={async () => {
                   const artifactId = lld?.artifact?.artifactId ?? 'lld';
-                  downloadUnitTestsZip(lldArtifactId, `${artifactId}-unit-tests.zip`)
-                    .catch((err) => alert(`Unit test export failed: ${err instanceof Error ? err.message : 'unknown'}`));
+                  const t = pushToast({ title: 'Building unit-test ZIP…', variant: 'loading' });
+                  try {
+                    await downloadUnitTestsZip(lldArtifactId, `${artifactId}-unit-tests.zip`);
+                    t.update({ title: 'Unit tests exported', description: 'Check your downloads folder.', variant: 'success' });
+                  } catch (err) {
+                    t.update({ title: 'Unit test export failed', description: err instanceof Error ? err.message : 'unknown', variant: 'destructive' });
+                  }
                 }}
                 title="Generate runnable unit-test scaffolds (pytest / Jest / JUnit) from this LLD's pseudo-code files. Every test starts red; turns green as you implement."
               >
@@ -244,10 +250,15 @@ export default function LldConfiguratorPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => {
+                onClick={async () => {
                   const artifactId = lld?.artifact?.artifactId ?? 'lld';
-                  downloadContractTestsZip(lldArtifactId, `${artifactId}-contract-tests.zip`)
-                    .catch((err) => alert(`Contract test export failed: ${err instanceof Error ? err.message : 'unknown'}`));
+                  const t = pushToast({ title: 'Building contract-test ZIP…', variant: 'loading' });
+                  try {
+                    await downloadContractTestsZip(lldArtifactId, `${artifactId}-contract-tests.zip`);
+                    t.update({ title: 'Contract tests exported', description: 'Check UNRESOLVED_CONTRACTS.md inside the ZIP for any orphan consumers.', variant: 'success' });
+                  } catch (err) {
+                    t.update({ title: 'Contract test export failed', description: err instanceof Error ? err.message : 'unknown', variant: 'destructive' });
+                  }
                 }}
                 title="Detect provider + consumer HTTP endpoints in this LLD and emit contract-test scaffolds (Jest+msw, pytest+respx) plus an OpenAPI stub. Flags orphan consumers that lack a provider."
               >
