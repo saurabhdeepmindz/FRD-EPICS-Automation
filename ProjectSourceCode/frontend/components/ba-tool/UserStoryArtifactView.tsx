@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type BaArtifact } from '@/lib/ba-api';
 import { ChevronDown, ChevronUp, AlertTriangle, BookOpen, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -402,6 +402,11 @@ function FeatureStoryGroup({
 }) {
   const anyActive = rows.some((r) => activeStorySection === r.section.sectionKey);
   const [expanded, setExpanded] = useState(anyActive);
+  // React to tree-click changes after mount — without this, clicking a
+  // different story in a collapsed group wouldn't re-open the group.
+  useEffect(() => {
+    if (anyActive) setExpanded(true);
+  }, [anyActive, activeStorySection]);
   return (
     <div className="rounded-lg border border-border bg-card">
       <button
@@ -445,6 +450,17 @@ function StoryRow({
   onUpdated?: () => void;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
+  // Re-open when the tree re-selects this story after mount. Also scrolls
+  // the card into view so the content appears on the right without manual
+  // scrolling.
+  useEffect(() => {
+    if (defaultOpen) {
+      setOpen(true);
+      const usId = `US-${String(usNumber).padStart(3, '0')}`;
+      const el = typeof document !== 'undefined' ? document.getElementById(`story-${usId}`) : null;
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [defaultOpen, usNumber]);
   const content = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
   const titleFromLabel = section.sectionLabel && /—|\-\s/.test(section.sectionLabel) ? section.sectionLabel : null;
   const firstHeading = content.match(/#{1,2}\s*User Story:?\s*(US-\d+[^\n]*)/i);
