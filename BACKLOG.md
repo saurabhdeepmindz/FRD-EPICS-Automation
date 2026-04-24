@@ -1,17 +1,21 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `38f054f feat(rca): evidence attachments into AI RCA prompt`
+> **Last updated:** 2026-04-24 — after scope call (defer Enterprise + non-Playwright Codegen + Monday integration)
 
 Priority scale:
+
 - **P0** — Top (do next, blocks or degrades the flow we already shipped)
 - **P1** — High (visible gap users will hit within a week)
-- **P2** — Medium (quality-of-life, enterprise readiness)
+- **P2** — Medium (quality-of-life, active scope)
 - **P3** — Low (nice-to-have, polish)
+- **DEFERRED** — Scope-locked items parked for a future sprint (specs preserved so we can resume without re-designing)
 
 ---
 
-## P0 — Do Next
+## Active Lane — what we're working through
+
+### P0 — Do Next
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
@@ -19,7 +23,7 @@ Priority scale:
 | 2 | **Dashboard tile: "Test Execution Health"** | Module/project dashboard needs a PASS/FAIL/BLOCK roll-up. Without it, managers can't see where the red is. Uses existing `executionStatus` counts. | S (~1 h) |
 | 3 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
 
-## P1 — High
+### P1 — High
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
@@ -28,42 +32,16 @@ Priority scale:
 | B3 | Sprint burndown chart on dashboard | Depends on B1 + run history. | M |
 | B4 | Filter runs/defects by sprint in RTM and FTC views | Depends on B1. | S |
 | F1 | **Defect list page** (`/ba/project/[id]/defects`) with filters (status/severity/sprint/assignee) | We can open defects but have no global view. | M |
-| F2 | **Open defects in Jira/Azure DevOps** via webhook/REST | `externalRef` exists but is manual paste. Auto-push is the killer feature. | L |
 | F3 | **Re-run Playwright export with one click** — ZIP download currently is static; wire it to re-generate after AC changes | AC Coverage verifier already detects drift; wire it in. | S |
 
-## P2 — Medium (Enterprise Readiness)
-
-| # | Item | Why | Effort |
-|---|------|-----|--------|
-| E1 | Multi-tenant isolation (`tenantId` column on all BA_* tables, middleware filter) | Required before any second customer. | L |
-| E2 | RBAC — roles (BA, Dev, QA, Manager) + per-project ACLs | Today anyone can edit anything. | L |
-| E3 | Audit log (`ba_audit_log` table; who changed what when) | Compliance requirement; also helps debugging. | M |
-| E4 | SSO (SAML/OIDC) via `next-auth` | Enterprise customers won't use email/password. | M |
-| E5 | Rate limiting on AI endpoints (per-user + per-project quotas) | Today one user can drain OpenAI budget. | S |
-| E6 | Observability — OpenTelemetry traces on Nest + Next; Prometheus metrics | Hard to debug prod issues without. | M |
-| E7 | Backup/restore of attachments storage | Disk storage has no backup strategy. | S |
-| E8 | GDPR — user data export + delete endpoints | Legal requirement in EU. | M |
-
-## P2 — Codegen (non-Playwright)
-
-| # | Item | Why | Effort |
-|---|------|-----|--------|
-| C1 | **Cypress** codegen template (alongside Playwright) | Many teams mandate Cypress. | M |
-| C2 | **Selenium + Java** codegen | Enterprise standard. | M |
-| C3 | **WebdriverIO** codegen | Some teams prefer it for mobile web. | M |
-| C4 | **Appium** (mobile native) codegen | Different paradigm, separate template set. | L |
-| C5 | **RestAssured / Postman collection** for API-only TCs | API TCs don't need a browser. | M |
-| C6 | **k6 / JMeter** codegen for performance TCs | Perf TCs are in the template but have no runnable artifact yet. | M |
-| C7 | **Pact** contract tests between services | Nice for microservice projects. | L |
-
-## P2 — TDD Codegen
+### P2 — TDD Codegen (active)
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
 | D1 | **Unit-test scaffolds (Jest/Pytest)** derived from pseudo-code functions | Gives devs a failing test on day 1. Closes the loop FRD→EPIC→US→SubTask→LLD→**UnitTest**→FTC. | L |
 | D2 | **Contract-test codegen** between service layers identified in LLD | Catches integration breakage early. | L |
 
-## P3 — UX Polish
+### P3 — UX Polish
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
@@ -74,7 +52,7 @@ Priority scale:
 | UX5 | Toast notifications for long-running ops (export ZIP, AI generate) | Currently silent until done. | S |
 | UX6 | A11y audit — ARIA labels, keyboard nav, focus order | We haven't checked; likely many misses. | M |
 
-## P3 — Docs
+### P3 — Docs
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
@@ -84,7 +62,7 @@ Priority scale:
 | G4 | Architecture diagrams refresh — Phase 2a added 4 new tables | Goes in `sprints/v?/WALKTHROUGH.md`. | S |
 | G5 | Video tutorial (5 min end-to-end) | Sales / demo. | M |
 
-## P3 — Security Hardening
+### P3 — Security Hardening
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
@@ -95,8 +73,54 @@ Priority scale:
 
 ---
 
+## DEFERRED Lane — parked for a future sprint (specs preserved)
+
+### F2 — Issue Tracker Integrations (Monday / Jira / ADO)
+
+**Decision (2026-04-24):** Build later, but scope locked.
+
+- **Architecture:** Pluggable `IssueTracker` interface so one abstraction serves Monday, Jira, ADO.
+- **Monday scope (first implementation):**
+  - **Board mapping:** one Monday board **per BA project** (not global). Project schema needs `mondayBoardId` column.
+  - **Severity column:** build-side creates a new "Severity" status column on each project board with P0/P1/P2/P3 swatches. Column IDs captured at board-create time and persisted in project row.
+  - **Auth:** personal API token (OAuth deferred). Env: `MONDAY_API_TOKEN`, `MONDAY_API_URL=https://api.monday.com/v2`.
+  - **API:** GraphQL (`create_item`, `change_column_value`, `change_simple_column_value`).
+  - **externalRef format:** `monday://item/{itemId}` with `externalUrl = https://{account}.monday.com/boards/{bid}/pulses/{itemId}`.
+  - **Status propagation:** when defect status/severity changes in our UI AND externalRef starts with `monday://`, fire async `change_column_value`.
+  - **Testing stance:** user has no Monday access right now — build against monday.com API docs, ship, test later when they have credentials.
+- **Deferred within the deferred item:** OAuth flow, Monday → us webhook sync, attachment mirroring, board/column picker UI.
+- **Estimate when resumed:** M (~4 h) for tracker abstraction + Monday impl + push button + per-project board provisioning.
+
+### E — Enterprise Readiness (all deferred)
+
+| # | Item | Why parked |
+|---|------|------------|
+| E1 | Multi-tenant isolation (`tenantId` on all BA_* tables) | No second tenant yet |
+| E2 | RBAC (BA/Dev/QA/Manager roles + per-project ACLs) | Single-team tool today |
+| E3 | Audit log (`ba_audit_log`) | No compliance requirement yet |
+| E4 | SSO (SAML/OIDC via next-auth) | No enterprise customer yet |
+| E5 | Rate limiting on AI endpoints (per-user quotas) | Single-user budget risk is low |
+| E6 | Observability — OpenTelemetry + Prometheus | Debug-via-logs is fine for now |
+| E7 | Backup/restore of attachments storage | Disk backup suffices for dev |
+| E8 | GDPR — user data export + delete | No EU users yet |
+
+### C — Codegen beyond Playwright (all deferred)
+
+| # | Item | Why parked |
+|---|------|------------|
+| C1 | Cypress codegen | Playwright covers MVP |
+| C2 | Selenium + Java codegen | Playwright covers MVP |
+| C3 | WebdriverIO codegen | Playwright covers MVP |
+| C4 | Appium (mobile native) codegen | Mobile out of scope now |
+| C5 | RestAssured / Postman collections for API-only TCs | API tests run via Playwright request context for now |
+| C6 | k6 / JMeter for performance TCs | Perf TCs exist as docs only, no runnable artifact |
+| C7 | Pact contract tests | Not a microservices project yet |
+
+---
+
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — Monday integration scope locked + deferred (decision captured in F2 section above)
 - ✅ 2026-04-24 — **AI RCA now ingests attachment evidence** (logs, OCR'd screenshots, docs); per-file 2 KB cap, 8 KB total, system prompt updated to cite filenames (`38f054f`)
 - ✅ 2026-04-24 — Tabular run history in ExecutionHistoryPanel (`9520d9d`)
 - ✅ 2026-04-23 — Phase 2a: execution tracking + defect capture + AI/tester RCA (`a7dd8b0`)
