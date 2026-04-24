@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `86300ef feat(tdd): D2 contract-test scaffold export`
+> **Last updated:** 2026-04-24 — after `f09a680 docs(v4): G4 comprehensive Sprint v4 walkthrough`
 
 Priority scale:
 
@@ -45,7 +45,6 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 | G1 | User manual (screenshots, end-to-end walkthrough) | Onboarding new BAs/testers. | M |
 | G2 | Admin guide (env vars, storage backends, Prisma migrations, backup) | Ops handoff. | M |
 | G3 | API reference — auto-gen from Nest decorators via `@nestjs/swagger` | Integrators. | S |
-| G4 | Architecture diagrams refresh — Phase 2a added 4 new tables | Goes in `sprints/v?/WALKTHROUGH.md`. | S |
 | G5 | Video tutorial (5 min end-to-end) | Sales / demo. | M |
 
 ### P3 — Security Hardening
@@ -106,6 +105,7 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **G4: Architecture diagram refresh — Sprint v4 walkthrough** — new `sprints/v4/WALKTHROUGH.md` (333 lines) canonicalising everything shipped in v4: LLD skill (v4 PRD core), FTC skill + AC Coverage + Playwright export, Phase 2a (runs/defects/RCA), B1–B4 Sprint entity (table/picker/burndown/filters), D1/D2 TDD codegen (unit + contract tests), dashboard tiles + global Defect list + header nav; includes full ASCII architecture diagram (browser → backend → Postgres → Python AI), complete schema change list, net-new API surface table, end-to-end happy path data flow (22 steps), test coverage gaps, security posture, known limitations, and v5 roadmap (`f09a680`)
 - ✅ 2026-04-24 — **D2: Contract-test scaffold export (TDD codegen)** — new `BaContractTestExportService` walks LLD pseudo-files and detects HTTP provider definitions (Express/Nest `app.get/@Get`, Flask/FastAPI `@app.route/@app.get`, Spring `@GetMapping`) and consumer callsites (`fetch`, `axios`, `httpx`, `requests`), normalises paths (`{id}` → `:id`), and pairs them by `method+path`; generates OpenAPI 3.0 stub (`openapi.yaml`), Jest+supertest provider shape tests, Jest+msw pact-style consumer tests, pytest+httpx provider tests, pytest+respx consumer tests; orphan consumers (no matching provider) emitted to `UNRESOLVED_CONTRACTS.md` since they're the most likely integration-breakage sites; new endpoint `GET /api/ba/lld-artifacts/:id/contract-tests-zip` + "Export Contract Tests" button (Network icon) on LLD Workbench (`86300ef`)
 - ✅ 2026-04-24 — **D1: Unit-test scaffold export (TDD codegen)** — new `BaUnitTestExportService` parses LLD pseudo-files via language-aware regex (Python `def`, TS/JS `function`/arrow/class, Java method) and emits runnable ZIPs with per-language subdirectories: `python/` (pytest + requirements.txt + pytest.ini + conftest.py), `javascript/` (Jest + ts-jest + tsconfig + package.json), `java/` (JUnit 5 + Maven pom.xml); every test starts red with explicit `pytest.fail`/`expect(true).toBe(false)`/`fail()` so devs see the exact scaffold turn green as they implement; new endpoint `GET /api/ba/lld-artifacts/:id/unit-tests-zip` + "Export Unit Tests" button (FlaskConical icon) on LLD Workbench header; README in each ZIP lists all generated files + runner commands (`1257b09`)
 - ✅ 2026-04-24 — **F3: Playwright export drift badge + Re-verify+Export button** — FTC workbench header now shows the AC coverage summary alongside the export button; amber `!N` badge on "Export Playwright Suite" when gaps exist; new `ShieldCheck`-icon "Re-verify + Export" button chains `analyzeAcCoverage` + `downloadPlaywrightZip` and alerts with fresh coverage numbers when uncovered/partial ACs remain; new API helper `reverifyAndExportPlaywright()` returns the fresh bundle so the UI can update the drift badge in-place (`2efaac6`)
