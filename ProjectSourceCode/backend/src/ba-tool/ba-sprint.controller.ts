@@ -35,6 +35,12 @@ export class BaSprintController {
     return this.sprints.getById(sprintId);
   }
 
+  /** B3 — PASS/FAIL/remaining-work over time for the dashboard chart. */
+  @Get('sprints/:id/burndown')
+  burndown(@Param('id') sprintId: string) {
+    return this.sprints.getSprintBurndown(sprintId);
+  }
+
   @Patch('sprints/:id')
   update(@Param('id') sprintId: string, @Body() payload: UpdateSprintPayload) {
     return this.sprints.updateSprint(sprintId, payload);

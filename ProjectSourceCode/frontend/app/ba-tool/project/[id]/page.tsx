@@ -9,11 +9,16 @@ import {
   createBaModule,
   updateBaProject,
   getProjectExecutionHealth,
+  getSprintBurndown,
+  listSprints,
   type BaProject,
   type BaExecutionHealth,
+  type BaBurndown,
+  type BaSprint,
   MODULE_STATUS_LABELS,
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
+import { BurndownChart } from '@/components/ba-tool/BurndownChart';
 import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -26,6 +31,10 @@ export default function BaProjectWorkspacePage() {
 
   const [project, setProject] = useState<BaProject | null>(null);
   const [health, setHealth] = useState<BaExecutionHealth | null>(null);
+  const [sprints, setSprints] = useState<BaSprint[]>([]);
+  const [burndown, setBurndown] = useState<BaBurndown | null>(null);
+  const [selectedSprintId, setSelectedSprintId] = useState<string>('');
+  const [burndownLoading, setBurndownLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,18 +55,38 @@ export default function BaProjectWorkspacePage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [data, h] = await Promise.all([
+      const [data, h, sp] = await Promise.all([
         getBaProject(projectId),
         getProjectExecutionHealth(projectId).catch(() => null),
+        listSprints(projectId).catch(() => [] as BaSprint[]),
       ]);
       setProject(data);
       setHealth(h);
+      setSprints(sp);
+      // Default to the most recently-started ACTIVE sprint, else none.
+      const activeSprints = sp.filter((s) => s.status === 'ACTIVE');
+      const defaultSprint = activeSprints
+        .slice()
+        .sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? ''))[0] ?? null;
+      setSelectedSprintId(defaultSprint?.id ?? '');
     } catch {
       setError('Failed to load project');
     } finally {
       setLoading(false);
     }
   }, [projectId]);
+
+  // Fetch burndown whenever the selected sprint changes.
+  useEffect(() => {
+    if (!selectedSprintId) { setBurndown(null); return; }
+    let cancelled = false;
+    setBurndownLoading(true);
+    getSprintBurndown(selectedSprintId)
+      .then((b) => { if (!cancelled) setBurndown(b); })
+      .catch(() => { if (!cancelled) setBurndown(null); })
+      .finally(() => { if (!cancelled) setBurndownLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedSprintId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -559,6 +588,83 @@ export default function BaProjectWorkspacePage() {
                           </ul>
                         </div>
                       )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sprint Burndown tile */}
+              {sprints.length > 0 && (
+                <div className="mb-8 rounded-lg border border-border bg-card p-5">
+                  <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                    <div className="flex items-center gap-2">
+                      <CalendarClock className="h-4 w-4 text-primary" />
+                      <h3 className="text-sm font-semibold">Sprint Burndown</h3>
+                      {burndown && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {burndown.totalScope > 0
+                            ? `${burndown.totalScope - burndown.totals.notRun} of ${burndown.totalScope} tested`
+                            : 'No TCs scoped'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={selectedSprintId}
+                        onChange={(e) => setSelectedSprintId(e.target.value)}
+                        className="text-xs border border-input rounded px-2 py-1 bg-background"
+                      >
+                        <option value="">— pick a sprint —</option>
+                        {sprints
+                          .slice()
+                          .sort((a, b) => {
+                            const order = { ACTIVE: 0, PLANNING: 1, COMPLETED: 2, CANCELLED: 3 } as const;
+                            return (
+                              order[a.status] - order[b.status] ||
+                              a.sprintCode.localeCompare(b.sprintCode)
+                            );
+                          })
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.sprintCode} — {s.name} [{s.status}]
+                            </option>
+                          ))}
+                      </select>
+                      <Button size="sm" variant="ghost" asChild className="h-7">
+                        <Link href={`/ba-tool/project/${projectId}/sprints`}>
+                          Manage →
+                        </Link>
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!selectedSprintId ? (
+                    <div className="h-[200px] flex items-center justify-center text-xs text-muted-foreground italic">
+                      {sprints.some((s) => s.status === 'ACTIVE')
+                        ? 'Pick a sprint to see burndown.'
+                        : 'No active sprint. Mark a sprint ACTIVE to see a live burndown.'}
+                    </div>
+                  ) : burndownLoading ? (
+                    <div className="h-[200px] flex items-center justify-center">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : burndown ? (
+                    <>
+                      <BurndownChart data={burndown} />
+                      <div className="flex items-center gap-2 flex-wrap mt-3 text-[10px]">
+                        <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">{burndown.totals.pass} pass</span>
+                        <span className="bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold">{burndown.totals.fail} fail</span>
+                        <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{burndown.totals.blocked} blocked</span>
+                        <span className="bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{burndown.totals.skipped} skipped</span>
+                        <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-bold">{burndown.totals.notRun} not run</span>
+                        {burndown.note && (
+                          <span className="text-muted-foreground italic ml-2">{burndown.note}</span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-[200px] flex items-center justify-center text-xs text-muted-foreground italic">
+                      Failed to load burndown.
                     </div>
                   )}
                 </div>

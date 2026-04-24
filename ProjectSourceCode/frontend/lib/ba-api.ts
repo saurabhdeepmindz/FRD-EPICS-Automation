@@ -1501,6 +1501,20 @@ export async function backfillSprints(
   return data;
 }
 
+export interface BaBurndown {
+  sprint: BaSprint;
+  totalScope: number;
+  days: Array<{ date: string; remaining: number; tested: number }>;
+  ideal: Array<{ date: string; remaining: number }> | null;
+  totals: { pass: number; fail: number; blocked: number; skipped: number; notRun: number };
+  note?: string;
+}
+
+export async function getSprintBurndown(sprintId: string): Promise<BaBurndown> {
+  const { data } = await api.get<BaBurndown>(`/ba/sprints/${sprintId}/burndown`);
+  return data;
+}
+
 export interface CreateDefectPayload {
   title: string;
   description?: string | null;

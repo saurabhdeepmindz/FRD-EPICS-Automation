@@ -213,4 +213,129 @@ export class BaSprintService {
     if (isNaN(d.getTime())) throw new BadRequestException(`Invalid date: ${v}`);
     return d;
   }
+
+  /**
+   * B3 — Sprint burndown.
+   *
+   * Scope = TCs whose `sprintDbId` FK points at this sprint. A TC is
+   * "executed" for burndown purposes as of the date of its **first** run
+   * within the sprint (subsequent re-runs don't change remaining work).
+   *
+   * The endpoint returns enough data for a simple SVG chart on the dashboard:
+   *   - `days[]`   actual remaining-work line (one point per calendar day)
+   *   - `ideal[]`  straight-line ideal from totalScope → 0
+   *   - `totals`   breakdown by the TC's latest executionStatus (pass/fail/…)
+   */
+  async getSprintBurndown(sprintId: string) {
+    const sprint = await this.prisma.baSprint.findUnique({ where: { id: sprintId } });
+    if (!sprint) throw new NotFoundException(`Sprint ${sprintId} not found`);
+    if (!sprint.startDate) {
+      return {
+        sprint,
+        totalScope: 0,
+        days: [],
+        ideal: null,
+        totals: { pass: 0, fail: 0, blocked: 0, skipped: 0, notRun: 0 },
+        note: 'Sprint has no startDate — burndown not available until a start date is set.',
+      };
+    }
+
+    const tcs = await this.prisma.baTestCase.findMany({
+      where: { sprintDbId: sprintId },
+      select: { id: true, executionStatus: true },
+    });
+    const totalScope = tcs.length;
+
+    // Per-status roll-up using the denormalized "latest status" cache.
+    const totals = { pass: 0, fail: 0, blocked: 0, skipped: 0, notRun: 0 };
+    for (const tc of tcs) {
+      switch (tc.executionStatus) {
+        case 'PASS': totals.pass += 1; break;
+        case 'FAIL': totals.fail += 1; break;
+        case 'BLOCKED': totals.blocked += 1; break;
+        case 'SKIPPED': totals.skipped += 1; break;
+        default: totals.notRun += 1;
+      }
+    }
+
+    if (totalScope === 0) {
+      return {
+        sprint,
+        totalScope: 0,
+        days: [],
+        ideal: null,
+        totals,
+        note: 'No test cases are assigned to this sprint yet. Record a run on a TC with this sprint selected.',
+      };
+    }
+
+    const runs = await this.prisma.baTestRun.findMany({
+      where: { testCaseId: { in: tcs.map((t) => t.id) }, sprintDbId: sprintId, deletedAt: null },
+      select: { testCaseId: true, executedAt: true },
+      orderBy: { executedAt: 'asc' },
+    });
+
+    // First-run date per TC — that's when the TC becomes "tested" in burndown
+    // terms. Subsequent re-runs don't move the needle.
+    const firstRunByTc = new Map<string, Date>();
+    for (const r of runs) {
+      const existing = firstRunByTc.get(r.testCaseId);
+      if (!existing || r.executedAt < existing) firstRunByTc.set(r.testCaseId, r.executedAt);
+    }
+
+    // Enumerate days from start to min(endDate, today). If endDate is absent
+    // we stop at today so the chart is always bounded.
+    const today = this.startOfDay(new Date());
+    const chartEnd = sprint.endDate && sprint.endDate < today ? sprint.endDate : today;
+    const days = this.enumerateDays(sprint.startDate, chartEnd);
+
+    // Bucket first-run dates by ISO date string.
+    const byDay = new Map<string, number>();
+    for (const d of firstRunByTc.values()) {
+      const key = this.isoDate(d);
+      byDay.set(key, (byDay.get(key) ?? 0) + 1);
+    }
+
+    let cumulativeTested = 0;
+    const actual = days.map((dayKey) => {
+      cumulativeTested += byDay.get(dayKey) ?? 0;
+      return { date: dayKey, remaining: Math.max(0, totalScope - cumulativeTested), tested: cumulativeTested };
+    });
+
+    // Ideal line — only plottable when the sprint has an endDate. Ideal
+    // decreases linearly from totalScope (at start) to 0 (at end).
+    let ideal: Array<{ date: string; remaining: number }> | null = null;
+    if (sprint.endDate) {
+      const totalDays = Math.max(
+        1,
+        Math.round((sprint.endDate.getTime() - sprint.startDate.getTime()) / 86_400_000),
+      );
+      const idealDays = this.enumerateDays(sprint.startDate, sprint.endDate);
+      ideal = idealDays.map((dayKey, i) => ({
+        date: dayKey,
+        remaining: Math.max(0, Math.round(totalScope * (1 - i / totalDays))),
+      }));
+    }
+
+    return { sprint, totalScope, days: actual, ideal, totals };
+  }
+
+  private startOfDay(d: Date): Date {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  private isoDate(d: Date): string {
+    return d.toISOString().slice(0, 10);
+  }
+
+  private enumerateDays(start: Date, end: Date): string[] {
+    const out: string[] = [];
+    const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const stop = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    while (cursor <= stop) {
+      out.push(this.isoDate(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return out;
+  }
 }
