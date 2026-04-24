@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `d3be573 feat(tree): UX3 tree search + G3 deferred`
+> **Last updated:** 2026-04-24 — after `5933c76 feat(security): H1 input sanitisation audit`
 
 Priority scale:
 
@@ -49,7 +49,6 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| H1 | Input sanitization audit across all controllers | No systematic review done yet. | M |
 | H2 | Virus scan on uploaded attachments (ClamAV) | Currently raw upload. | S |
 | H3 | Secret rotation — OPENAI_API_KEY, DATABASE_URL via Vault/KMS | Today secrets live in `.env`. | M |
 | H4 | Pen-test hardening pass | Pre-production gate. | L |
@@ -112,6 +111,7 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **H1: Input sanitisation audit** — systematic review of every `@Body()` surface; identified that Phase 2a/Sprint endpoints were accepting plain TypeScript interfaces (bypassing the global `ValidationPipe`); shipped 7 new DTO classes with `class-validator` decorators (`CreateTestRunDto`, `BulkCreateTestRunDto` w/ 200-UUID cap, `CreateDefectDto`, `UpdateDefectDto`, `SaveTesterRcaDto`, `CreateSprintDto`, `UpdateSprintDto`); wired into `ba-execution.controller` + `ba-sprint.controller`; reviewed and cleared attachment uploads (30 MB caps + Multer limits + path sanitisation), AI prompt framing, Prisma parameterisation, CORS pinning, SSRF posture; audit doc at `sprints/v4/SECURITY_AUDIT_H1.md` with deferred items flagged (E5 rate limiting, H2 AV scan, H3 secret rotation, H4 pen-test) (`5933c76`)
 - ✅ 2026-04-24 — **UX3: Tree search / filter box** — new sticky-top search input in `ArtifactTree`; case-insensitive substring match across skill labels, artifact labels + artifactId, FRD features (id + name), EPIC structural + internal sections, generic section labels/keys, pseudo-file paths + language, and test-case ids/titles/categories; when query is active all skills/artifacts without matches in their subtree are hidden AND matching nodes are auto-expanded so hits are visible without user clicks; live count shown ("3 artifact(s) across 2 skill(s)"); clear-X button resets (`d3be573`)
 - ✅ 2026-04-24 — **G3 deferred to future sprint** — moved from P3 Docs to DEFERRED lane with scope locked: `@nestjs/swagger` + `swagger-ui-express`, `@ApiTags`/`@ApiOperation` on 7 controllers, expose at `GET /api/docs` + `/api/docs-json`. Distinct from D2 (which docs the user's target app, not the BA Tool itself) (`d3be573`)
 - ✅ 2026-04-24 — **G4: Architecture diagram refresh — Sprint v4 walkthrough** — new `sprints/v4/WALKTHROUGH.md` (333 lines) canonicalising everything shipped in v4: LLD skill (v4 PRD core), FTC skill + AC Coverage + Playwright export, Phase 2a (runs/defects/RCA), B1–B4 Sprint entity (table/picker/burndown/filters), D1/D2 TDD codegen (unit + contract tests), dashboard tiles + global Defect list + header nav; includes full ASCII architecture diagram (browser → backend → Postgres → Python AI), complete schema change list, net-new API surface table, end-to-end happy path data flow (22 steps), test coverage gaps, security posture, known limitations, and v5 roadmap (`f09a680`)
