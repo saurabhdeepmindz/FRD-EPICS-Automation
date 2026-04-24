@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `ea0ba94 feat(defects): standalone 'Open defect' button`
+> **Last updated:** 2026-04-24 — after `82f2ff9 feat(defects): global defect list page`
 
 Priority scale:
 
@@ -27,7 +27,6 @@ _P0 lane is clear. Next push starts from P1._
 | B2 | Sprint picker in Record Run dialog (replace text input) | Depends on B1. | S |
 | B3 | Sprint burndown chart on dashboard | Depends on B1 + run history. | M |
 | B4 | Filter runs/defects by sprint in RTM and FTC views | Depends on B1. | S |
-| F1 | **Defect list page** (`/ba/project/[id]/defects`) with filters (status/severity/sprint/assignee) | We can open defects but have no global view. | M |
 | F3 | **Re-run Playwright export with one click** — ZIP download currently is static; wire it to re-generate after AC changes | AC Coverage verifier already detects drift; wire it in. | S |
 
 ### P2 — TDD Codegen (active)
@@ -116,6 +115,7 @@ _P0 lane is clear. Next push starts from P1._
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **Global Defect list page** — new route `/ba-tool/project/[id]/defects` with search + 5 filters (status incl. "Open all" shortcut, severity, sprint, module, reporter); header nav pill shows open-defect count (red when P0/P1 critical); CSV export; "direct" badge for run-less defects; new endpoint `GET /api/ba/projects/:id/defects` (`82f2ff9`)
 - ✅ 2026-04-24 — **Standalone "Open defect" button** on each TC — logs bugs outside a formal run (spec review, prod report, ad-hoc exploration); new `POST /api/ba/test-cases/:id/defects` endpoint with nullable `firstSeenRunId`; denormalizes defect ref onto `BaTestCase.defectIds` like the run-triggered flow (`ea0ba94`)
 - ✅ 2026-04-24 — **Bulk test-run recording** — multi-select checkboxes per TC, per-group "select all", sticky toolbar with "Run selected (N)" button, modal dialog for shared status/executor/env/sprint/notes; new backend endpoint `POST /api/ba/test-cases/bulk-runs` (200-TC cap, continues on individual failures) (`399b9d8`)
 - ✅ 2026-04-24 — **Dashboard tile: Test Execution Health** — pass-rate, stacked bar, PASS/FAIL/BLOCKED/SKIPPED/NOT_RUN pills, open-defect count (with P0/P1 callout), failing + blocked TC drill-downs (top 10 each with deep links to module), new endpoint `GET /api/ba/projects/:id/execution-health` (`17ec30d`)
