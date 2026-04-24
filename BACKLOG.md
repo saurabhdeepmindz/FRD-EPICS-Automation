@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `f09a680 docs(v4): G4 comprehensive Sprint v4 walkthrough`
+> **Last updated:** 2026-04-24 — after `d3be573 feat(tree): UX3 tree search + G3 deferred`
 
 Priority scale:
 
@@ -33,7 +33,6 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 |---|------|-----|--------|
 | UX1 | Dark mode toggle | Requested informally. | S |
 | UX2 | Keyboard shortcuts (j/k to navigate tree, r to record run, g to generate) | Power users. | S |
-| UX3 | Tree search / filter box | Tree gets huge; scrolling is painful. | S |
 | UX4 | Drag-drop reorder of TCs within a category | Current order is DB insertion order. | M |
 | UX5 | Toast notifications for long-running ops (export ZIP, AI generate) | Currently silent until done. | S |
 | UX6 | A11y audit — ARIA labels, keyboard nav, focus order | We haven't checked; likely many misses. | M |
@@ -113,6 +112,8 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **UX3: Tree search / filter box** — new sticky-top search input in `ArtifactTree`; case-insensitive substring match across skill labels, artifact labels + artifactId, FRD features (id + name), EPIC structural + internal sections, generic section labels/keys, pseudo-file paths + language, and test-case ids/titles/categories; when query is active all skills/artifacts without matches in their subtree are hidden AND matching nodes are auto-expanded so hits are visible without user clicks; live count shown ("3 artifact(s) across 2 skill(s)"); clear-X button resets (`d3be573`)
+- ✅ 2026-04-24 — **G3 deferred to future sprint** — moved from P3 Docs to DEFERRED lane with scope locked: `@nestjs/swagger` + `swagger-ui-express`, `@ApiTags`/`@ApiOperation` on 7 controllers, expose at `GET /api/docs` + `/api/docs-json`. Distinct from D2 (which docs the user's target app, not the BA Tool itself) (`d3be573`)
 - ✅ 2026-04-24 — **G4: Architecture diagram refresh — Sprint v4 walkthrough** — new `sprints/v4/WALKTHROUGH.md` (333 lines) canonicalising everything shipped in v4: LLD skill (v4 PRD core), FTC skill + AC Coverage + Playwright export, Phase 2a (runs/defects/RCA), B1–B4 Sprint entity (table/picker/burndown/filters), D1/D2 TDD codegen (unit + contract tests), dashboard tiles + global Defect list + header nav; includes full ASCII architecture diagram (browser → backend → Postgres → Python AI), complete schema change list, net-new API surface table, end-to-end happy path data flow (22 steps), test coverage gaps, security posture, known limitations, and v5 roadmap (`f09a680`)
 - ✅ 2026-04-24 — **D2: Contract-test scaffold export (TDD codegen)** — new `BaContractTestExportService` walks LLD pseudo-files and detects HTTP provider definitions (Express/Nest `app.get/@Get`, Flask/FastAPI `@app.route/@app.get`, Spring `@GetMapping`) and consumer callsites (`fetch`, `axios`, `httpx`, `requests`), normalises paths (`{id}` → `:id`), and pairs them by `method+path`; generates OpenAPI 3.0 stub (`openapi.yaml`), Jest+supertest provider shape tests, Jest+msw pact-style consumer tests, pytest+httpx provider tests, pytest+respx consumer tests; orphan consumers (no matching provider) emitted to `UNRESOLVED_CONTRACTS.md` since they're the most likely integration-breakage sites; new endpoint `GET /api/ba/lld-artifacts/:id/contract-tests-zip` + "Export Contract Tests" button (Network icon) on LLD Workbench (`86300ef`)
 - ✅ 2026-04-24 — **D1: Unit-test scaffold export (TDD codegen)** — new `BaUnitTestExportService` parses LLD pseudo-files via language-aware regex (Python `def`, TS/JS `function`/arrow/class, Java method) and emits runnable ZIPs with per-language subdirectories: `python/` (pytest + requirements.txt + pytest.ini + conftest.py), `javascript/` (Jest + ts-jest + tsconfig + package.json), `java/` (JUnit 5 + Maven pom.xml); every test starts red with explicit `pytest.fail`/`expect(true).toBe(false)`/`fail()` so devs see the exact scaffold turn green as they implement; new endpoint `GET /api/ba/lld-artifacts/:id/unit-tests-zip` + "Export Unit Tests" button (FlaskConical icon) on LLD Workbench header; README in each ZIP lists all generated files + runner commands (`1257b09`)
