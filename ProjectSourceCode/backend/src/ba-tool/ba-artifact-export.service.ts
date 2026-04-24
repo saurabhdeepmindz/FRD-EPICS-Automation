@@ -1,4 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableCell,
+  TableRow,
+  WidthType,
+  AlignmentType,
+} from 'docx';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../export/pdf.service';
 import { generateBaArtifactHtml, type BaArtifactDoc } from './templates/artifact-html';
@@ -213,35 +225,290 @@ export class BaArtifactExportService {
   }
 
   async renderSubTaskDocx(subtaskId: string): Promise<{ buffer: Buffer; filename: string }> {
-    const { html, fileStem } = await this.renderSubTaskHtml(subtaskId);
-    let buffer: Buffer;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const htmlDocx = require('html-docx-js');
-      buffer = htmlDocx.asBlob(html);
-    } catch {
-      const wrapped = `<html><head><meta charset="utf-8"><title>${fileStem}</title></head><body>${html}</body></html>`;
-      buffer = Buffer.from(wrapped, 'utf-8');
-    }
+    const doc = await this.loadSubTaskDoc(subtaskId);
+    const fileStem = `${doc.artifactId}-${doc.module.moduleId}`.replace(/\s+/g, '_');
+    const buffer = await this.buildDocxFromDoc(doc);
     return { buffer, filename: `${fileStem}.docx` };
   }
 
   async renderDocx(artifactId: string): Promise<{ buffer: Buffer; filename: string }> {
-    const { html, fileStem } = await this.renderHtml(artifactId);
-    let buffer: Buffer;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const htmlDocx = require('html-docx-js');
-      buffer = htmlDocx.asBlob(html);
-    } catch {
-      const wrapped = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-        xmlns:w="urn:schemas-microsoft-com:office:word"
-        xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8"><title>${fileStem}</title>
-      <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
-      </head><body>${html}</body></html>`;
-      buffer = Buffer.from(wrapped, 'utf-8');
-    }
+    const doc = await this.loadArtifactDoc(artifactId);
+    const fileStem = `${doc.artifactId}-${doc.module.moduleId}`.replace(/\s+/g, '_');
+    const buffer = await this.buildDocxFromDoc(doc);
     return { buffer, filename: `${fileStem}.docx` };
+  }
+
+  // ─── Proper DOCX builder using the `docx` library ───────────────────────
+
+  /**
+   * Previously this code path relied on `html-docx-js` (which wasn't actually
+   * installed) and fell through to saving raw HTML with a .docx extension —
+   * Word correctly rejected it as "we found a problem with its contents".
+   *
+   * Now we build a real OOXML document programmatically. Keeps it simple and
+   * predictable: cover header → per-section heading + markdown body rendered
+   * as paragraphs + tables. Avoids html-docx-js' known failures on large
+   * artifacts (150 KB+ of User Story content) and embedded base64 images.
+   */
+  private async buildDocxFromDoc(doc: BaArtifactDoc): Promise<Buffer> {
+    const children: Array<Paragraph | Table> = [];
+
+    // Title page
+    const projectLabel = doc.project.productName?.trim() || doc.project.name;
+    children.push(new Paragraph({
+      text: `${projectLabel} — ${doc.artifactType.replace(/_/g, ' ')}`,
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+    }));
+    children.push(new Paragraph({ text: doc.artifactId, alignment: AlignmentType.CENTER }));
+    children.push(new Paragraph({
+      text: `Module: ${doc.module.moduleId} — ${doc.module.moduleName}`,
+      alignment: AlignmentType.CENTER,
+    }));
+    children.push(new Paragraph({
+      text: `Project: ${doc.project.projectCode}`,
+      alignment: AlignmentType.CENTER,
+    }));
+    if (doc.project.clientName) {
+      children.push(new Paragraph({
+        text: `Client: ${doc.project.clientName}`,
+        alignment: AlignmentType.CENTER,
+      }));
+    }
+    children.push(new Paragraph({ text: '' }));
+    children.push(new Paragraph({ text: '' }));
+
+    // Sort sections by displayOrder then createdAt for stable output.
+    const sorted = [...doc.sections].sort((a, b) => {
+      if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
+      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return at - bt;
+    });
+
+    for (const section of sorted) {
+      const body = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+      if (!body || !body.trim()) continue;
+      children.push(new Paragraph({
+        text: section.sectionLabel || section.sectionKey.replace(/_/g, ' '),
+        heading: HeadingLevel.HEADING_1,
+      }));
+      for (const node of this.markdownBlocksToDocx(body)) {
+        children.push(node);
+      }
+      children.push(new Paragraph({ text: '' }));
+    }
+
+    const document = new Document({
+      creator: 'BA Tool',
+      title: doc.artifactId,
+      description: `${doc.artifactType} for module ${doc.module.moduleId}`,
+      sections: [{ children }],
+    });
+
+    return Packer.toBuffer(document);
+  }
+
+  /**
+   * Very small, predictable markdown → docx block converter.
+   * Handles: headings (#..######), tables (| col | col |), bullet lists,
+   * numbered lists, blank-line paragraphs, fenced code blocks (as preformatted).
+   * Not a full markdown parser — intentional, keeps DOCX deterministic.
+   */
+  private markdownBlocksToDocx(md: string): Array<Paragraph | Table> {
+    const blocks: Array<Paragraph | Table> = [];
+    const lines = md.split(/\r?\n/);
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Blank line → skip
+      if (!line.trim()) { i++; continue; }
+
+      // Headings: #, ##, ..., ######
+      const hMatch = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (hMatch) {
+        const level = hMatch[1].length;
+        const levelMap: Record<number, (typeof HeadingLevel)[keyof typeof HeadingLevel]> = {
+          1: HeadingLevel.HEADING_2, // already under a H1 section header
+          2: HeadingLevel.HEADING_3,
+          3: HeadingLevel.HEADING_4,
+          4: HeadingLevel.HEADING_5,
+          5: HeadingLevel.HEADING_6,
+          6: HeadingLevel.HEADING_6,
+        };
+        blocks.push(new Paragraph({ text: hMatch[2].trim(), heading: levelMap[level] }));
+        i++;
+        continue;
+      }
+
+      // Fenced code block — ```lang ... ```
+      if (line.trim().startsWith('```')) {
+        const codeLines: string[] = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith('```')) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length) i++; // skip closing ```
+        blocks.push(new Paragraph({
+          children: [new TextRun({
+            text: codeLines.join('\n'),
+            font: 'Consolas',
+            size: 18,
+          })],
+        }));
+        continue;
+      }
+
+      // Table — consecutive `| col | col |` lines (skip separator row)
+      if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+        const tableLines: string[] = [];
+        while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+          tableLines.push(lines[i]);
+          i++;
+        }
+        const parsed = this.parseMarkdownTable(tableLines);
+        if (parsed) {
+          blocks.push(this.buildDocxTable(parsed));
+          continue;
+        }
+        // Fall through and treat as paragraph if parse failed
+        for (const t of tableLines) {
+          blocks.push(new Paragraph({ children: this.inlineRuns(t) }));
+        }
+        continue;
+      }
+
+      // Bullet list
+      if (/^\s*[-*+]\s+/.test(line)) {
+        while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+          const m = /^\s*[-*+]\s+(.*)$/.exec(lines[i])!;
+          blocks.push(new Paragraph({
+            children: this.inlineRuns(m[1]),
+            bullet: { level: 0 },
+          }));
+          i++;
+        }
+        continue;
+      }
+
+      // Numbered list
+      if (/^\s*\d+\.\s+/.test(line)) {
+        while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+          const m = /^\s*(\d+)\.\s+(.*)$/.exec(lines[i])!;
+          blocks.push(new Paragraph({
+            children: [
+              new TextRun({ text: `${m[1]}. `, bold: true }),
+              ...this.inlineRuns(m[2]),
+            ],
+          }));
+          i++;
+        }
+        continue;
+      }
+
+      // Plain paragraph — collect contiguous non-empty non-special lines.
+      const paraLines: string[] = [line];
+      i++;
+      while (
+        i < lines.length &&
+        lines[i].trim() &&
+        !/^(#{1,6})\s+/.test(lines[i]) &&
+        !lines[i].trim().startsWith('```') &&
+        !(lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) &&
+        !/^\s*[-*+]\s+/.test(lines[i]) &&
+        !/^\s*\d+\.\s+/.test(lines[i])
+      ) {
+        paraLines.push(lines[i]);
+        i++;
+      }
+      blocks.push(new Paragraph({ children: this.inlineRuns(paraLines.join(' ')) }));
+    }
+
+    return blocks;
+  }
+
+  /** Parse a markdown table's lines (including separator) into a 2D cell matrix. */
+  private parseMarkdownTable(lines: string[]): { header: string[]; rows: string[][] } | null {
+    if (lines.length < 2) return null;
+    const parseRow = (raw: string): string[] => raw
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim());
+
+    const header = parseRow(lines[0]);
+    // Line 1 should be a separator of `---` cells; skip it.
+    const startDataIdx = /^[\s|:-]+$/.test(lines[1].trim()) ? 2 : 1;
+    const rows: string[][] = [];
+    for (let idx = startDataIdx; idx < lines.length; idx++) {
+      rows.push(parseRow(lines[idx]));
+    }
+    if (header.length === 0) return null;
+    return { header, rows };
+  }
+
+  private buildDocxTable(table: { header: string[]; rows: string[][] }): Table {
+    const makeCell = (text: string, header: boolean): TableCell => new TableCell({
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold: header, size: 20 })],
+      })],
+    });
+
+    return new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        new TableRow({
+          children: table.header.map((c) => makeCell(c, true)),
+          tableHeader: true,
+        }),
+        ...table.rows.map((r) => new TableRow({
+          children: r.map((c) => makeCell(c, false)),
+        })),
+      ],
+    });
+  }
+
+  /**
+   * Inline formatting: **bold**, *italic*, `code`, and plain text. Keeps
+   * markup lightweight and predictable for Word.
+   */
+  private inlineRuns(text: string): TextRun[] {
+    const runs: TextRun[] = [];
+    let remaining = text;
+    while (remaining.length > 0) {
+      const bold = remaining.match(/^\*\*([^*]+)\*\*/);
+      if (bold) {
+        runs.push(new TextRun({ text: bold[1], bold: true }));
+        remaining = remaining.slice(bold[0].length);
+        continue;
+      }
+      const code = remaining.match(/^`([^`]+)`/);
+      if (code) {
+        runs.push(new TextRun({ text: code[1], font: 'Consolas', size: 18 }));
+        remaining = remaining.slice(code[0].length);
+        continue;
+      }
+      const italic = remaining.match(/^\*([^*]+)\*/);
+      if (italic && !remaining.startsWith('**')) {
+        runs.push(new TextRun({ text: italic[1], italics: true }));
+        remaining = remaining.slice(italic[0].length);
+        continue;
+      }
+      // Take text up to next marker or end
+      const plainMatch = remaining.match(/^[^*`]+/);
+      if (plainMatch) {
+        runs.push(new TextRun({ text: plainMatch[0] }));
+        remaining = remaining.slice(plainMatch[0].length);
+        continue;
+      }
+      // Single-char fallback
+      runs.push(new TextRun({ text: remaining[0] }));
+      remaining = remaining.slice(1);
+    }
+    return runs.length > 0 ? runs : [new TextRun({ text: '' })];
   }
 }
