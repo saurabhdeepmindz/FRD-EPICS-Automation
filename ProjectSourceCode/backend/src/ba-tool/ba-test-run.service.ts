@@ -7,7 +7,10 @@ export interface CreateTestRunPayload {
   executor?: string | null;
   durationSec?: number | null;
   environment?: string | null;
+  /** Legacy free-text sprint (kept for backward compat). Prefer sprintDbId. */
   sprintId?: string | null;
+  /** B2: Real Sprint FK. When set, service resolves sprintCode and writes both. */
+  sprintDbId?: string | null;
   /** ISO timestamp. Defaults to now when omitted. */
   executedAt?: string | null;
   /** Optional: open a defect from this run in the same request. */
@@ -29,6 +32,7 @@ export interface BulkCreateTestRunPayload {
   executor?: string | null;
   environment?: string | null;
   sprintId?: string | null;
+  sprintDbId?: string | null;
   executedAt?: string | null;
 }
 
@@ -60,6 +64,8 @@ export class BaTestRunService {
       throw new BadRequestException('Invalid executedAt timestamp');
     }
 
+    const sprintFields = await this.resolveSprintFields(payload.sprintDbId, payload.sprintId);
+
     const run = await this.prisma.baTestRun.create({
       data: {
         testCaseId,
@@ -68,14 +74,17 @@ export class BaTestRunService {
         executor: payload.executor?.trim() || null,
         durationSec: payload.durationSec ?? null,
         environment: payload.environment?.trim() || null,
-        sprintId: payload.sprintId?.trim() || null,
+        sprintId: sprintFields.sprintId,
+        sprintDbId: sprintFields.sprintDbId,
         executedAt,
       },
     });
 
     // Denormalize latest status + run id onto the TC. This is the cached
     // value every other surface (RTM, FTC tree, accordion header pill)
-    // reads without joining ba_test_runs on every query.
+    // reads without joining ba_test_runs on every query. When a sprint was
+    // selected, mirror it onto the TC too so the TC's "current sprint"
+    // follows the latest recorded run.
     await this.prisma.baTestCase.update({
       where: { id: testCaseId },
       data: {
@@ -83,6 +92,9 @@ export class BaTestRunService {
         latestRunId: run.id,
         lastRunAt: executedAt,
         lastRunBy: payload.executor?.trim() || null,
+        ...(sprintFields.sprintDbId || sprintFields.sprintId
+          ? { sprintId: sprintFields.sprintId, sprintDbId: sprintFields.sprintDbId }
+          : {}),
       },
     });
 
@@ -163,6 +175,7 @@ export class BaTestRunService {
     const missingIds = uniqueIds.filter((id) => !existingSet.has(id));
 
     const created: Array<{ testCaseId: string; runId: string }> = [];
+    const sprintFields = await this.resolveSprintFields(payload.sprintDbId, payload.sprintId);
 
     // Each TC's run + denormalization pair is a small transaction. One TC
     // failing shouldn't block the rest.
@@ -175,7 +188,8 @@ export class BaTestRunService {
             notes: payload.notes?.trim() || null,
             executor: payload.executor?.trim() || null,
             environment: payload.environment?.trim() || null,
-            sprintId: payload.sprintId?.trim() || null,
+            sprintId: sprintFields.sprintId,
+            sprintDbId: sprintFields.sprintDbId,
             executedAt,
           },
         });
@@ -186,6 +200,9 @@ export class BaTestRunService {
             latestRunId: run.id,
             lastRunAt: executedAt,
             lastRunBy: payload.executor?.trim() || null,
+            ...(sprintFields.sprintDbId || sprintFields.sprintId
+              ? { sprintId: sprintFields.sprintId, sprintDbId: sprintFields.sprintDbId }
+              : {}),
           },
         });
         created.push({ testCaseId: id, runId: run.id });
@@ -259,5 +276,28 @@ export class BaTestRunService {
   private normalizeSeverity(s: string | null | undefined): string {
     const up = (s ?? 'P2').toUpperCase();
     return /^P[0-3]$/.test(up) ? up : 'P2';
+  }
+
+  /**
+   * B2: when the client picks a real Sprint from the dropdown it sends
+   * `sprintDbId`. We resolve the matching sprintCode and write BOTH columns
+   * so legacy surfaces (RTM grouping by sprintCode string, CSV exports) stay
+   * correct. When only the legacy string is supplied (older clients or
+   * imports), the FK is left null.
+   */
+  private async resolveSprintFields(
+    sprintDbId: string | null | undefined,
+    legacySprintId: string | null | undefined,
+  ): Promise<{ sprintId: string | null; sprintDbId: string | null }> {
+    const fk = sprintDbId?.trim() || null;
+    if (fk) {
+      const sprint = await this.prisma.baSprint.findUnique({
+        where: { id: fk },
+        select: { id: true, sprintCode: true },
+      });
+      if (!sprint) throw new BadRequestException(`Sprint ${fk} not found`);
+      return { sprintId: sprint.sprintCode, sprintDbId: sprint.id };
+    }
+    return { sprintId: legacySprintId?.trim() || null, sprintDbId: null };
   }
 }

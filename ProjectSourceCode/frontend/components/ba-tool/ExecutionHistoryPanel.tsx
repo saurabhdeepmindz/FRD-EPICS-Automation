@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { SprintPicker } from './SprintPicker';
 import {
   analyzeDefectWithAi,
   createDefectForTc,
@@ -302,12 +304,14 @@ function RecordRunDialog({
   onClose: () => void;
   onSaved: (res: { defectId: string | null }) => void;
 }) {
+  const params = useParams<{ id: string }>();
+  const projectId = params?.id ?? '';
   const [status, setStatus] = useState<BaTestRun['status']>('PASS');
   const [notes, setNotes] = useState('');
   const [executor, setExecutor] = useState('');
   const [durationSec, setDurationSec] = useState<string>('');
   const [environment, setEnvironment] = useState('staging');
-  const [sprintId, setSprintId] = useState('');
+  const [sprintDbId, setSprintDbId] = useState('');
   const [openDefect, setOpenDefect] = useState(false);
   const [defectTitle, setDefectTitle] = useState('');
   const [defectDescription, setDefectDescription] = useState('');
@@ -336,7 +340,7 @@ function RecordRunDialog({
         executor: executor || null,
         durationSec: dur && !isNaN(dur) ? dur : null,
         environment: environment || null,
-        sprintId: sprintId || null,
+        sprintDbId: sprintDbId || null,
         defect: openDefect ? {
           title: defectTitle.trim(),
           description: defectDescription || null,
@@ -353,7 +357,7 @@ function RecordRunDialog({
     } finally {
       setSaving(false);
     }
-  }, [testCaseId, status, notes, executor, durationSec, environment, sprintId, openDefect, defectTitle, defectDescription, defectSeverity, defectExternalRef, onSaved]);
+  }, [testCaseId, status, notes, executor, durationSec, environment, sprintDbId, openDefect, defectTitle, defectDescription, defectSeverity, defectExternalRef, onSaved]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
@@ -427,13 +431,16 @@ function RecordRunDialog({
               />
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">Sprint</label>
-              <input
-                value={sprintId}
-                onChange={(e) => setSprintId(e.target.value)}
-                placeholder="e.g. Sprint 23"
-                className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs font-mono"
-              />
+              {projectId ? (
+                <SprintPicker
+                  projectId={projectId}
+                  value={sprintDbId}
+                  onChange={setSprintDbId}
+                  label="Sprint"
+                />
+              ) : (
+                <div className="text-[10px] text-muted-foreground italic">Sprint picker unavailable (no project context)</div>
+              )}
             </div>
           </div>
 

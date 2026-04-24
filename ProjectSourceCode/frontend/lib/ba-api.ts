@@ -1346,6 +1346,7 @@ export interface CreateTestRunPayload {
   durationSec?: number | null;
   environment?: string | null;
   sprintId?: string | null;
+  sprintDbId?: string | null;
   defect?: {
     title: string;
     description?: string | null;
@@ -1377,6 +1378,7 @@ export interface BulkCreateTestRunPayload {
   executor?: string | null;
   environment?: string | null;
   sprintId?: string | null;
+  sprintDbId?: string | null;
   executedAt?: string | null;
 }
 

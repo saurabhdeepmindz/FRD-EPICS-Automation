@@ -1,8 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { SprintPicker } from './SprintPicker';
 import {
   analyzeAcCoverage,
   bulkCreateTestRuns,
@@ -333,10 +335,12 @@ interface BulkRunDialogProps {
 }
 
 function BulkRunDialog({ selectedTcs, onClose, onSuccess }: BulkRunDialogProps) {
+  const params = useParams<{ id: string }>();
+  const projectId = params?.id ?? '';
   const [status, setStatus] = useState<BaTestRun['status']>('PASS');
   const [executor, setExecutor] = useState('');
   const [environment, setEnvironment] = useState('');
-  const [sprintId, setSprintId] = useState('');
+  const [sprintDbId, setSprintDbId] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -350,7 +354,7 @@ function BulkRunDialog({ selectedTcs, onClose, onSuccess }: BulkRunDialogProps) 
         status,
         executor: executor.trim() || null,
         environment: environment.trim() || null,
-        sprintId: sprintId.trim() || null,
+        sprintDbId: sprintDbId || null,
         notes: notes.trim() || null,
       });
       if (res.created === 0) {
@@ -430,14 +434,16 @@ function BulkRunDialog({ selectedTcs, onClose, onSuccess }: BulkRunDialogProps) 
               />
             </div>
             <div>
-              <label className="text-xs font-semibold block mb-1">Sprint</label>
-              <input
-                type="text"
-                value={sprintId}
-                onChange={(e) => setSprintId(e.target.value)}
-                placeholder="v2.3"
-                className="w-full text-xs border border-input rounded px-2 py-1 bg-background"
-              />
+              {projectId ? (
+                <SprintPicker
+                  projectId={projectId}
+                  value={sprintDbId}
+                  onChange={setSprintDbId}
+                  label="Sprint"
+                />
+              ) : (
+                <div className="text-[10px] text-muted-foreground italic">Sprint picker unavailable</div>
+              )}
             </div>
           </div>
 
