@@ -320,9 +320,84 @@ export default function BaPreviewPage() {
       return out;
     }
 
-    // ── User Story: group by STORY_SECTION_CONFIG category ────────────
+    // ── User Story ──────────────────────────────────────────────────────
     if (doc.artifactType === 'USER_STORY') {
       const out: PreviewSection[] = [];
+
+      // Multi-story shape detection: SKILL-04's per-feature loop stores
+      // one DB row per story (key: us_NNN_<title> or user_story_us_NNN)
+      // instead of the legacy single-story shape with canonical keys
+      // (1_user_story_id, 2_user_story_name, ...). Route accordingly so
+      // we don't silently drop 20+ stories by treating them as "wrappers".
+      const hasCanonical = raw.some((s) => STORY_SECTION_CONFIG[s.sectionKey]);
+      const storyRe = /^(?:us_|user_story_us_)(\d+)/;
+      const storyRows = raw
+        .map((s) => {
+          const m = storyRe.exec(s.sectionKey);
+          return m ? { s, usNumber: parseInt(m[1], 10) } : null;
+        })
+        .filter((x): x is { s: typeof raw[number]; usNumber: number } => x !== null);
+
+      if (!hasCanonical && storyRows.length >= 2) {
+        // Multi-story: group by feature id, sort by feature then US number,
+        // emit one PreviewSection per story carrying the full body content.
+        const deriveFeatureId = (content: string): string => {
+          const anchored = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[\s\S]{0,200}?(F-\d+-\d+)/i);
+          if (anchored) return anchored[1];
+          const anywhere = content.slice(0, 2000).match(/(F-\d+-\d+)/);
+          return anywhere ? anywhere[1] : 'UNASSIGNED';
+        };
+
+        const byFeature = new Map<string, Array<{ s: typeof raw[number]; usNumber: number; featureId: string }>>();
+        for (const row of storyRows) {
+          const content = row.s.isHumanModified && row.s.editedContent ? row.s.editedContent : row.s.content;
+          const featureId = deriveFeatureId(content);
+          const list = byFeature.get(featureId) ?? [];
+          list.push({ ...row, featureId });
+          byFeature.set(featureId, list);
+        }
+        const sortedFeatures = Array.from(byFeature.keys())
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+        for (const featureId of sortedFeatures) {
+          const rows = (byFeature.get(featureId) ?? []).sort((a, b) => a.usNumber - b.usNumber);
+          for (const { s, usNumber } of rows) {
+            const content = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+            const titleMatch = s.sectionLabel && /—|\-\s/.test(s.sectionLabel)
+              ? s.sectionLabel
+              : content.match(/#{1,2}\s*User Story:?\s*(US-\d+[^\n]*)/i)?.[1] ?? `US-${String(usNumber).padStart(3, '0')}`;
+            const usId = `US-${String(usNumber).padStart(3, '0')}`;
+            out.push({
+              id: `story-${s.sectionKey}`,
+              label: `${usId} — ${String(titleMatch).replace(/^US-\d+\s*[—-]?\s*/, '').trim()}`,
+              content,
+              groupLabel: `${featureId} User Stories`,
+              hasTbd: content.includes('TBD-Future'),
+              isAi: s.aiGenerated && !s.isHumanModified,
+              isEdited: s.isHumanModified,
+            });
+          }
+        }
+
+        // Append Coverage Summary + RTM Extension as their own sections at the end
+        for (const key of ['coverage_summary', 'rtm_extension']) {
+          const s = raw.find((x) => x.sectionKey === key);
+          if (!s) continue;
+          const content = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+          if (!content.trim()) continue;
+          out.push({
+            id: `story-${key}`,
+            label: s.sectionLabel || key.replace(/_/g, ' '),
+            content,
+            groupLabel: 'Artifact Extras',
+            isAi: s.aiGenerated && !s.isHumanModified,
+            isEdited: s.isHumanModified,
+          });
+        }
+        return out;
+      }
+
+      // Legacy single-story shape — group by STORY_SECTION_CONFIG category
       const categories = ['header', 'flow', 'technical', 'integration', 'testing'] as const;
       // Header fields already shown in the cover — skip them
       const skipKeys = new Set(['1_user_story_id', '2_user_story_name', '3_user_story_description_goal', '7_user_story_type', '8_user_story_status']);
