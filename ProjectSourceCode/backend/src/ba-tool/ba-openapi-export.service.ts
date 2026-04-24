@@ -32,6 +32,10 @@ interface DetectedSchema {
   name: string;              // e.g., "User"
   properties: Array<{ name: string; type: string; optional: boolean }>;
   sourceFile: string;
+  /** When detected as an enum, these literal values appear in the OpenAPI `enum` array. */
+  enumValues?: string[];
+  /** When detected as an enum, this is the primitive type (`string` / `integer`). */
+  enumBaseType?: 'string' | 'integer';
 }
 
 interface BuiltSpec {
@@ -289,12 +293,45 @@ export class BaOpenApiExportService {
       openapiPaths[p.replace(/:([a-zA-Z_]\w*)/g, '{$1}')] = ops;
     }
 
+    // Build the schema name set FIRST so field-level type resolution can emit
+    // `$ref` to peer schemas instead of losing them as `type: string`.
+    const knownSchemaNames = new Set(args.schemas.map((s) => s.name));
+
     const componentsSchemas: Record<string, unknown> = {};
     for (const sc of args.schemas) {
+      // Enum schemas render as `{ type: string, enum: [...] }` rather than as
+      // an object with properties. This prevents Swagger UI from showing a
+      // fake `Values` property (the Python enum value line got mis-parsed as
+      // a field earlier).
+      if (sc.enumValues && sc.enumValues.length > 0) {
+        componentsSchemas[sc.name] = {
+          type: sc.enumBaseType ?? 'string',
+          enum: sc.enumValues,
+          'x-source-file': sc.sourceFile,
+        };
+        continue;
+      }
+
+      // Skip schemas with no parseable properties — emitting them as
+      // `{ type: object, properties: {} }` just confuses readers. Leave a
+      // comment-via-description so the reader knows extraction found the
+      // class name but couldn't read its body (often type aliases, empty
+      // interfaces, or unusual syntax the regex-grade parser missed).
+      if (sc.properties.length === 0) {
+        componentsSchemas[sc.name] = {
+          type: 'object',
+          additionalProperties: true,
+          description: `No properties were parsed from \`${sc.sourceFile}\`. The class was detected by name; its shape is unspecified. Edit the pseudo-code or hand-complete this schema.`,
+          'x-source-file': sc.sourceFile,
+        };
+        continue;
+      }
+
       const props: Record<string, unknown> = {};
       const required: string[] = [];
       for (const p of sc.properties) {
-        props[p.name] = { type: this.openapiType(p.type) };
+        const schema = this.openapiSchemaFor(p.type, knownSchemaNames);
+        props[p.name] = schema;
         if (!p.optional) required.push(p.name);
       }
       componentsSchemas[sc.name] = {
@@ -339,14 +376,111 @@ export class BaOpenApiExportService {
     return out.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  private openapiType(raw: string): string {
-    const t = raw.toLowerCase().trim();
-    if (/(^|\b)(int|integer|long|short|number\b)/.test(t)) return 'integer';
-    if (/(^|\b)(float|double|decimal|number)/.test(t)) return 'number';
-    if (/(^|\b)(bool|boolean)/.test(t)) return 'boolean';
-    if (/(^|\b)(\[\]|array|list<)/.test(t)) return 'array';
-    if (/(^|\b)(object|record|map<|dict)/.test(t)) return 'object';
-    return 'string';
+  /**
+   * Map a pseudo-code type expression to an OpenAPI schema. Handles:
+   *   - primitives (int, string, bool, etc.)
+   *   - arrays:  `List[User]`, `User[]`, `Array<User>`, `list[User]`
+   *   - maps:    `dict`, `Map<K, V>`, `Record<string, User>`
+   *   - nullable: `Optional[User]`, `User?`, `User | None`, `User | null`
+   *   - refs:    when the inner type name matches a known schema, emit `$ref`
+   */
+  private openapiSchemaFor(raw: string, knownSchemas: Set<string>): Record<string, unknown> {
+    const cleaned = this.stripNullable(raw).trim();
+
+    // Array containers
+    const arrayInner = this.unwrapArray(cleaned);
+    if (arrayInner !== null) {
+      return { type: 'array', items: this.openapiSchemaFor(arrayInner, knownSchemas) };
+    }
+
+    // Map / Record / dict containers — OpenAPI models these as objects with
+    // additionalProperties pointing at the value schema.
+    const mapValue = this.unwrapMap(cleaned);
+    if (mapValue !== null) {
+      return { type: 'object', additionalProperties: this.openapiSchemaFor(mapValue, knownSchemas) };
+    }
+
+    const lower = cleaned.toLowerCase();
+
+    // Primitives
+    if (/^(int|integer|long|short|i32|i64)$/.test(lower)) return { type: 'integer' };
+    if (/^(float|double|decimal|number|real)$/.test(lower)) return { type: 'number' };
+    if (/^(bool|boolean)$/.test(lower)) return { type: 'boolean' };
+    if (/^(string|str|char|text|uuid|email|date|datetime|time|timestamp|url|uri)$/.test(lower)) {
+      if (/^(date)$/.test(lower)) return { type: 'string', format: 'date' };
+      if (/^(datetime|timestamp)$/.test(lower)) return { type: 'string', format: 'date-time' };
+      if (lower === 'uuid') return { type: 'string', format: 'uuid' };
+      if (lower === 'email') return { type: 'string', format: 'email' };
+      if (lower === 'url' || lower === 'uri') return { type: 'string', format: 'uri' };
+      return { type: 'string' };
+    }
+    if (/^(any|object|json)$/.test(lower)) {
+      return { type: 'object', additionalProperties: true };
+    }
+
+    // Reference to a known schema (module-level schemas use plain names;
+    // project-level schemas are prefixed with the module id). Check both.
+    const refName = this.matchKnownSchema(cleaned, knownSchemas);
+    if (refName) {
+      return { $ref: `#/components/schemas/${refName}` };
+    }
+
+    // Unknown type — render as string so Swagger UI still renders a sensible
+    // cell, but preserve the raw type for humans via description.
+    return { type: 'string', description: `Pseudo-code type: \`${cleaned}\`` };
+  }
+
+  private stripNullable(raw: string): string {
+    // Python: `Optional[X]`  `X | None`  `Union[X, None]`
+    // TS/JS:  `X | null`  `X | undefined`  `X?`
+    let t = raw.trim();
+    const optMatch = /^Optional\s*\[\s*([^\]]+)\s*\]$/i.exec(t);
+    if (optMatch) t = optMatch[1];
+    const unionMatch = /^Union\s*\[\s*([^\]]+)\s*\]$/i.exec(t);
+    if (unionMatch) t = unionMatch[1];
+    t = t
+      .split('|')
+      .map((s) => s.trim())
+      .filter((s) => !/^(none|null|undefined)$/i.test(s))
+      .join(' | ');
+    return t.replace(/\?\s*$/, '').trim();
+  }
+
+  private unwrapArray(t: string): string | null {
+    // `X[]`
+    const bracket = /^(.+)\[\]$/.exec(t);
+    if (bracket) return bracket[1].trim();
+    // `Array<X>` / `List<X>` / `Set<X>` / `Sequence<X>`
+    const generic = /^(?:Array|List|Set|Sequence|Iterable|Collection)\s*<\s*([^>]+)\s*>$/i.exec(t);
+    if (generic) return generic[1].trim();
+    // Python: `List[X]` / `list[X]` / `Set[X]` / `Sequence[X]` / `Tuple[X, ...]`
+    const pyGeneric = /^(?:List|list|Set|set|Sequence|Iterable|Tuple|tuple)\s*\[\s*([^,\]]+)(?:\s*,\s*\.\.\.)?\s*\]$/i.exec(t);
+    if (pyGeneric) return pyGeneric[1].trim();
+    return null;
+  }
+
+  private unwrapMap(t: string): string | null {
+    // TS: `Record<K, V>` / `Map<K, V>`
+    const tsMap = /^(?:Record|Map)\s*<\s*[^,]+,\s*([^>]+)\s*>$/i.exec(t);
+    if (tsMap) return tsMap[1].trim();
+    // Python: `Dict[K, V]` / `dict[K, V]` / `Mapping[K, V]`
+    const pyMap = /^(?:Dict|dict|Mapping)\s*\[\s*[^,]+,\s*([^\]]+)\s*\]$/i.exec(t);
+    if (pyMap) return pyMap[1].trim();
+    // Bare `dict` / `Map` / `object` → any-value map
+    if (/^(dict|Dict|Mapping|Map|object)$/.test(t)) return 'any';
+    return null;
+  }
+
+  private matchKnownSchema(name: string, known: Set<string>): string | null {
+    // Fast path
+    if (known.has(name)) return name;
+    // Try any known schema whose unprefixed tail matches (project-level
+    // schemas are namespaced, e.g. `MOD-01_User`; if pseudo-code says `User`
+    // we match the first suffix-match).
+    for (const k of known) {
+      if (k.endsWith(`_${name}`)) return k;
+    }
+    return null;
   }
 
   // ─── Title helpers ──────────────────────────────────────────────────────
@@ -469,38 +603,117 @@ export class BaOpenApiExportService {
     const out: DetectedSchema[] = [];
 
     if (lang === 'typescript') {
+      // TS string-literal enum: `enum Status { LOW = 'low', HIGH = 'high' }`
+      const enumRe = /(?:export\s+)?enum\s+([A-Z][\w$]*)\s*\{([^}]*)\}/gs;
+      let m;
+      while ((m = enumRe.exec(content)) !== null) {
+        const { values, baseType } = this.parseTsEnumBody(m[2]);
+        if (values.length > 0) {
+          out.push({ name: m[1], properties: [], sourceFile, enumValues: values, enumBaseType: baseType });
+        }
+      }
       // interface Foo { a: string; b?: number }
       const ifaceRe = /(?:export\s+)?interface\s+([A-Z][\w$]*)\s*\{([^}]*)\}/gs;
-      let m;
       while ((m = ifaceRe.exec(content)) !== null) {
         const props = this.parseTsBody(m[2]);
-        if (props.length > 0) out.push({ name: m[1], properties: props, sourceFile });
+        // Still emit even when empty — the schema builder handles zero-prop
+        // schemas with a helpful description instead of suppressing them.
+        out.push({ name: m[1], properties: props, sourceFile });
       }
       // class Foo { a: string; b?: number }
       const classRe = /(?:export\s+)?class\s+([A-Z][\w$]*)[^{]*\{([^}]*)\}/gs;
       while ((m = classRe.exec(content)) !== null) {
         const props = this.parseTsBody(m[2]);
-        if (props.length > 0) out.push({ name: m[1], properties: props, sourceFile });
+        out.push({ name: m[1], properties: props, sourceFile });
+      }
+      // TS type alias of string-literal union: `type Severity = 'LOW' | 'MED'`
+      const typeUnionRe = /(?:export\s+)?type\s+([A-Z][\w$]*)\s*=\s*([^;]+);?/g;
+      while ((m = typeUnionRe.exec(content)) !== null) {
+        const literals = [...m[2].matchAll(/['"]([^'"]+)['"]/g)].map((lm) => lm[1]);
+        if (literals.length > 0) {
+          out.push({ name: m[1], properties: [], sourceFile, enumValues: literals, enumBaseType: 'string' });
+        }
       }
     } else if (lang === 'python') {
-      // class Foo(BaseModel):  a: str   b: int | None = None
-      const classRe = /class\s+([A-Z]\w*)\s*(?:\([^)]*\))?\s*:\s*([\s\S]*?)(?=^class\s|\Z)/gm;
+      // Python class body extraction. Previously used `\Z` which JS treats as
+      // a literal "Z" character — leading to truncated / empty bodies. We now
+      // delimit each class by scanning until the next top-level `class ` line
+      // (column 0) or end-of-file via `$(?![\s\S])`.
+      const classRe = /class\s+([A-Z]\w*)\s*(?:\(([^)]*)\))?\s*:\s*\n([\s\S]*?)(?=^class\s|^[A-Za-z_]|$(?![\s\S]))/gm;
       let m;
       while ((m = classRe.exec(content)) !== null) {
-        const props = this.parsePythonBody(m[2]);
-        if (props.length > 0) out.push({ name: m[1], properties: props, sourceFile });
+        const name = m[1];
+        const bases = (m[2] ?? '').toLowerCase();
+        const body = m[3];
+        const isEnum = /\benum\b/.test(bases) || /^\s*class\s+\w+\s*\([^)]*(?:^|,\s*)(?:str\s*,\s*)?enum/i.test(`class ${name}(${m[2] ?? ''})`);
+        if (isEnum) {
+          const { values, baseType } = this.parsePythonEnumBody(body, bases);
+          if (values.length > 0) {
+            out.push({ name, properties: [], sourceFile, enumValues: values, enumBaseType: baseType });
+            continue;
+          }
+        }
+        const props = this.parsePythonBody(body);
+        out.push({ name, properties: props, sourceFile });
       }
     } else if (lang === 'java') {
-      // class Foo { private String a; private Integer b; }
-      const classRe = /class\s+([A-Z]\w*)[^{]*\{([\s\S]*?)\}/g;
+      // enum Foo { LOW, MED, HIGH }
+      const enumRe = /(?:public\s+|private\s+|protected\s+)?enum\s+([A-Z]\w*)\s*\{([^}]*)\}/g;
       let m;
+      while ((m = enumRe.exec(content)) !== null) {
+        const values = [...m[2].matchAll(/\b([A-Z_][A-Z0-9_]*)\b/g)].map((lm) => lm[1]);
+        if (values.length > 0) {
+          out.push({ name: m[1], properties: [], sourceFile, enumValues: values, enumBaseType: 'string' });
+        }
+      }
+      // class Foo { private String a; private Integer b; }
+      const classRe = /(?:public\s+|private\s+|protected\s+)?(?:abstract\s+|final\s+)?class\s+([A-Z]\w*)[^{]*\{([\s\S]*?)\}/g;
       while ((m = classRe.exec(content)) !== null) {
         const props = this.parseJavaBody(m[2]);
-        if (props.length > 0) out.push({ name: m[1], properties: props, sourceFile });
+        out.push({ name: m[1], properties: props, sourceFile });
       }
     }
 
     return out;
+  }
+
+  private parseTsEnumBody(body: string): { values: string[]; baseType: 'string' | 'integer' } {
+    const values: string[] = [];
+    let baseType: 'string' | 'integer' = 'string';
+    // `KEY = 'value'`  OR  `KEY = 123`  OR bare `KEY` (auto-number)
+    const stringEnum = [...body.matchAll(/([A-Z_][A-Z0-9_]*)\s*=\s*['"]([^'"]+)['"]/g)];
+    if (stringEnum.length > 0) {
+      for (const m of stringEnum) values.push(m[2]);
+      return { values, baseType: 'string' };
+    }
+    const intEnum = [...body.matchAll(/([A-Z_][A-Z0-9_]*)\s*=\s*(-?\d+)/g)];
+    if (intEnum.length > 0) {
+      for (const m of intEnum) values.push(m[2]);
+      return { values, baseType: 'integer' };
+    }
+    // Bare keys (TS auto-numbers) — emit key names as string values for readability.
+    const bare = [...body.matchAll(/^\s*([A-Z_][A-Z0-9_]*)\s*,?\s*$/gm)];
+    for (const m of bare) values.push(m[1]);
+    return { values, baseType };
+  }
+
+  private parsePythonEnumBody(body: string, bases: string): { values: string[]; baseType: 'string' | 'integer' } {
+    const values: string[] = [];
+    const isInt = /\bintenum\b/.test(bases);
+    const stringLit = [...body.matchAll(/^\s{0,8}([A-Z_][A-Z0-9_]*)\s*=\s*['"]([^'"]+)['"]/gm)];
+    if (stringLit.length > 0) {
+      for (const m of stringLit) values.push(m[2]);
+      return { values, baseType: 'string' };
+    }
+    const intLit = [...body.matchAll(/^\s{0,8}([A-Z_][A-Z0-9_]*)\s*=\s*(-?\d+)/gm)];
+    if (intLit.length > 0) {
+      for (const m of intLit) values.push(m[2]);
+      return { values, baseType: 'integer' };
+    }
+    // `KEY = auto()` → use key name as the value
+    const autoLit = [...body.matchAll(/^\s{0,8}([A-Z_][A-Z0-9_]*)\s*=\s*auto\s*\(\s*\)/gm)];
+    for (const m of autoLit) values.push(m[1]);
+    return { values, baseType: isInt ? 'integer' : 'string' };
   }
 
   private parseTsBody(body: string): Array<{ name: string; type: string; optional: boolean }> {
