@@ -304,8 +304,16 @@ function MultiStoryView({
 }) {
   const deriveFeatureId = (section: BaArtifact['sections'][number]): string => {
     const content = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
-    const m = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[^\n]*?(F-\d+-\d+)/i);
-    return m ? m[1] : 'UNASSIGNED';
+    // First try the keyword-anchored match across up to ~200 chars INCLUDING
+    // newlines — the AI often writes the feature ID on the line AFTER the
+    // "FRD Feature Reference" label (markdown bullet style).
+    const anchored = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[\s\S]{0,200}?(F-\d+-\d+)/i);
+    if (anchored) return anchored[1];
+    // Fallback: accept the first feature-id mention anywhere in the opening
+    // of the story content. Stories almost always name their feature in the
+    // header block, so this is a reliable last resort.
+    const anywhere = content.slice(0, 2000).match(/(F-\d+-\d+)/);
+    return anywhere ? anywhere[1] : 'UNASSIGNED';
   };
 
   const storiesByFeature = useMemo(() => {

@@ -169,8 +169,12 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
           const groupsMap = new Map<string, UserStoryFeatureGroup>();
           for (const { section, usNumber } of storyRows) {
             const content = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
-            const featMatch = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[^\n]*?(F-\d+-\d+)/i);
-            const featureId = featMatch ? featMatch[1] : 'UNASSIGNED';
+            // Match across newlines: AI often places the feature id on the
+            // line after the "FRD Feature Reference" label. Fallback to the
+            // first F-NN-NN anywhere in the story header.
+            const anchoredMatch = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[\s\S]{0,200}?(F-\d+-\d+)/i);
+            const fallbackMatch = anchoredMatch ?? content.slice(0, 2000).match(/(F-\d+-\d+)/);
+            const featureId = anchoredMatch?.[1] ?? fallbackMatch?.[1] ?? 'UNASSIGNED';
             const titleMatch = content.match(/#{1,2}\s*User Story:?\s*(US-\d+[^\n]*)/i);
             const title = section.sectionLabel && /—|\-\s/.test(section.sectionLabel)
               ? section.sectionLabel.replace(/^US-\d+\s*[—-]?\s*/, '')
