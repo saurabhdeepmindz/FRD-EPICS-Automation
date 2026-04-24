@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `b5806b9 feat(sprints): B3 sprint burndown chart`
+> **Last updated:** 2026-04-24 — after `d0ae1ce feat(sprints): B4 Sprint FK filters across RTM + FTC + Defects`
 
 Priority scale:
 
@@ -23,7 +23,6 @@ _P0 lane is clear. Next push starts from P1._
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| B4 | **Filter runs/defects by sprint FK in RTM + FTC views** — upgrade the existing string-based sprint filters to use the FK so sprint codes stay canonical. Defect list + Dashboard drill-downs can reuse the same filter. | Depends on B2. | S |
 | F3 | **Re-run Playwright export with one click** — ZIP download currently is static; wire it to re-generate after AC changes | AC Coverage verifier already detects drift; wire it in. | S |
 
 ### P2 — TDD Codegen (active)
@@ -112,6 +111,7 @@ _P0 lane is clear. Next push starts from P1._
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **B4: Sprint FK filters in RTM + FTC + Defects** — backend now enriches RTM rows with `sprintDbIds[]` + `sprintCodes[]` aggregated from linked TCs; defect list endpoint selects `sprintDbId` + nested `sprint { sprintCode, name, status }` on both TC and firstSeenRun; all three pages (RTM, FTC artifact view, Defects) get unified sprint filter dropdowns backed by real `BaSprint` rows plus an `optgroup` for orphan legacy free-text codes; canonical FK match preferred, string fallback when TC has no FK (`d0ae1ce`)
 - ✅ 2026-04-24 — **B3: Sprint burndown chart on dashboard** — new endpoint `GET /api/ba/sprints/:id/burndown` returning `{ sprint, totalScope, days[], ideal[], totals }`; backend computes first-run-per-TC-in-sprint for accurate burndown semantics (re-runs don't move the needle); inline-SVG `BurndownChart` component (ideal dashed vs actual solid blue, markers with tooltips, responsive viewport); dashboard tile with sprint picker defaulting to most-recent ACTIVE sprint + PASS/FAIL/BLOCKED/SKIPPED/NOT_RUN totals underneath (`b5806b9`)
 - ✅ 2026-04-24 — **B2: SprintPicker wired into Record Run + Bulk Run dialogs** — new reusable `SprintPicker` component (status-aware dropdown, hides COMPLETED/CANCELLED by default, deep-link to Sprints mgmt); payload types extended with `sprintDbId`; `BaTestRunService.resolveSprintFields` maps FK → sprintCode and writes both columns atomically (backward-compat safety); TC's own sprint is mirrored from the latest run's sprint so RTM groupings stay consistent (`c546537`)
 - ✅ 2026-04-24 — **B1: Real Sprint entity** — new `BaSprint` table (projectId + sprintCode unique, name, goal, startDate, endDate, status=PLANNING/ACTIVE/COMPLETED/CANCELLED); nullable `sprintDbId` FK added to BaTestCase + BaTestRun (legacy string `sprintId` kept for backward compat); full CRUD endpoints at `/ba/projects/:id/sprints` + `/ba/sprints/:id`; new Sprints mgmt page at `/ba-tool/project/[id]/sprints` with create/edit/delete + legacy-string backfill button; "Sprints" nav added to project header (`3165599`)
