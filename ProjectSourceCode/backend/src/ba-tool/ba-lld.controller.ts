@@ -17,6 +17,7 @@ import { BaLldService, LldConfigPayload } from './ba-lld.service';
 import { BaLldNarrativeService, MAX_TOTAL_ATTACHMENT_BYTES } from './ba-lld-narrative.service';
 import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
 import { BaUnitTestExportService } from './ba-unit-test-export.service';
+import { BaContractTestExportService } from './ba-contract-test-export.service';
 
 @Controller('ba')
 export class BaLldController {
@@ -25,6 +26,7 @@ export class BaLldController {
     private readonly orchestrator: BaSkillOrchestratorService,
     private readonly narrative: BaLldNarrativeService,
     private readonly unitTestExport: BaUnitTestExportService,
+    private readonly contractTestExport: BaContractTestExportService,
   ) {}
 
   /**
@@ -35,6 +37,24 @@ export class BaLldController {
   @Get('lld-artifacts/:id/unit-tests-zip')
   async exportUnitTestsZip(@Param('id') lldArtifactDbId: string, @Res() res: Response) {
     const { buffer, filename } = await this.unitTestExport.buildZip(lldArtifactDbId);
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
+  }
+
+  /**
+   * D2 — GET /api/ba/lld-artifacts/:id/contract-tests-zip
+   * Download contract-test scaffolds between service layers identified in
+   * the LLD. Detects provider definitions + consumer callsites, pairs them,
+   * flags orphans in UNRESOLVED_CONTRACTS.md. Emits Jest+msw + pytest+respx
+   * scaffolds plus an OpenAPI 3.0 stub.
+   */
+  @Get('lld-artifacts/:id/contract-tests-zip')
+  async exportContractTestsZip(@Param('id') lldArtifactDbId: string, @Res() res: Response) {
+    const { buffer, filename } = await this.contractTestExport.buildZip(lldArtifactDbId);
     res.set({
       'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename="${filename}"`,

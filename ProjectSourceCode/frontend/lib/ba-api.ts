@@ -1244,6 +1244,15 @@ export function downloadUnitTestsZip(lldArtifactDbId: string, filename: string):
 }
 
 /**
+ * D2 — Download contract-test scaffolds + OpenAPI stub between service
+ * layers detected in the LLD. Flags orphan consumers (no matching provider)
+ * in UNRESOLVED_CONTRACTS.md.
+ */
+export function downloadContractTestsZip(lldArtifactDbId: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/lld-artifacts/${lldArtifactDbId}/contract-tests-zip`, filename);
+}
+
+/**
  * F3: Re-verify AC coverage first, then stream the Playwright ZIP. Returns
  * the fresh coverage bundle so the UI can show "X uncovered" etc. before the
  * download completes. The ZIP itself is always fresh server-side (it reads

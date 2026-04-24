@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   ArrowLeft, Loader2, Save, Rocket, Upload, Plus, AlertTriangle, FileText, Eye, Download,
-  Sparkles, User as UserIcon, FlaskConical,
+  Sparkles, User as UserIcon, FlaskConical, Network,
 } from 'lucide-react';
 import {
   getLldConfig,
@@ -21,6 +21,7 @@ import {
   uploadTemplate,
   getBaModule,
   downloadUnitTestsZip,
+  downloadContractTestsZip,
   CATEGORY_LABELS,
   type BaLldConfig,
   type BaMasterDataCategory,
@@ -239,6 +240,19 @@ export default function LldConfiguratorPage() {
               >
                 <FlaskConical className="h-3.5 w-3.5 mr-1" />
                 Export Unit Tests
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const artifactId = lld?.artifact?.artifactId ?? 'lld';
+                  downloadContractTestsZip(lldArtifactId, `${artifactId}-contract-tests.zip`)
+                    .catch((err) => alert(`Contract test export failed: ${err instanceof Error ? err.message : 'unknown'}`));
+                }}
+                title="Detect provider + consumer HTTP endpoints in this LLD and emit contract-test scaffolds (Jest+msw, pytest+respx) plus an OpenAPI stub. Flags orphan consumers that lack a provider."
+              >
+                <Network className="h-3.5 w-3.5 mr-1" />
+                Export Contract Tests
               </Button>
             </>
           )}
