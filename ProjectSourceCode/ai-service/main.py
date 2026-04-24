@@ -879,6 +879,8 @@ class RcaAnalyzeRequest(BaseModel):
     testCasePlaywrightHint: str | None = Field(default=None, max_length=4000)
     # Optional LLD context for code-level reasoning (bounded to keep prompt small)
     lldContext: str = Field(default="", max_length=8000)
+    # Extracted text from tester-uploaded evidence (logs, screenshots OCR'd, etc.)
+    evidenceContext: str = Field(default="", max_length=8000)
     # Prior RCAs on the same defect — if any — so AI can refine or dissent
     priorAiRca: str | None = Field(default=None, max_length=2000)
     priorTesterRca: str | None = Field(default=None, max_length=2000)
@@ -916,6 +918,7 @@ Output format (STRICT JSON only, no markdown fences):
 Rules:
 - Be specific. "Validation is missing" is bad; "AdminId validation is bypassed when email contains a '+' because the regex at SLABreachAlertService.py:42 rejects plus signs" is good.
 - When LLD context is supplied, quote the exact class/method/file in rootCause and proposedFix.
+- When tester evidence is supplied, cite the filename (e.g. "per auth-error.log: NullPointerException at line 42"); prefer evidence over speculation.
 - If priorAiRca is present, either REFINE it with new evidence OR DISSENT with a different hypothesis — don't just restate it.
 - If priorTesterRca is present, treat it as expert human input; disagree only with evidence.
 - Confidence: 0.9+ means you'd stake a review on this; 0.5-0.7 means "most likely but verify"; <0.5 means "speculative, gather more data".
@@ -950,6 +953,11 @@ async def ba_rca_analyze(
         sections.append(f"Automation hint:\n{body.testCasePlaywrightHint}")
     if body.lldContext.strip():
         sections.append(f"LLD / source context (truncated):\n{body.lldContext[:8000]}")
+    if body.evidenceContext.strip():
+        sections.append(
+            "Tester-uploaded evidence (logs / screenshot OCR / docs — cite filename when using):\n"
+            f"{body.evidenceContext[:8000]}"
+        )
     if body.priorAiRca:
         sections.append(f"Prior AI RCA (refine or dissent):\n{body.priorAiRca}")
     if body.priorTesterRca:

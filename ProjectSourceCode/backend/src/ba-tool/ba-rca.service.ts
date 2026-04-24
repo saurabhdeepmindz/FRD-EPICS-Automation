@@ -49,6 +49,10 @@ export class BaRcaService {
       include: {
         testCase: true,
         rcas: { orderBy: { createdAt: 'desc' }, take: 4 },
+        attachments: {
+          orderBy: { createdAt: 'asc' },
+          select: { fileName: true, mimeType: true, extractedText: true, extractionNote: true },
+        },
       },
     });
     if (!defect) throw new NotFoundException(`Defect ${defectId} not found`);
@@ -59,6 +63,8 @@ export class BaRcaService {
     if (defect.testCase.linkedLldArtifactId) {
       lldContext = await this.buildLldContextSnippet(defect.testCase.linkedLldArtifactId, defect.testCase.linkedPseudoFileIds);
     }
+
+    const evidenceContext = this.buildEvidenceSnippet(defect.attachments);
 
     const priorAi = defect.rcas.find((r) => r.source === 'AI');
     const priorTester = defect.rcas.find((r) => r.source === 'TESTER');
@@ -75,6 +81,7 @@ export class BaRcaService {
       testCasePostValidation: defect.testCase.postValidation ?? '',
       testCasePlaywrightHint: defect.testCase.playwrightHint ?? null,
       lldContext,
+      evidenceContext,
       priorAiRca: priorAi
         ? `${priorAi.rootCause}\nProposed fix: ${priorAi.proposedFix ?? '(none)'}`
         : null,
@@ -127,6 +134,31 @@ export class BaRcaService {
         createdBy: payload.createdBy?.trim() || null,
       },
     });
+  }
+
+  /**
+   * Concatenate extracted text from defect attachments (logs, screenshots with
+   * OCR'd text, etc.) into a bounded snippet the AI can cite from. Per-file cap
+   * keeps one huge log from crowding out other evidence.
+   */
+  private buildEvidenceSnippet(
+    attachments: Array<{ fileName: string; mimeType: string; extractedText: string | null; extractionNote: string | null }>,
+  ): string {
+    if (!attachments || attachments.length === 0) return '';
+    const PER_FILE_CAP = 2000;
+    const TOTAL_CAP = 8000;
+    const parts: string[] = [];
+    for (const a of attachments) {
+      const text = (a.extractedText ?? '').trim();
+      if (!text) {
+        if (a.extractionNote) {
+          parts.push(`=== ${a.fileName} (${a.mimeType}) ===\n[no text extracted: ${a.extractionNote}]`);
+        }
+        continue;
+      }
+      parts.push(`=== ${a.fileName} (${a.mimeType}) ===\n${text.slice(0, PER_FILE_CAP)}`);
+    }
+    return parts.join('\n\n').slice(0, TOTAL_CAP);
   }
 
   private async buildLldContextSnippet(lldArtifactRef: string, pseudoFileIds: string[]): Promise<string> {
