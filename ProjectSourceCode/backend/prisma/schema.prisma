@@ -138,8 +138,42 @@ model BaProject {
   rtmRows     BaRtmRow[]
   masterDataEntries BaMasterDataEntry[]
   templates   BaTemplate[]
+  sprints     BaSprint[]
 
   @@map("ba_projects")
+}
+
+// ─── BA Sprint ───────────────────────────────────────────────────────────────
+
+enum BaSprintStatus {
+  PLANNING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+// v4.4 B1 — Real Sprint entity. Replaces free-text `sprintId` strings that
+// previously lived on BaTestCase/BaTestRun. Those columns remain for backward
+// compat; new code should prefer the `sprintDbId` FK.
+model BaSprint {
+  id         String         @id @default(uuid())
+  projectId  String
+  project    BaProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprintCode String         // human-readable: "v2.3", "Sprint 23"
+  name       String         // "Checkout hardening"
+  goal       String?        @db.Text
+  startDate  DateTime?
+  endDate    DateTime?
+  status     BaSprintStatus @default(PLANNING)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  testCases  BaTestCase[]
+  testRuns   BaTestRun[]
+
+  @@unique([projectId, sprintCode])
+  @@index([projectId, status])
+  @@map("ba_sprints")
 }
 
 // ─── BA Module ───────────────────────────────────────────────────────────────
@@ -663,7 +697,10 @@ model BaTestCase {
   priority             String?    // P0 | P1 | P2
   // Sprint & execution tracking — sprintId + executionStatus populated in v2;
   // schema columns reserved now so CSV export + future UI don't need another migration.
+  // v4.4 B1: `sprintDbId` is the real FK; `sprintId` string remains for backward compat.
   sprintId             String?
+  sprintDbId           String?
+  sprint               BaSprint?  @relation(fields: [sprintDbId], references: [id], onDelete: SetNull)
   executionStatus      String     @default("NOT_RUN") // NOT_RUN | PASS | FAIL | BLOCKED | SKIPPED
   lastRunAt            DateTime?
   lastRunBy            String?
@@ -729,7 +766,10 @@ model BaTestRun {
   id           String      @id @default(uuid())
   testCaseId   String
   testCase     BaTestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
-  sprintId     String?     // plain text for now (e.g. "Sprint 23"); Sprint entity comes in Phase 2b
+  // v4.4 B1: `sprintDbId` is the real FK; `sprintId` string remains for backward compat.
+  sprintId     String?     // legacy free-text (e.g. "Sprint 23"); prefer sprintDbId
+  sprintDbId   String?
+  sprint       BaSprint?   @relation(fields: [sprintDbId], references: [id], onDelete: SetNull)
   executor     String?
   executedAt   DateTime    @default(now())
   status       String      // PASS | FAIL | BLOCKED | SKIPPED

@@ -22,6 +22,8 @@ import { BaTestRunService } from './ba-test-run.service';
 import { BaDefectService } from './ba-defect.service';
 import { BaRcaService } from './ba-rca.service';
 import { BaExecutionController } from './ba-execution.controller';
+import { BaSprintController } from './ba-sprint.controller';
+import { BaSprintService } from './ba-sprint.service';
 import { BaNarrativeService } from './ba-narrative.service';
 import { TextExtractionService } from './text-extraction.service';
 import { AttachmentStorageModule } from './storage/storage.module';
@@ -30,7 +32,7 @@ import { ExportModule } from '../export/export.module';
 
 @Module({
   imports: [ExportModule, AttachmentStorageModule],
-  controllers: [BaToolController, BaSkillController, BaMasterDataController, BaLldController, BaFtcController, BaExecutionController],
+  controllers: [BaToolController, BaSkillController, BaMasterDataController, BaLldController, BaFtcController, BaExecutionController, BaSprintController],
   providers: [
     BaToolService,
     BaSkillOrchestratorService,
@@ -49,6 +51,7 @@ import { ExportModule } from '../export/export.module';
     BaTestRunService,
     BaDefectService,
     BaRcaService,
+    BaSprintService,
     BaNarrativeService,
     TextExtractionService,
     SubTaskParserService,

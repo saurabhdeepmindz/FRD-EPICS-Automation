@@ -14,7 +14,7 @@ import {
   MODULE_STATUS_LABELS,
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
-import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug } from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -157,6 +157,12 @@ export default function BaProjectWorkspacePage() {
             <Link href={`/ba-tool/project/${projectId}/master-data`}>
               <Ruler className="h-3.5 w-3.5 mr-1" />
               Architect Console
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <Link href={`/ba-tool/project/${projectId}/sprints`}>
+              <CalendarClock className="h-3.5 w-3.5 mr-1" />
+              Sprints
             </Link>
           </Button>
           <Button size="sm" variant="outline" asChild>

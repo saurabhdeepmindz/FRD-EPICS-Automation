@@ -1430,6 +1430,75 @@ export async function listDefectsForProject(projectId: string): Promise<BaProjec
   return data;
 }
 
+// ─── Sprints (B1) ────────────────────────────────────────────────────────────
+
+export type BaSprintStatus = 'PLANNING' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+
+export interface BaSprint {
+  id: string;
+  projectId: string;
+  sprintCode: string;
+  name: string;
+  goal: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  status: BaSprintStatus;
+  createdAt: string;
+  updatedAt: string;
+  // Populated by list endpoint only
+  runCount?: number;
+  legacyRunCount?: number;
+}
+
+export interface CreateSprintPayload {
+  sprintCode: string;
+  name: string;
+  goal?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: BaSprintStatus;
+}
+
+export interface UpdateSprintPayload {
+  sprintCode?: string;
+  name?: string;
+  goal?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: BaSprintStatus;
+}
+
+export async function listSprints(projectId: string): Promise<BaSprint[]> {
+  const { data } = await api.get<BaSprint[]>(`/ba/projects/${projectId}/sprints`);
+  return data;
+}
+
+export async function createSprint(projectId: string, payload: CreateSprintPayload): Promise<BaSprint> {
+  const { data } = await api.post<BaSprint>(`/ba/projects/${projectId}/sprints`, payload);
+  return data;
+}
+
+export async function updateSprint(sprintId: string, payload: UpdateSprintPayload): Promise<BaSprint> {
+  const { data } = await api.patch<BaSprint>(`/ba/sprints/${sprintId}`, payload);
+  return data;
+}
+
+export async function deleteSprint(sprintId: string): Promise<{ deleted: string }> {
+  const { data } = await api.delete<{ deleted: string }>(`/ba/sprints/${sprintId}`);
+  return data;
+}
+
+export async function backfillSprints(
+  projectId: string,
+): Promise<{ found: number; created: number; sprints: Array<{ id: string; sprintCode: string }> }> {
+  const { data } = await api.post<{
+    found: number;
+    created: number;
+    sprints: Array<{ id: string; sprintCode: string }>;
+  }>(`/ba/projects/${projectId}/sprints/backfill`, {});
+  return data;
+}
+
 export interface CreateDefectPayload {
   title: string;
   description?: string | null;
