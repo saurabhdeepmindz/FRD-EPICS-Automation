@@ -154,8 +154,18 @@ export class BaSkillOrchestratorService {
         data: { contextPacket: contextPacket as object },
       });
 
-      // 4. Call AI service
-      const aiResponse = await this.callAiService(skillPrompt, contextPacket);
+      // 4. Call AI service.
+      //
+      // SKILL-04 branches to a per-feature loop: writing 20+ complete user
+      // stories in a single AI call consistently blows the response budget
+      // (observed: AI emits a Coverage Summary table for all features but
+      // only fully writes 1-2 before flagging `CONTINUATION REQUIRED`). The
+      // loop calls the AI once per feature with a narrow focus override
+      // (~3 stories per response, well within cap) and concatenates the
+      // outputs. Every other skill uses the single-shot path unchanged.
+      const aiResponse = skillName === 'SKILL-04'
+        ? await this.callAiServiceSkill04PerFeature(skillPrompt, contextPacket)
+        : await this.callAiService(skillPrompt, contextPacket);
 
       // 5. Parse and store output
       const { humanDocument, handoffPacket } = this.parseAiOutput(aiResponse);
@@ -777,6 +787,180 @@ export class BaSkillOrchestratorService {
       }
       throw new Error('AI service unreachable');
     }
+  }
+
+  /**
+   * SKILL-04 variant — call the AI once per feature and stitch the outputs
+   * into one combined document. Prevents the "AI writes 22 Coverage Summary
+   * rows but only completes the first 2 features" symptom.
+   *
+   * Each sub-call gets the full context packet (so the AI can still cross-
+   * reference) plus a focused OVERRIDE at the top of the system prompt that
+   * restricts output scope to one feature. The orchestrator emits the
+   * Coverage Summary table itself after all sub-calls complete.
+   */
+  private async callAiServiceSkill04PerFeature(
+    systemPrompt: string,
+    contextPacket: Record<string, unknown>,
+  ): Promise<string> {
+    // Extract unique feature IDs from the RTM rows for this module.
+    const rtmRows = Array.isArray(contextPacket.rtmRows) ? contextPacket.rtmRows : [];
+    const seen = new Set<string>();
+    const features: Array<{ featureId: string; featureName: string; featureStatus: string; priority: string }> = [];
+    for (const r of rtmRows as Array<Record<string, unknown>>) {
+      const fid = String(r.featureId ?? '').trim();
+      if (!fid || seen.has(fid)) continue;
+      seen.add(fid);
+      features.push({
+        featureId: fid,
+        featureName: String(r.featureName ?? ''),
+        featureStatus: String(r.featureStatus ?? '').replace(/^"(.+)",?$/, '$1'),
+        priority: String(r.priority ?? ''),
+      });
+    }
+
+    if (features.length === 0) {
+      this.logger.warn('SKILL-04 per-feature loop: no features found in RTM, falling back to single-shot');
+      return this.callAiService(systemPrompt, contextPacket);
+    }
+
+    this.logger.log(`SKILL-04 per-feature loop: generating stories for ${features.length} feature(s)`);
+
+    const perFeatureOutputs: string[] = [];
+    // Story numbering is sequential across the whole project. Reserve a US
+    // range starting from (existing story count + 1) so re-runs don't clash
+    // with prior artifacts. We let the AI pick the first available number
+    // within each feature's 2-3 stories; the orchestrator just tells it
+    // where the range starts.
+    let nextUsNumber = await this.computeNextUserStoryNumber(String(contextPacket.moduleId ?? ''));
+
+    for (let i = 0; i < features.length; i++) {
+      const f = features[i];
+      const focusOverride = [
+        '## 🎯 SINGLE-FEATURE FOCUS — ORCHESTRATOR OVERRIDE',
+        '',
+        'You are running as part of a per-feature loop. The orchestrator will',
+        'call you once for EACH feature. Your current call is for ONE feature only.',
+        '',
+        `**CURRENT FEATURE: ${f.featureId} — ${f.featureName}**`,
+        `- Status: ${f.featureStatus}`,
+        `- Priority: ${f.priority}`,
+        `- Position in loop: ${i + 1} of ${features.length}`,
+        '',
+        '### What to output NOW',
+        '',
+        `1. A single \`## User Stories for ${f.featureId}\` heading`,
+        '2. 2–3 complete User Stories for this feature only (Frontend / Backend / Integration as applicable)',
+        '3. Each story uses the full 27-section template (Header through Section 27)',
+        `4. Number your stories starting at **US-${String(nextUsNumber).padStart(3, '0')}** (increment by 1 for each)`,
+        '',
+        '### What to SKIP',
+        '',
+        '- Do NOT write a Coverage Summary table — the orchestrator emits it after aggregation',
+        '- Do NOT mention or write stories for other features (they are handled by their own sub-calls)',
+        '- Do NOT write a Context header or Decomposition note — orchestrator handles scaffolding',
+        '- Do NOT emit an RTM Extension section — orchestrator appends one combined table at the end',
+        '',
+        '---',
+        '',
+        '## Original Skill Definition (follow all rules below, constrained by the override above)',
+        '',
+        systemPrompt,
+      ].join('\n');
+
+      // Narrow the RTM rows passed to this sub-call so the AI isn't tempted
+      // to write about sibling features. Everything else (handoff packets
+      // etc.) stays, so cross-references still resolve.
+      const narrowedContext: Record<string, unknown> = {
+        ...contextPacket,
+        rtmRows: (rtmRows as Array<Record<string, unknown>>).filter(
+          (r) => String(r.featureId ?? '').trim() === f.featureId,
+        ),
+        currentFocusFeature: f,
+      };
+
+      const out = await this.callAiService(focusOverride, narrowedContext);
+      perFeatureOutputs.push(out);
+
+      // Advance the US counter by however many stories this sub-call wrote.
+      const usMatches = out.match(/US-\d{3,}/g) ?? [];
+      const maxInThis = usMatches
+        .map((s) => parseInt(s.slice(3), 10))
+        .filter((n) => !Number.isNaN(n))
+        .reduce((a, b) => Math.max(a, b), nextUsNumber - 1);
+      nextUsNumber = Math.max(nextUsNumber + 1, maxInThis + 1);
+    }
+
+    // Assemble the final combined document: a Coverage Summary built from
+    // per-feature outputs, then every sub-output concatenated, then the
+    // RTM Extension table (same shape the legacy single-shot produced).
+    const coverageRows: string[] = ['| Feature ID | Feature Name | Story Count | Story IDs |', '|---|---|---|---|'];
+    const rtmRowsOut: string[] = ['| Module ID | Feature ID | Story ID | Story Name | Story Type | Story Status |', '|---|---|---|---|---|---|'];
+
+    for (let i = 0; i < features.length; i++) {
+      const f = features[i];
+      const out = perFeatureOutputs[i];
+      const storyIds = Array.from(new Set(out.match(/US-\d{3,}/g) ?? []));
+      coverageRows.push(`| ${f.featureId} | ${f.featureName} | ${storyIds.length} | ${storyIds.join(', ') || '—'} |`);
+      // Best-effort RTM rows: one row per story, detecting type from headings.
+      for (const sid of storyIds) {
+        const storyBlockRe = new RegExp(`###? \\d+\\.?\\s*${sid}[^\\n]*|# User Story: ${sid}[^\\n]*`);
+        const m = out.match(storyBlockRe);
+        const titleLine = m?.[0] ?? sid;
+        const type = /frontend/i.test(titleLine)
+          ? 'Frontend'
+          : /backend/i.test(titleLine)
+            ? 'Backend'
+            : /integration/i.test(titleLine)
+              ? 'Integration'
+              : '';
+        const status = /PARTIAL/i.test(f.featureStatus) ? 'CONFIRMED-PARTIAL' : 'CONFIRMED';
+        rtmRowsOut.push(`| ${String(contextPacket.moduleId ?? '')} | ${f.featureId} | ${sid} | ${titleLine.replace(/[#*]/g, '').trim()} | ${type} | ${status} |`);
+      }
+    }
+
+    return [
+      '## Coverage Summary',
+      '',
+      coverageRows.join('\n'),
+      '',
+      '---',
+      '',
+      ...perFeatureOutputs,
+      '',
+      '---',
+      '',
+      '## RTM Extension',
+      '',
+      rtmRowsOut.join('\n'),
+      '',
+    ].join('\n');
+  }
+
+  /**
+   * Determine where this module's next US-NNN number should start so that
+   * re-runs don't collide with existing stories in the project. Reads all
+   * USER_STORY sections across the project, finds the max US number, and
+   * returns max + 1.
+   */
+  private async computeNextUserStoryNumber(moduleId: string): Promise<number> {
+    void moduleId; // reserved for future per-module numbering; today stories are project-wide
+    const sections = await this.prisma.baArtifactSection.findMany({
+      where: { artifact: { artifactType: 'USER_STORY' } },
+      select: { sectionKey: true, content: true },
+    });
+    let max = 0;
+    const usRe = /US-(\d{3,})/g;
+    for (const s of sections) {
+      for (const key of [s.sectionKey, s.content ?? '']) {
+        let m;
+        while ((m = usRe.exec(key)) !== null) {
+          const n = parseInt(m[1], 10);
+          if (!Number.isNaN(n) && n > max) max = n;
+        }
+      }
+    }
+    return max + 1;
   }
 
   // ─── Output parsing ────────────────────────────────────────────────────
