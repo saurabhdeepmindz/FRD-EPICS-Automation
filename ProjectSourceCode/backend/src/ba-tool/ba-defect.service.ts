@@ -127,6 +127,8 @@ export class BaDefectService {
             testCaseId: true,
             title: true,
             sprintId: true,
+            sprintDbId: true,
+            sprint: { select: { id: true, sprintCode: true, name: true, status: true } },
             artifact: {
               select: {
                 id: true,
@@ -137,7 +139,14 @@ export class BaDefectService {
           },
         },
         firstSeenRun: {
-          select: { id: true, sprintId: true, environment: true, executedAt: true },
+          select: {
+            id: true,
+            sprintId: true,
+            sprintDbId: true,
+            sprint: { select: { id: true, sprintCode: true, name: true, status: true } },
+            environment: true,
+            executedAt: true,
+          },
         },
         attachments: { select: { id: true, fileName: true, sizeBytes: true } },
         rcas: { select: { id: true, source: true } },

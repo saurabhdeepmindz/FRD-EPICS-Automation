@@ -7,8 +7,10 @@ import { Button } from '@/components/ui/button';
 import {
   getBaProject,
   listDefectsForProject,
+  listSprints,
   type BaProject,
   type BaProjectDefect,
+  type BaSprint,
   type DefectSeverity,
   type DefectStatus,
 } from '@/lib/ba-api';
@@ -39,6 +41,7 @@ export default function ProjectDefectListPage() {
 
   const [project, setProject] = useState<BaProject | null>(null);
   const [defects, setDefects] = useState<BaProjectDefect[]>([]);
+  const [sprints, setSprints] = useState<BaSprint[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [filterStatus, setFilterStatus] = useState<'' | DefectStatus | 'OPEN_ALL'>('');
@@ -51,12 +54,14 @@ export default function ProjectDefectListPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [proj, list] = await Promise.all([
+      const [proj, list, sp] = await Promise.all([
         getBaProject(projectId),
         listDefectsForProject(projectId),
+        listSprints(projectId).catch(() => [] as BaSprint[]),
       ]);
       setProject(proj);
       setDefects(list);
+      setSprints(sp);
     } catch {
       // ignore
     } finally {
@@ -66,16 +71,34 @@ export default function ProjectDefectListPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Resolve the "effective sprint" for a defect: prefer the TC's own sprintId,
-  // fall back to the first-seen run's sprintId. Keeps UI consistent with how
-  // the rest of the tool (RTM/CSV exports) aggregates by sprint.
-  const effectiveSprint = useCallback((d: BaProjectDefect): string | null => {
-    return d.testCase.sprintId ?? d.firstSeenRun?.sprintId ?? null;
+  // B4: Effective sprint FK first, then code string. Keeps filter canonical
+  // when a BaSprint exists; falls back to the legacy free-text code for
+  // pre-B1 data.
+  const effectiveSprintDbId = useCallback((d: BaProjectDefect): string | null => {
+    return d.testCase.sprintDbId ?? d.firstSeenRun?.sprintDbId ?? null;
+  }, []);
+  const effectiveSprintCode = useCallback((d: BaProjectDefect): string | null => {
+    return (
+      d.testCase.sprint?.sprintCode ??
+      d.firstSeenRun?.sprint?.sprintCode ??
+      d.testCase.sprintId ??
+      d.firstSeenRun?.sprintId ??
+      null
+    );
   }, []);
 
-  const sprintOptions = useMemo(
-    () => [...new Set(defects.map(effectiveSprint).filter((s): s is string => Boolean(s)))].sort(),
-    [defects, effectiveSprint],
+  // Orphan codes: appear in data but not represented by any BaSprint row.
+  const knownSprintCodes = useMemo(() => new Set(sprints.map((s) => s.sprintCode)), [sprints]);
+  const orphanSprintCodes = useMemo(
+    () => [
+      ...new Set(
+        defects
+          .filter((d) => !effectiveSprintDbId(d))
+          .map((d) => effectiveSprintCode(d))
+          .filter((c): c is string => Boolean(c) && !knownSprintCodes.has(c as string)),
+      ),
+    ].sort(),
+    [defects, knownSprintCodes, effectiveSprintDbId, effectiveSprintCode],
   );
   const moduleOptions = useMemo(
     () => [...new Map(defects.map((d) => [d.testCase.artifact.module.moduleId, d.testCase.artifact.module])).values()]
@@ -95,7 +118,15 @@ export default function ProjectDefectListPage() {
         return false;
       }
       if (filterSeverity && d.severity !== filterSeverity) return false;
-      if (filterSprint && effectiveSprint(d) !== filterSprint) return false;
+      if (filterSprint) {
+        if (filterSprint.startsWith('legacy:')) {
+          const code = filterSprint.slice('legacy:'.length);
+          if (effectiveSprintDbId(d)) return false;
+          if (effectiveSprintCode(d) !== code) return false;
+        } else {
+          if (effectiveSprintDbId(d) !== filterSprint) return false;
+        }
+      }
       if (filterModule && d.testCase.artifact.module.moduleId !== filterModule) return false;
       if (filterAssignee && d.reportedBy !== filterAssignee) return false;
       if (search) {
@@ -112,7 +143,7 @@ export default function ProjectDefectListPage() {
       }
       return true;
     });
-  }, [defects, filterStatus, filterSeverity, filterSprint, filterModule, filterAssignee, search, effectiveSprint]);
+  }, [defects, filterStatus, filterSeverity, filterSprint, filterModule, filterAssignee, search, effectiveSprintDbId, effectiveSprintCode]);
 
   // Summary pills
   const counts = useMemo(() => {
@@ -137,7 +168,7 @@ export default function ProjectDefectListPage() {
       d.title,
       d.severity,
       d.status,
-      effectiveSprint(d) ?? '',
+      effectiveSprintCode(d) ?? '',
       d.environment ?? d.firstSeenRun?.environment ?? '',
       d.reportedBy ?? '',
       d.reportedAt,
@@ -157,7 +188,7 @@ export default function ProjectDefectListPage() {
     a.download = `defects-${project?.projectCode ?? 'export'}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [filtered, project, effectiveSprint]);
+  }, [filtered, project, effectiveSprintCode]);
 
   const clearFilters = useCallback(() => {
     setFilterStatus('');
@@ -252,7 +283,26 @@ export default function ProjectDefectListPage() {
           className="text-xs border border-input rounded px-2 py-1 bg-background"
         >
           <option value="">All Sprints</option>
-          {sprintOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          {sprints
+            .slice()
+            .sort((a, b) => {
+              const order = { ACTIVE: 0, PLANNING: 1, COMPLETED: 2, CANCELLED: 3 } as const;
+              return order[a.status] - order[b.status] || a.sprintCode.localeCompare(b.sprintCode);
+            })
+            .map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.sprintCode} — {s.name} [{s.status}]
+              </option>
+            ))}
+          {orphanSprintCodes.length > 0 && (
+            <optgroup label="— legacy (free-text) —">
+              {orphanSprintCodes.map((code) => (
+                <option key={`legacy:${code}`} value={`legacy:${code}`}>
+                  {code} (legacy)
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <select
           value={filterModule}
@@ -309,7 +359,7 @@ export default function ProjectDefectListPage() {
               </tr>
             ) : (
               filtered.map((d) => {
-                const sprint = effectiveSprint(d);
+                const sprint = effectiveSprintCode(d);
                 const env = d.environment ?? d.firstSeenRun?.environment ?? null;
                 const reportedAt = new Date(d.reportedAt);
                 const dateShort = reportedAt.toLocaleString(undefined, { month: 'short', day: 'numeric' });

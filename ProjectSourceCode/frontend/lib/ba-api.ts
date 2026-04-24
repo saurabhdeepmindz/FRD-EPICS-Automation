@@ -208,6 +208,9 @@ export interface BaRtmRow {
     NOT_RUN: number;
   };
   execVerdict?: 'PASS' | 'FAIL' | 'BLOCKED' | 'MIXED' | 'NOT_RUN';
+  // B4 — aggregated sprint refs across the linked TCs
+  sprintDbIds?: string[];
+  sprintCodes?: string[];
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
@@ -1129,6 +1132,7 @@ export interface BaTestCase {
   testKind: 'positive' | 'negative' | 'edge';
   priority: string | null;
   sprintId: string | null;
+  sprintDbId: string | null;
   executionStatus: string; // NOT_RUN | PASS | FAIL | BLOCKED | SKIPPED
   lastRunAt: string | null;
   lastRunBy: string | null;
@@ -1418,13 +1422,22 @@ export interface BaProjectDefect extends Omit<BaDefect, 'testCase'> {
     testCaseId: string;
     title: string;
     sprintId: string | null;
+    sprintDbId: string | null;
+    sprint: { id: string; sprintCode: string; name: string; status: BaSprintStatus } | null;
     artifact: {
       id: string;
       artifactId: string;
       module: { id: string; moduleId: string; moduleName: string };
     };
   };
-  firstSeenRun?: { id: string; sprintId: string | null; environment: string | null; executedAt: string } | null;
+  firstSeenRun?: {
+    id: string;
+    sprintId: string | null;
+    sprintDbId: string | null;
+    sprint: { id: string; sprintCode: string; name: string; status: BaSprintStatus } | null;
+    environment: string | null;
+    executedAt: string;
+  } | null;
 }
 
 export async function listDefectsForProject(projectId: string): Promise<BaProjectDefect[]> {

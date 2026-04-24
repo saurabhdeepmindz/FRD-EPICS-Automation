@@ -9,9 +9,11 @@ import {
   analyzeAcCoverage,
   bulkCreateTestRuns,
   listAcCoverage,
+  listSprints,
   listTestCasesByArtifact,
   type BaAcCoverage,
   type BaArtifact,
+  type BaSprint,
   type BaTestCase,
   type BaTestRun,
 } from '@/lib/ba-api';
@@ -54,11 +56,15 @@ const CATEGORY_ORDER: string[] = [
  * with zero TCs are hidden.
  */
 export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }: Props) {
+  const params = useParams<{ id: string }>();
+  const projectId = params?.id ?? '';
   const [testCases, setTestCases] = useState<BaTestCase[]>([]);
+  const [sprints, setSprints] = useState<BaSprint[]>([]);
   const [loading, setLoading] = useState(true);
   const [openTc, setOpenTc] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [filterSprint, setFilterSprint] = useState(''); // sprintDbId | 'legacy:<code>' | ''
 
   const reload = useCallback(async () => {
     const tcs = await listTestCasesByArtifact(artifact.id);
@@ -78,6 +84,17 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }:
     })();
     return () => { cancelled = true; };
   }, [artifact.id]);
+
+  // Load project sprints once so the filter dropdown knows what's real vs
+  // legacy free-text.
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    listSprints(projectId)
+      .then((list) => { if (!cancelled) setSprints(list); })
+      .catch(() => { if (!cancelled) setSprints([]); });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   const toggleTc = useCallback((tcId: string) => {
     setSelected((prev) => {
@@ -109,12 +126,31 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }:
 
   const { resolve: resolveFiles } = usePseudoFileResolver(moduleDbId, testCases);
 
+  // Apply the sprint filter before grouping so category counts reflect what
+  // the user actually sees.
+  const filteredTcs = useMemo(() => {
+    if (!filterSprint) return testCases;
+    if (filterSprint.startsWith('legacy:')) {
+      const code = filterSprint.slice('legacy:'.length);
+      return testCases.filter((t) => !t.sprintDbId && t.sprintId === code);
+    }
+    return testCases.filter((t) => t.sprintDbId === filterSprint);
+  }, [testCases, filterSprint]);
+
+  const knownSprintCodes = useMemo(() => new Set(sprints.map((s) => s.sprintCode)), [sprints]);
+  const orphanSprintCodes = useMemo(
+    () => [...new Set(testCases.filter((t) => !t.sprintDbId && t.sprintId).map((t) => t.sprintId as string))]
+      .filter((c) => !knownSprintCodes.has(c))
+      .sort(),
+    [testCases, knownSprintCodes],
+  );
+
   // Group by category with White-Box as a synthetic bucket. Keep empty buckets
   // out so the view isn't cluttered.
   const grouped = useMemo(() => {
     const buckets: Record<string, BaTestCase[]> = {};
     const whiteBox: BaTestCase[] = [];
-    for (const tc of testCases) {
+    for (const tc of filteredTcs) {
       if (tc.scope === 'white_box') {
         whiteBox.push(tc);
         continue;
@@ -133,7 +169,7 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }:
       ordered.push({ key: 'white_box', label: 'White-Box Test Cases', tcs: whiteBox });
     }
     return ordered;
-  }, [testCases]);
+  }, [filteredTcs]);
 
   // Scroll + ring-highlight when activeTcId changes.
   useEffect(() => {
@@ -165,25 +201,63 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }:
     );
   }
 
-  const totalPos = testCases.filter((t) => t.testKind === 'positive').length;
-  const totalNeg = testCases.filter((t) => t.testKind === 'negative').length;
-  const totalEdge = testCases.filter((t) => t.testKind === 'edge').length;
-  const totalWB = testCases.filter((t) => t.scope === 'white_box').length;
+  const totalPos = filteredTcs.filter((t) => t.testKind === 'positive').length;
+  const totalNeg = filteredTcs.filter((t) => t.testKind === 'negative').length;
+  const totalEdge = filteredTcs.filter((t) => t.testKind === 'edge').length;
+  const totalWB = filteredTcs.filter((t) => t.scope === 'white_box').length;
 
   return (
     <Card>
       <CardContent className="p-4 space-y-4">
         {/* ── Header summary ── */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="text-sm font-semibold">Test Cases ({testCases.length})</h3>
-          <div className="flex items-center gap-1.5 text-[10px]">
-            <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">{totalPos} positive</span>
-            <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">{totalNeg} negative</span>
-            {totalEdge > 0 && (
-              <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{totalEdge} edge</span>
+          <h3 className="text-sm font-semibold">
+            Test Cases ({filteredTcs.length}
+            {filterSprint && filteredTcs.length !== testCases.length && (
+              <span className="text-muted-foreground font-normal"> of {testCases.length}</span>
             )}
-            {totalWB > 0 && (
-              <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">{totalWB} white-box</span>
+            )
+          </h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">{totalPos} positive</span>
+              <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">{totalNeg} negative</span>
+              {totalEdge > 0 && (
+                <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{totalEdge} edge</span>
+              )}
+              {totalWB > 0 && (
+                <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">{totalWB} white-box</span>
+              )}
+            </div>
+            {(sprints.length > 0 || orphanSprintCodes.length > 0) && (
+              <select
+                value={filterSprint}
+                onChange={(e) => setFilterSprint(e.target.value)}
+                className="text-xs border border-input rounded px-2 py-1 bg-background"
+                title="Filter test cases by assigned sprint"
+              >
+                <option value="">Sprint: All</option>
+                {sprints
+                  .slice()
+                  .sort((a, b) => {
+                    const order = { ACTIVE: 0, PLANNING: 1, COMPLETED: 2, CANCELLED: 3 } as const;
+                    return order[a.status] - order[b.status] || a.sprintCode.localeCompare(b.sprintCode);
+                  })
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.sprintCode} — {s.name} [{s.status}]
+                    </option>
+                  ))}
+                {orphanSprintCodes.length > 0 && (
+                  <optgroup label="— legacy (free-text) —">
+                    {orphanSprintCodes.map((code) => (
+                      <option key={`legacy:${code}`} value={`legacy:${code}`}>
+                        {code} (legacy)
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
             )}
           </div>
         </div>

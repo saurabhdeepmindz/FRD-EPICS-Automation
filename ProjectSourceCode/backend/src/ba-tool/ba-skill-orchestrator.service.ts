@@ -1617,21 +1617,35 @@ export class BaSkillOrchestratorService {
       new Set(rows.flatMap((r) => r.ftcTestCaseRefs ?? []).filter(Boolean)),
     );
     const statusByRef = new Map<string, string>();
+    const sprintFkByRef = new Map<string, string | null>();
+    const sprintCodeByRef = new Map<string, string | null>();
     if (allRefs.length > 0) {
+      // Pull both the denormalized exec status AND the sprint FK so RTM can
+      // filter/group by canonical sprint without another round-trip.
       const tcs = await this.prisma.baTestCase.findMany({
         where: { testCaseId: { in: allRefs } },
-        select: { testCaseId: true, executionStatus: true },
+        select: { testCaseId: true, executionStatus: true, sprintDbId: true, sprintId: true },
       });
-      for (const tc of tcs) statusByRef.set(tc.testCaseId, tc.executionStatus);
+      for (const tc of tcs) {
+        statusByRef.set(tc.testCaseId, tc.executionStatus);
+        sprintFkByRef.set(tc.testCaseId, tc.sprintDbId);
+        sprintCodeByRef.set(tc.testCaseId, tc.sprintId);
+      }
     }
 
     return rows.map((r) => {
       const refs = r.ftcTestCaseRefs ?? [];
       const counts = { PASS: 0, FAIL: 0, BLOCKED: 0, SKIPPED: 0, NOT_RUN: 0 };
+      const sprintFkSet = new Set<string>();
+      const sprintCodeSet = new Set<string>();
       for (const ref of refs) {
         const s = statusByRef.get(ref) ?? 'NOT_RUN';
         if (s in counts) counts[s as keyof typeof counts] += 1;
         else counts.NOT_RUN += 1;
+        const fk = sprintFkByRef.get(ref);
+        if (fk) sprintFkSet.add(fk);
+        const code = sprintCodeByRef.get(ref);
+        if (code) sprintCodeSet.add(code);
       }
       // Collapse to a single verdict so the RTM table can show a pill at a
       // glance: any FAIL → FAIL, any BLOCKED → BLOCKED, all PASS → PASS, else
@@ -1643,7 +1657,13 @@ export class BaSkillOrchestratorService {
         else if (counts.PASS === refs.length) verdict = 'PASS';
         else if (counts.PASS > 0 || counts.SKIPPED > 0) verdict = 'MIXED';
       }
-      return { ...r, execCounts: counts, execVerdict: verdict };
+      return {
+        ...r,
+        execCounts: counts,
+        execVerdict: verdict,
+        sprintDbIds: Array.from(sprintFkSet),
+        sprintCodes: Array.from(sprintCodeSet),
+      };
     });
   }
 

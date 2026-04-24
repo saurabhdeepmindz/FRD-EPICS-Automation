@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { getBaProject, getProjectRtm, type BaProject, type BaRtmRow } from '@/lib/ba-api';
+import {
+  getBaProject,
+  getProjectRtm,
+  listSprints,
+  type BaProject,
+  type BaRtmRow,
+  type BaSprint,
+} from '@/lib/ba-api';
 import { ArrowLeft, Loader2, Download, Filter, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
@@ -15,6 +22,7 @@ export default function RtmViewerPage() {
 
   const [project, setProject] = useState<BaProject | null>(null);
   const [rows, setRows] = useState<BaRtmRow[]>([]);
+  const [sprints, setSprints] = useState<BaSprint[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -26,15 +34,21 @@ export default function RtmViewerPage() {
   const [filterLayer, setFilterLayer] = useState('');
   const [filterTests, setFilterTests] = useState<'' | 'covered' | 'uncovered'>('');
   const [filterExec, setFilterExec] = useState<'' | 'PASS' | 'FAIL' | 'BLOCKED' | 'MIXED' | 'NOT_RUN'>('');
+  const [filterSprint, setFilterSprint] = useState(''); // sprintDbId | legacy:<code> | '' (all)
   const [filterOwasp, setFilterOwasp] = useState('');
   const [backfilling, setBackfilling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [proj, rtm] = await Promise.all([getBaProject(projectId), getProjectRtm(projectId)]);
+      const [proj, rtm, sp] = await Promise.all([
+        getBaProject(projectId),
+        getProjectRtm(projectId),
+        listSprints(projectId).catch(() => [] as BaSprint[]),
+      ]);
       setProject(proj);
       setRows(rtm);
+      setSprints(sp);
     } catch {
       // ignore
     } finally {
@@ -54,6 +68,16 @@ export default function RtmViewerPage() {
     [rows],
   );
 
+  // Legacy sprint codes seen in the data but NOT represented by a BaSprint row
+  // — we still want users to filter on them so pre-B1 data stays discoverable.
+  const knownSprintCodes = useMemo(() => new Set(sprints.map((s) => s.sprintCode)), [sprints]);
+  const orphanSprintCodes = useMemo(
+    () => [...new Set(rows.flatMap((r) => r.sprintCodes ?? []))]
+      .filter((c) => !knownSprintCodes.has(c))
+      .sort(),
+    [rows, knownSprintCodes],
+  );
+
   // Filtered rows
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -68,13 +92,24 @@ export default function RtmViewerPage() {
       if (filterTests === 'covered' && tcCount === 0) return false;
       if (filterTests === 'uncovered' && tcCount > 0) return false;
       if (filterExec && (r.execVerdict ?? 'NOT_RUN') !== filterExec) return false;
+      if (filterSprint) {
+        if (filterSprint.startsWith('legacy:')) {
+          // Only match rows whose TCs carry the free-text code AND no FK
+          // (otherwise they'd already show under the canonical sprint).
+          const code = filterSprint.slice('legacy:'.length);
+          if (!(r.sprintCodes ?? []).includes(code)) return false;
+          if ((r.sprintDbIds ?? []).length > 0) return false;
+        } else {
+          if (!(r.sprintDbIds ?? []).includes(filterSprint)) return false;
+        }
+      }
       if (filterOwasp) {
         const all = [...(r.owaspWebCategories ?? []), ...(r.owaspLlmCategories ?? [])];
         if (!all.includes(filterOwasp)) return false;
       }
       return true;
     });
-  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer, filterTests, filterExec, filterOwasp]);
+  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer, filterTests, filterExec, filterSprint, filterOwasp]);
 
   // CSV export
   const handleExportCsv = useCallback(() => {
@@ -215,13 +250,41 @@ export default function RtmViewerPage() {
           <option value="MIXED">Mixed</option>
           <option value="NOT_RUN">Not run</option>
         </select>
+        <select
+          value={filterSprint}
+          onChange={(e) => setFilterSprint(e.target.value)}
+          className="text-xs border border-input rounded px-2 py-1 bg-background"
+          title="Filter by the sprint a TC is scoped to"
+        >
+          <option value="">Sprint: All</option>
+          {sprints
+            .slice()
+            .sort((a, b) => {
+              const order = { ACTIVE: 0, PLANNING: 1, COMPLETED: 2, CANCELLED: 3 } as const;
+              return order[a.status] - order[b.status] || a.sprintCode.localeCompare(b.sprintCode);
+            })
+            .map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.sprintCode} — {s.name} [{s.status}]
+              </option>
+            ))}
+          {orphanSprintCodes.length > 0 && (
+            <optgroup label="— legacy (free-text) —">
+              {orphanSprintCodes.map((code) => (
+                <option key={`legacy:${code}`} value={`legacy:${code}`}>
+                  {code} (legacy)
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </select>
         <select value={filterOwasp} onChange={(e) => setFilterOwasp(e.target.value)} className="text-xs border border-input rounded px-2 py-1 bg-background">
           <option value="">All OWASP</option>
           {owaspCategories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer || filterTests || filterExec || filterOwasp) && (
+        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer || filterTests || filterExec || filterSprint || filterOwasp) && (
           <button
-            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); setFilterTests(''); setFilterExec(''); setFilterOwasp(''); }}
+            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); setFilterTests(''); setFilterExec(''); setFilterSprint(''); setFilterOwasp(''); }}
             className="text-xs text-primary hover:underline"
           >
             Clear filters
