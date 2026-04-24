@@ -18,6 +18,7 @@ import { BaLldNarrativeService, MAX_TOTAL_ATTACHMENT_BYTES } from './ba-lld-narr
 import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
 import { BaUnitTestExportService } from './ba-unit-test-export.service';
 import { BaContractTestExportService } from './ba-contract-test-export.service';
+import { BaOpenApiExportService } from './ba-openapi-export.service';
 
 @Controller('ba')
 export class BaLldController {
@@ -27,7 +28,39 @@ export class BaLldController {
     private readonly narrative: BaLldNarrativeService,
     private readonly unitTestExport: BaUnitTestExportService,
     private readonly contractTestExport: BaContractTestExportService,
+    private readonly openapiExport: BaOpenApiExportService,
   ) {}
+
+  // ─── OpenAPI / Swagger for the customer's target app (derived from LLD) ──
+
+  /** GET /api/ba/lld-artifacts/:id/openapi.json — raw OpenAPI 3.0 JSON for one LLD. */
+  @Get('lld-artifacts/:id/openapi.json')
+  async openapiJson(@Param('id') lldArtifactDbId: string, @Res() res: Response) {
+    const { spec } = await this.openapiExport.buildModuleSpec(lldArtifactDbId);
+    res.set({ 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(spec, null, 2));
+  }
+
+  /** GET /api/ba/lld-artifacts/:id/openapi.yaml — YAML flavour of the same spec. */
+  @Get('lld-artifacts/:id/openapi.yaml')
+  async openapiYaml(@Param('id') lldArtifactDbId: string, @Res() res: Response) {
+    const { spec, filenameStem } = await this.openapiExport.buildModuleSpec(lldArtifactDbId);
+    res.set({
+      'Content-Type': 'text/yaml; charset=utf-8',
+      'Content-Disposition': `inline; filename="${filenameStem}.yaml"`,
+    });
+    res.end(this.openapiExport.toYaml(spec));
+  }
+
+  /** GET /api/ba/lld-artifacts/:id/swagger — live Swagger UI HTML for one LLD. */
+  @Get('lld-artifacts/:id/swagger')
+  async swaggerModule(@Param('id') lldArtifactDbId: string, @Res() res: Response) {
+    const { spec } = await this.openapiExport.buildModuleSpec(lldArtifactDbId);
+    const specUrl = `/api/ba/lld-artifacts/${lldArtifactDbId}/openapi.json`;
+    const pageTitle = (spec.info as { title?: string } | undefined)?.title ?? 'API';
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(this.openapiExport.swaggerUiHtml(specUrl, pageTitle));
+  }
 
   /**
    * D1 — GET /api/ba/lld-artifacts/:id/unit-tests-zip

@@ -12,6 +12,7 @@ import type { Response } from 'express';
 import { BaSkillOrchestratorService, SKILL_ORDER, type SkillName } from './ba-skill-orchestrator.service';
 import { BaExportService } from './ba-export.service';
 import { BaArtifactExportService } from './ba-artifact-export.service';
+import { BaOpenApiExportService } from './ba-openapi-export.service';
 
 @Controller('ba')
 export class BaSkillController {
@@ -19,7 +20,39 @@ export class BaSkillController {
     private readonly orchestrator: BaSkillOrchestratorService,
     private readonly exportService: BaExportService,
     private readonly artifactExport: BaArtifactExportService,
+    private readonly openapiExport: BaOpenApiExportService,
   ) {}
+
+  // ─── Project-level OpenAPI / Swagger (aggregates all LLDs) ──────────────
+
+  /** GET /api/ba/projects/:id/openapi.json — project-aggregated OpenAPI 3.0 JSON. */
+  @Get('projects/:id/openapi.json')
+  async projectOpenapiJson(@Param('id') projectId: string, @Res() res: Response) {
+    const { spec } = await this.openapiExport.buildProjectSpec(projectId);
+    res.set({ 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(spec, null, 2));
+  }
+
+  /** GET /api/ba/projects/:id/openapi.yaml — YAML flavour. */
+  @Get('projects/:id/openapi.yaml')
+  async projectOpenapiYaml(@Param('id') projectId: string, @Res() res: Response) {
+    const { spec, filenameStem } = await this.openapiExport.buildProjectSpec(projectId);
+    res.set({
+      'Content-Type': 'text/yaml; charset=utf-8',
+      'Content-Disposition': `inline; filename="${filenameStem}.yaml"`,
+    });
+    res.end(this.openapiExport.toYaml(spec));
+  }
+
+  /** GET /api/ba/projects/:id/swagger — live Swagger UI aggregating all modules. */
+  @Get('projects/:id/swagger')
+  async projectSwagger(@Param('id') projectId: string, @Res() res: Response) {
+    const { spec } = await this.openapiExport.buildProjectSpec(projectId);
+    const specUrl = `/api/ba/projects/${projectId}/openapi.json`;
+    const pageTitle = (spec.info as { title?: string } | undefined)?.title ?? 'API';
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(this.openapiExport.swaggerUiHtml(specUrl, pageTitle));
+  }
 
   // ─── Skill Execution ───────────────────────────────────────────────────
 

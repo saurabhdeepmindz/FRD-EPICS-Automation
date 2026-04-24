@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   ArrowLeft, Loader2, Save, Rocket, Upload, Plus, AlertTriangle, FileText, Eye, Download,
-  Sparkles, User as UserIcon, FlaskConical, Network,
+  Sparkles, User as UserIcon, FlaskConical, Network, BookOpen,
 } from 'lucide-react';
 import {
   getLldConfig,
@@ -22,6 +22,7 @@ import {
   getBaModule,
   downloadUnitTestsZip,
   downloadContractTestsZip,
+  lldSwaggerUrl,
   CATEGORY_LABELS,
   type BaLldConfig,
   type BaMasterDataCategory,
@@ -264,6 +265,17 @@ export default function LldConfiguratorPage() {
               >
                 <Network className="h-3.5 w-3.5 mr-1" />
                 Export Contract Tests
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                asChild
+                title="Live Swagger UI for the API described by this LLD. Auto-generated from pseudo-code endpoints + class schemas. Opens in a new tab."
+              >
+                <a href={lldSwaggerUrl(lldArtifactId)} target="_blank" rel="noopener noreferrer">
+                  <BookOpen className="h-3.5 w-3.5 mr-1" />
+                  View API Spec (Swagger)
+                </a>
               </Button>
             </>
           )}

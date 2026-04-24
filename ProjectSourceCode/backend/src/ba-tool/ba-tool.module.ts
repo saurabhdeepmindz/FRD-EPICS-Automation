@@ -20,6 +20,7 @@ import { BaAcCoverageService } from './ba-ac-coverage.service';
 import { BaPlaywrightExportService } from './ba-playwright-export.service';
 import { BaUnitTestExportService } from './ba-unit-test-export.service';
 import { BaContractTestExportService } from './ba-contract-test-export.service';
+import { BaOpenApiExportService } from './ba-openapi-export.service';
 import { BaTestRunService } from './ba-test-run.service';
 import { BaDefectService } from './ba-defect.service';
 import { BaRcaService } from './ba-rca.service';
@@ -52,6 +53,7 @@ import { ExportModule } from '../export/export.module';
     BaPlaywrightExportService,
     BaUnitTestExportService,
     BaContractTestExportService,
+    BaOpenApiExportService,
     BaTestRunService,
     BaDefectService,
     BaRcaService,

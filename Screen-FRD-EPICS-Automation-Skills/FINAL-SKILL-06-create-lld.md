@@ -185,6 +185,18 @@ Rules for pseudo-code files:
 9. **Infra / CI files** (`LLD-PseudoCode/infra/...`) are pseudo-YAML / Dockerfile / `.env.example` with inline comments pointing at the Env Var Catalog section.
 10. **Tests** go under `LLD-PseudoCode/tests/` with the same traceability format. Each test file scopes to a Class-under-test.
 11. **Minimum output** — at least one file under `backend/`, at least one under `frontend/` (if frontend stack is selected), at least one `.sql` or schema file under `database/`, and at least one test scaffold under `tests/`. A typical module produces 8–15 files.
+12. **OpenAPI-friendly annotations on every HTTP endpoint** — the BA Tool auto-derives a live Swagger spec at two levels (per-LLD and per-project) by scanning pseudo-code. Richer docstrings produce richer Swagger UI. For every route handler:
+    - Add a one-line `@summary` on the handler's docstring (first line after the opening comment). This becomes the endpoint title in Swagger.
+    - Add `@param name: type — description` for each path/query/body parameter.
+    - Add `@returns StatusCode ResponseType — description` for the happy-path response. Include common error codes the same way: `@returns 400 ValidationError — invalid payload`.
+    - Keep the pseudo-code method signature typed — the BA Tool's regex-grade schema extractor reads `field: Type` declarations to populate OpenAPI component schemas. Avoid `any` / `object` / untyped class fields where a real type is known.
+    - For request/response shapes, prefer a named `interface`/`class`/`pydantic.BaseModel` over inline object literals — named types become reusable `components.schemas` entries.
+
+   **Per-framework examples (annotate consistently with whatever the Architect picked):**
+
+   - **NestJS / Express**: `@Get('/users/:id')` decorators or `router.get('/users/:id', …)` call-sites are already detected. Add a JSDoc block immediately above with `@summary`, `@param`, `@returns`.
+   - **FastAPI / Flask**: same — `@app.get('/users/{id}')` is detected; add a PEP-257 docstring with `@summary` + `@param` + `@returns`. Use pydantic `BaseModel` subclasses for request/response types so the extractor can build proper schemas.
+   - **Spring Boot**: `@GetMapping("/users/{id}")` is detected; add a JavaDoc `@summary` + `@param` + `@return` + `@throws`. Use plain DTO classes with typed `private` fields — they become schemas.
 
 ---
 

@@ -11,6 +11,7 @@ import {
   getProjectExecutionHealth,
   getSprintBurndown,
   listSprints,
+  projectSwaggerUrl,
   type BaProject,
   type BaExecutionHealth,
   type BaBurndown,
@@ -19,7 +20,7 @@ import {
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
 import { BurndownChart } from '@/components/ba-tool/BurndownChart';
-import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock, BookOpen } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -199,6 +200,17 @@ export default function BaProjectWorkspacePage() {
               <BarChart3 className="h-3.5 w-3.5 mr-1" />
               RTM
             </Link>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            asChild
+            title="Live Swagger UI aggregated across every LLD in this project. Auto-generated from pseudo-code. Opens in a new tab."
+          >
+            <a href={projectSwaggerUrl(projectId)} target="_blank" rel="noopener noreferrer">
+              <BookOpen className="h-3.5 w-3.5 mr-1" />
+              API Spec
+            </a>
           </Button>
           <Button size="sm" variant="outline" asChild>
             <Link href={`/ba-tool/project/${projectId}/defects`}>

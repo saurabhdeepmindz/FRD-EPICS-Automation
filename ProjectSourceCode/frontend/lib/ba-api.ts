@@ -1253,6 +1253,34 @@ export function downloadContractTestsZip(lldArtifactDbId: string, filename: stri
 }
 
 /**
+ * OpenAPI / Swagger — live spec for the customer's target application,
+ * derived from the LLD pseudo-code. Returns the backend URL (suitable for
+ * `window.open(...)` / `<a href=…>`). We need absolute URLs because the
+ * Swagger UI page is served by the Node backend, not by Next.js.
+ */
+const BACKEND_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+
+export function lldSwaggerUrl(lldArtifactDbId: string): string {
+  return `${BACKEND_BASE}/api/ba/lld-artifacts/${lldArtifactDbId}/swagger`;
+}
+export function lldOpenapiJsonUrl(lldArtifactDbId: string): string {
+  return `${BACKEND_BASE}/api/ba/lld-artifacts/${lldArtifactDbId}/openapi.json`;
+}
+export function lldOpenapiYamlUrl(lldArtifactDbId: string): string {
+  return `${BACKEND_BASE}/api/ba/lld-artifacts/${lldArtifactDbId}/openapi.yaml`;
+}
+
+export function projectSwaggerUrl(projectId: string): string {
+  return `${BACKEND_BASE}/api/ba/projects/${projectId}/swagger`;
+}
+export function projectOpenapiJsonUrl(projectId: string): string {
+  return `${BACKEND_BASE}/api/ba/projects/${projectId}/openapi.json`;
+}
+export function projectOpenapiYamlUrl(projectId: string): string {
+  return `${BACKEND_BASE}/api/ba/projects/${projectId}/openapi.yaml`;
+}
+
+/**
  * F3: Re-verify AC coverage first, then stream the Playwright ZIP. Returns
  * the fresh coverage bundle so the UI can show "X uncovered" etc. before the
  * download completes. The ZIP itself is always fresh server-side (it reads
