@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `2efaac6 feat(playwright): F3 drift badge + Re-verify+Export`
+> **Last updated:** 2026-04-24 — after `1257b09 feat(tdd): D1 unit-test scaffold export`
 
 Priority scale:
 
@@ -27,7 +27,6 @@ _P1 lane is clear. Next push starts from P2 (TDD codegen)._
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| D1 | **Unit-test scaffolds (Jest/Pytest)** derived from pseudo-code functions | Gives devs a failing test on day 1. Closes the loop FRD→EPIC→US→SubTask→LLD→**UnitTest**→FTC. | L |
 | D2 | **Contract-test codegen** between service layers identified in LLD | Catches integration breakage early. | L |
 
 ### P3 — UX Polish
@@ -109,6 +108,7 @@ _P1 lane is clear. Next push starts from P2 (TDD codegen)._
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **D1: Unit-test scaffold export (TDD codegen)** — new `BaUnitTestExportService` parses LLD pseudo-files via language-aware regex (Python `def`, TS/JS `function`/arrow/class, Java method) and emits runnable ZIPs with per-language subdirectories: `python/` (pytest + requirements.txt + pytest.ini + conftest.py), `javascript/` (Jest + ts-jest + tsconfig + package.json), `java/` (JUnit 5 + Maven pom.xml); every test starts red with explicit `pytest.fail`/`expect(true).toBe(false)`/`fail()` so devs see the exact scaffold turn green as they implement; new endpoint `GET /api/ba/lld-artifacts/:id/unit-tests-zip` + "Export Unit Tests" button (FlaskConical icon) on LLD Workbench header; README in each ZIP lists all generated files + runner commands (`1257b09`)
 - ✅ 2026-04-24 — **F3: Playwright export drift badge + Re-verify+Export button** — FTC workbench header now shows the AC coverage summary alongside the export button; amber `!N` badge on "Export Playwright Suite" when gaps exist; new `ShieldCheck`-icon "Re-verify + Export" button chains `analyzeAcCoverage` + `downloadPlaywrightZip` and alerts with fresh coverage numbers when uncovered/partial ACs remain; new API helper `reverifyAndExportPlaywright()` returns the fresh bundle so the UI can update the drift badge in-place (`2efaac6`)
 - ✅ 2026-04-24 — **B4: Sprint FK filters in RTM + FTC + Defects** — backend now enriches RTM rows with `sprintDbIds[]` + `sprintCodes[]` aggregated from linked TCs; defect list endpoint selects `sprintDbId` + nested `sprint { sprintCode, name, status }` on both TC and firstSeenRun; all three pages (RTM, FTC artifact view, Defects) get unified sprint filter dropdowns backed by real `BaSprint` rows plus an `optgroup` for orphan legacy free-text codes; canonical FK match preferred, string fallback when TC has no FK (`d0ae1ce`)
 - ✅ 2026-04-24 — **B3: Sprint burndown chart on dashboard** — new endpoint `GET /api/ba/sprints/:id/burndown` returning `{ sprint, totalScope, days[], ideal[], totals }`; backend computes first-run-per-TC-in-sprint for accurate burndown semantics (re-runs don't move the needle); inline-SVG `BurndownChart` component (ideal dashed vs actual solid blue, markers with tooltips, responsive viewport); dashboard tile with sprint picker defaulting to most-recent ACTIVE sprint + PASS/FAIL/BLOCKED/SKIPPED/NOT_RUN totals underneath (`b5806b9`)
