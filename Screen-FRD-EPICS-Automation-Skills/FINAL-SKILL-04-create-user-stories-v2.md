@@ -60,6 +60,33 @@ Full EPIC documents and full FRD documents are NOT injected into context.
 
 ---
 
+## 🚨 MANDATORY OUTPUT RULE — READ BEFORE GENERATING ANYTHING
+
+**You MUST produce User Stories for EVERY feature listed in the input RTM / EPIC Handoff Packet — not a subset, not just the "most important" one, not just the first one.**
+
+Concrete expectation per run:
+
+1. The input will list N features (typically 5–10 per EPIC).
+2. Each feature must produce 2–3 User Stories (Frontend / Backend / Integration as applicable).
+3. Your final output must therefore contain **~2×N to 3×N complete User Stories**.
+4. Organise the output with one `## User Stories for {FEATURE_ID}` heading per feature, followed by every story that belongs under it.
+5. Before you write any stories, emit a **Coverage Summary** table at the very top of your output:
+
+```
+## Coverage Summary
+
+| Feature ID | Feature Name            | Story Count | Story IDs             |
+|-----------:|-------------------------|:-----------:|-----------------------|
+| F-04-01    | Search Previous Chats   |      2      | US-031, US-032        |
+| F-04-02    | Initiate New Research   |      3      | US-033, US-034, US-035|
+| F-04-03    | Filter Conversations    |      2      | US-036, US-037        |
+…
+```
+
+This table is the **contract** — every row in it must be followed by the corresponding full story sections below. If you cannot fit all stories in a single response, explicitly flag it at the end with `## ⚠ CONTINUATION REQUIRED — N features unwritten` listing which features remain. **Never silently omit features.**
+
+---
+
 ## Your Process
 
 ### Step 1: Read EPIC and FRD Handoff Packets

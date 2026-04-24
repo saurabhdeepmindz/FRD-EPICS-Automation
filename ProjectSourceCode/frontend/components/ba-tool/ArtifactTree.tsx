@@ -196,7 +196,22 @@ function getArtifactsForSkill(skillName: string, artifacts: BaArtifact[]): BaArt
   };
   const type = typeMap[skillName];
   if (!type) return [];
-  return artifacts.filter((a) => a.artifactType === type);
+  // Re-runs of a skill create new BaArtifact rows (versioned history). The
+  // tree should surface only the LATEST per artifactId so users don't see
+  // stale copies — this was previously showing 3 identical USER_STORY-MOD-04
+  // nodes when SKILL-04 had been re-run. LLD + FTC intentionally expose
+  // every version because stack-specific LLDs (langchain-v3 etc.) coexist.
+  const matching = artifacts.filter((a) => a.artifactType === type);
+  if (type === 'LLD' || type === 'FTC') return matching;
+  const latestByArtifactId = new Map<string, BaArtifact>();
+  const ts = (a: BaArtifact) => (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+  for (const a of matching) {
+    const prev = latestByArtifactId.get(a.artifactId);
+    if (!prev || ts(a) > ts(prev)) {
+      latestByArtifactId.set(a.artifactId, a);
+    }
+  }
+  return Array.from(latestByArtifactId.values());
 }
 
 function formatArtifactLabel(artifact: BaArtifact): string {
