@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `9520d9d feat(ftc): tabular run history`
+> **Last updated:** 2026-04-24 — after `38f054f feat(rca): evidence attachments into AI RCA prompt`
 
 Priority scale:
 - **P0** — Top (do next, blocks or degrades the flow we already shipped)
@@ -15,10 +15,9 @@ Priority scale:
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| 1 | **AI RCA reads defect attachment text** | Today the AI RCA prompt ignores the extracted text from logs/screenshots the tester uploaded. One-line fix: concat `defect.attachments[].extractedText` into the prompt context. Known gap from Phase 2a. | XS (~15 min) |
-| 2 | **RTM row badges reflect latest run** | BaTestCase already has `executionStatus` + `latestRunId` denormalized. RTM table still shows stale badges. Wire them into [RtmPage](ProjectSourceCode/frontend/app/ba-tool/project/[id]/rtm/page.tsx). | S (~1 h) |
-| 3 | **Dashboard tile: "Test Execution Health"** | Module/project dashboard needs a PASS/FAIL/BLOCK roll-up. Without it, managers can't see where the red is. Uses existing `executionStatus` counts. | S (~1 h) |
-| 4 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
+| 1 | **RTM row badges reflect latest run** | BaTestCase already has `executionStatus` + `latestRunId` denormalized. RTM table still shows stale badges. Wire them into [RtmPage](ProjectSourceCode/frontend/app/ba-tool/project/[id]/rtm/page.tsx). | S (~1 h) |
+| 2 | **Dashboard tile: "Test Execution Health"** | Module/project dashboard needs a PASS/FAIL/BLOCK roll-up. Without it, managers can't see where the red is. Uses existing `executionStatus` counts. | S (~1 h) |
+| 3 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
 
 ## P1 — High
 
@@ -98,6 +97,7 @@ Priority scale:
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **AI RCA now ingests attachment evidence** (logs, OCR'd screenshots, docs); per-file 2 KB cap, 8 KB total, system prompt updated to cite filenames (`38f054f`)
 - ✅ 2026-04-24 — Tabular run history in ExecutionHistoryPanel (`9520d9d`)
 - ✅ 2026-04-23 — Phase 2a: execution tracking + defect capture + AI/tester RCA (`a7dd8b0`)
 - ✅ 2026-04-23 — AC coverage reads real user-facing ACs, not FRD process DoD (`00e6454`)
