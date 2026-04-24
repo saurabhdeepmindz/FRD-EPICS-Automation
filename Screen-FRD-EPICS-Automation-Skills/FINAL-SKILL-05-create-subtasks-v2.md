@@ -476,9 +476,68 @@ Project Structure:
 
 #### Section 21 — Sequence Diagram Inputs **[AUTOMATION CRITICAL — LLD Generation]**
 
-This section extracts the data from Integration Points (Section 15) in the exact format the automation tool needs to generate UML sequence diagrams for the LLD.
+This section drives two outputs:
 
-**Format:**
+1. **A visually-rendered UML sequence diagram** — produced by emitting a Mermaid `sequenceDiagram` fenced block (the frontend renders it as a swim-lane diagram, and the DOCX/PDF exports show the Mermaid source so it can be regenerated).
+2. **A deterministic text-based message sequence** — used by downstream SKILL-06 (LLD) for programmatic consumption.
+
+**Both forms are REQUIRED.** Emit the Mermaid block first, then the textual message sequence below it.
+
+---
+
+**Mermaid (UML swim-lane):**
+
+````
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AC as AdminController
+    participant TS as TaskService
+    participant AUTH as AuthService
+    participant PS as ProfessionalService
+    participant TR as TaskRepository
+    participant NS as NotificationService
+    participant AL as AuditLogService
+
+    AC->>TS: createTask(taskType, professionalId, priorityLevel, dueDateTime, taskNotes)
+    TS->>AUTH: getCurrentUser()
+    AUTH-->>TS: User{id, role}
+    TS->>TS: validate inputs (Steps 3-5)
+    TS->>PS: getProfessionalById(professionalId) [TBD-Future]
+    PS-->>TS: Professional{status} [TBD-Future assumed]
+    TS->>TR: save(task)
+    TR-->>TS: Task{taskId}
+    TS->>NS: sendTaskAssignmentNotification(professionalId, taskId)
+    NS-->>TS: NotificationStatus
+    TS->>AL: logAdminAction(adminId, "TASK_ASSIGNED", taskId)
+    TS-->>AC: TaskConfirmationResponse{taskId, timestamp, notificationStatus}
+
+    alt validation fails
+        TS-->>AC: throw TaskValidationException (HTTP 400)
+    else professional not found
+        TS-->>AC: throw ProfessionalNotFoundException (HTTP 404)
+    else persistence fails
+        TS-->>AC: throw TaskPersistenceException (HTTP 500)
+    else notification fails
+        NS-->>TS: FAILED
+        TS-->>AC: 200 with notificationStatus=FAILED
+    end
+```
+````
+
+Mermaid syntax rules the AI must follow:
+
+- Use `sequenceDiagram` as the first line (lowercase; Mermaid is case-sensitive here).
+- `participant <shortAlias> as <LongName>` for each participant. Keep the `as` label in sync with the textual message sequence below.
+- Use `->>` for synchronous request, `-->>` for response/dashed return.
+- Use `alt` / `else` / `end` blocks for exception flows (matches UML `alt` fragment).
+- Mark TBD-Future interactions with `[TBD-Future]` or `[TBD-Future TBD-NNN]` in the message label so they're visible in the rendered diagram.
+- Include `autonumber` at the top so step numbers appear automatically in the rendered swim-lane diagram.
+- Do NOT emit any Mermaid features the 10.x release doesn't support (e.g. no `box` grouping, no `links`).
+
+---
+
+**Textual Message Sequence (for LLD codegen):**
 
 ```
 Sequence Diagram: createTask() — TaskService
@@ -513,7 +572,7 @@ Exception Flows (shown as alt blocks in UML):
   alt notification fails → notificationStatus = FAILED, task persists, return 200 with FAILED status
 ```
 
-**Rule:** Every Backend and Integration SubTask must have Section 21 populated. Frontend SubTasks may omit this section. TBD-Future participants are included with their assumed interfaces and marked [TBD-Future].
+**Rule:** Every Backend and Integration SubTask must have Section 21 populated with BOTH the Mermaid diagram AND the textual message sequence. Frontend SubTasks may omit this section (or emit a minimal Mermaid diagram for any HTTP call they make). TBD-Future participants appear in both forms with their assumed interfaces marked `[TBD-Future]`.
 
 #### Section 22 — End-to-End Integration Flow **[AUTOMATION CRITICAL — Sprint Sequencing]**
 
