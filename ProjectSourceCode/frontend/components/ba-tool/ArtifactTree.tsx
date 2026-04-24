@@ -236,10 +236,19 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
           //   - subtask_<N>_st_<usXX>_<type>_<num>_<slug>  (numbered variant)
           // Both are empty-content stubs that precede a `subtask_header`
           // row carrying the actual body.
+          // A "title stub" section carries no real body — it's just the
+          // heading text that precedes the `subtask_header` row. The AI
+          // sometimes emits `---` (markdown horizontal rule) or `***` or
+          // bare whitespace as filler, so treat any of those as empty too.
+          const stubContent = (s.content ?? '').trim();
+          const isEmptyLikeContent =
+            stubContent.length === 0 ||
+            /^[-*_\s]{1,6}$/.test(stubContent) ||
+            /^(---|\*\*\*|___)$/.test(stubContent);
           const isTitleStub =
             (/^st_[a-z0-9_]+$/.test(s.sectionKey) || /^subtask_\d+_st_/.test(s.sectionKey)) &&
             s.sectionKey !== 'subtask_header' &&
-            (!s.content || s.content.trim().length === 0);
+            isEmptyLikeContent;
           if (isTitleStub && next && next.sectionKey === 'subtask_header') {
             // Keep the subtask_header row (which has the content) but show
             // it under the title stub's label, so the tree reads naturally.
@@ -248,9 +257,14 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
             continue;
           }
           // Drop bare `subtask_header` rows that didn't follow a title stub
-          // (they'd be orphans). Also drop the empty title stubs when there
-          // wasn't a subtask_header after them.
-          if (s.sectionKey === 'subtask_header' && (!s.content || s.content.trim().length === 0)) continue;
+          // (they'd be orphans with empty-like content). Also drop the empty
+          // title stubs when there wasn't a subtask_header after them.
+          const currentTrimmed = (s.content ?? '').trim();
+          const currentEmptyLike =
+            currentTrimmed.length === 0 ||
+            /^[-*_\s]{1,6}$/.test(currentTrimmed) ||
+            /^(---|\*\*\*|___)$/.test(currentTrimmed);
+          if (s.sectionKey === 'subtask_header' && currentEmptyLike) continue;
           if (isTitleStub) continue;
           out.push(s);
         }
