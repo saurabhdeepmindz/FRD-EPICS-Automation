@@ -13,7 +13,7 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { BaDefectService, MAX_DEFECT_ATTACHMENT_BYTES, UpdateDefectPayload } from './ba-defect.service';
 import { BaRcaService, SaveTesterRcaPayload } from './ba-rca.service';
-import { BaTestRunService, CreateTestRunPayload } from './ba-test-run.service';
+import { BaTestRunService, BulkCreateTestRunPayload, CreateTestRunPayload } from './ba-test-run.service';
 
 /**
  * Phase 2a — execution tracking endpoints.
@@ -38,6 +38,12 @@ export class BaExecutionController {
   @Post('test-cases/:id/runs')
   createRun(@Param('id') testCaseId: string, @Body() payload: CreateTestRunPayload) {
     return this.runs.createRun(testCaseId, payload);
+  }
+
+  /** POST /api/ba/test-cases/bulk-runs — same run payload recorded across many TCs. */
+  @Post('test-cases/bulk-runs')
+  bulkCreateRuns(@Body() payload: BulkCreateTestRunPayload) {
+    return this.runs.bulkCreateRuns(payload);
   }
 
   /** GET /api/ba/test-cases/:id/runs — run history for a TC (non-deleted). */

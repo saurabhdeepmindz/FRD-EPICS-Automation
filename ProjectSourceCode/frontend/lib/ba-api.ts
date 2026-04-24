@@ -1370,6 +1370,29 @@ export async function createTestRun(
   return data;
 }
 
+export interface BulkCreateTestRunPayload {
+  testCaseIds: string[];
+  status: BaTestRun['status'];
+  notes?: string | null;
+  executor?: string | null;
+  environment?: string | null;
+  sprintId?: string | null;
+  executedAt?: string | null;
+}
+
+export interface BulkRunResult {
+  requested: number;
+  created: number;
+  missingCount: number;
+  missingIds: string[];
+  runs: Array<{ testCaseId: string; runId: string }>;
+}
+
+export async function bulkCreateTestRuns(payload: BulkCreateTestRunPayload): Promise<BulkRunResult> {
+  const { data } = await api.post<BulkRunResult>(`/ba/test-cases/bulk-runs`, payload, { timeout: 60_000 });
+  return data;
+}
+
 export async function listTestRunsForTc(testCaseId: string): Promise<BaTestRun[]> {
   const { data } = await api.get<BaTestRun[]>(`/ba/test-cases/${testCaseId}/runs`);
   return data;

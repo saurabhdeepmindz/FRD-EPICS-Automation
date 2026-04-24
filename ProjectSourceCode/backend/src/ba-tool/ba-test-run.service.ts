@@ -21,6 +21,17 @@ export interface CreateTestRunPayload {
   } | null;
 }
 
+export interface BulkCreateTestRunPayload {
+  testCaseIds: string[];
+  /** Same shared status + metadata applied to every TC in the list. No defect. */
+  status: 'PASS' | 'FAIL' | 'BLOCKED' | 'SKIPPED';
+  notes?: string | null;
+  executor?: string | null;
+  environment?: string | null;
+  sprintId?: string | null;
+  executedAt?: string | null;
+}
+
 const VALID_STATUS = new Set(['PASS', 'FAIL', 'BLOCKED', 'SKIPPED']);
 
 /**
@@ -108,6 +119,88 @@ export class BaTestRunService {
     }
 
     return { run, defectId };
+  }
+
+  /**
+   * Record the same run payload against many test cases at once. Used by the
+   * FTC artifact view's "Run selected" multi-select action — typical flow is
+   * a tester marking 20 pre-release smoke TCs as PASS in one keystroke.
+   *
+   * Defects are intentionally NOT supported here: bulk FAIL is the common
+   * case for a blocked environment (infra outage, fixture missing), which
+   * shouldn't spawn one noisy defect per TC. Testers open defects
+   * individually via the per-TC history panel when they actually have a bug
+   * to file.
+   */
+  async bulkCreateRuns(payload: BulkCreateTestRunPayload) {
+    if (!Array.isArray(payload.testCaseIds) || payload.testCaseIds.length === 0) {
+      throw new BadRequestException('testCaseIds must be a non-empty array');
+    }
+    if (payload.testCaseIds.length > 200) {
+      throw new BadRequestException('Cannot bulk-run more than 200 test cases at once');
+    }
+    const status = payload.status?.toUpperCase();
+    if (!status || !VALID_STATUS.has(status)) {
+      throw new BadRequestException(`Invalid status: ${payload.status}`);
+    }
+    const executedAt = payload.executedAt ? new Date(payload.executedAt) : new Date();
+    if (isNaN(executedAt.getTime())) {
+      throw new BadRequestException('Invalid executedAt timestamp');
+    }
+
+    // Unique IDs only — silently dedupe to avoid creating duplicate runs when
+    // the UI sends the same TC twice (paranoia, cheap to enforce server-side).
+    const uniqueIds = Array.from(new Set(payload.testCaseIds.filter(Boolean)));
+
+    // Validate all IDs exist first so we either run for all or for none of
+    // the invalid ones; keeps the "created count" honest.
+    const existing = await this.prisma.baTestCase.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true },
+    });
+    const existingSet = new Set(existing.map((t) => t.id));
+    const validIds = uniqueIds.filter((id) => existingSet.has(id));
+    const missingIds = uniqueIds.filter((id) => !existingSet.has(id));
+
+    const created: Array<{ testCaseId: string; runId: string }> = [];
+
+    // Each TC's run + denormalization pair is a small transaction. One TC
+    // failing shouldn't block the rest.
+    for (const id of validIds) {
+      try {
+        const run = await this.prisma.baTestRun.create({
+          data: {
+            testCaseId: id,
+            status,
+            notes: payload.notes?.trim() || null,
+            executor: payload.executor?.trim() || null,
+            environment: payload.environment?.trim() || null,
+            sprintId: payload.sprintId?.trim() || null,
+            executedAt,
+          },
+        });
+        await this.prisma.baTestCase.update({
+          where: { id },
+          data: {
+            executionStatus: status,
+            latestRunId: run.id,
+            lastRunAt: executedAt,
+            lastRunBy: payload.executor?.trim() || null,
+          },
+        });
+        created.push({ testCaseId: id, runId: run.id });
+      } catch (err) {
+        this.logger.warn(`bulkCreateRuns: failed for TC ${id}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    return {
+      requested: uniqueIds.length,
+      created: created.length,
+      missingCount: missingIds.length,
+      missingIds,
+      runs: created,
+    };
   }
 
   async listRunsForTestCase(testCaseId: string) {

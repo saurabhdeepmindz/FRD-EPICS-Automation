@@ -5,14 +5,16 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   analyzeAcCoverage,
+  bulkCreateTestRuns,
   listAcCoverage,
   listTestCasesByArtifact,
   type BaAcCoverage,
   type BaArtifact,
   type BaTestCase,
+  type BaTestRun,
 } from '@/lib/ba-api';
 import { cn } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw, Sparkles, User as UserIcon } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw, Sparkles, User as UserIcon, Play, X } from 'lucide-react';
 import { TestCaseBody, TestCaseAccordionHeader, usePseudoFileResolver } from './TestCaseBody';
 
 interface Props {
@@ -49,10 +51,17 @@ const CATEGORY_ORDER: string[] = [
  * are pulled into a synthetic "White-Box" group at the end. Categories
  * with zero TCs are hidden.
  */
-export function FtcArtifactView({ artifact, moduleDbId, activeTcId }: Props) {
+export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }: Props) {
   const [testCases, setTestCases] = useState<BaTestCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [openTc, setOpenTc] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+
+  const reload = useCallback(async () => {
+    const tcs = await listTestCasesByArtifact(artifact.id);
+    setTestCases(tcs);
+  }, [artifact.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +76,34 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId }: Props) {
     })();
     return () => { cancelled = true; };
   }, [artifact.id]);
+
+  const toggleTc = useCallback((tcId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(tcId)) next.delete(tcId);
+      else next.add(tcId);
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelected(new Set(testCases.map((t) => t.id)));
+  }, [testCases]);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const toggleGroup = useCallback((groupTcs: BaTestCase[]) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allSelected = groupTcs.every((t) => next.has(t.id));
+      if (allSelected) {
+        for (const t of groupTcs) next.delete(t.id);
+      } else {
+        for (const t of groupTcs) next.add(t.id);
+      }
+      return next;
+    });
+  }, []);
 
   const { resolve: resolveFiles } = usePseudoFileResolver(moduleDbId, testCases);
 
@@ -149,57 +186,294 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId }: Props) {
           </div>
         </div>
 
+        {/* ── Bulk-run toolbar ── */}
+        <div className="flex items-center justify-between gap-2 flex-wrap p-2 rounded-md border border-dashed border-border bg-muted/20 text-xs">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={selected.size > 0 && selected.size === testCases.length}
+              ref={(el) => {
+                if (el) el.indeterminate = selected.size > 0 && selected.size < testCases.length;
+              }}
+              onChange={() => (selected.size === testCases.length ? clearSelection() : selectAll())}
+              className="cursor-pointer"
+              title="Select all / none"
+            />
+            <span className="text-muted-foreground">
+              {selected.size === 0
+                ? 'Select test cases to record runs in bulk'
+                : `${selected.size} selected`}
+            </span>
+            {selected.size > 0 && (
+              <button onClick={clearSelection} className="text-primary hover:underline">
+                Clear
+              </button>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant={selected.size > 0 ? 'default' : 'outline'}
+            disabled={selected.size === 0}
+            onClick={() => setBulkDialogOpen(true)}
+            className="h-7"
+            title={selected.size === 0 ? 'Pick one or more TCs first' : `Record run for ${selected.size} TC(s)`}
+          >
+            <Play className="h-3 w-3 mr-1" />
+            Run selected {selected.size > 0 && `(${selected.size})`}
+          </Button>
+        </div>
+
         {/* ── AC Coverage Verifier ── */}
         <AcCoverageCard artifactDbId={artifact.id} />
 
         {/* ── Per-category groups ── */}
-        {grouped.map((group) => (
-          <section key={group.key} className="space-y-1.5">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border/60 pb-1">
-              {group.label} <span className="text-muted-foreground/70 font-normal">({group.tcs.length})</span>
-            </h4>
-            <div className="space-y-1.5">
-              {group.tcs.map((tc) => {
-                const isOpen = openTc === tc.id;
-                return (
-                  <div
-                    key={tc.id}
-                    id={`tc-${tc.id}`}
-                    className="rounded-md border border-border transition-all scroll-mt-4"
-                  >
-                    <button
-                      className="w-full flex items-center justify-between gap-2 p-2 text-left hover:bg-muted/30"
-                      onClick={() => setOpenTc(isOpen ? null : tc.id)}
+        {grouped.map((group) => {
+          const groupSelectedCount = group.tcs.filter((t) => selected.has(t.id)).length;
+          const groupAllSelected = groupSelectedCount === group.tcs.length && group.tcs.length > 0;
+          return (
+            <section key={group.key} className="space-y-1.5">
+              <div className="flex items-center gap-2 border-b border-border/60 pb-1">
+                <input
+                  type="checkbox"
+                  checked={groupAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = groupSelectedCount > 0 && !groupAllSelected;
+                  }}
+                  onChange={() => toggleGroup(group.tcs)}
+                  className="cursor-pointer"
+                  title={`Select all ${group.label}`}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex-1">
+                  {group.label} <span className="text-muted-foreground/70 font-normal">({group.tcs.length})</span>
+                  {groupSelectedCount > 0 && (
+                    <span className="ml-2 text-[10px] text-primary normal-case">· {groupSelectedCount} selected</span>
+                  )}
+                </h4>
+              </div>
+              <div className="space-y-1.5">
+                {group.tcs.map((tc) => {
+                  const isOpen = openTc === tc.id;
+                  const isSelected = selected.has(tc.id);
+                  return (
+                    <div
+                      key={tc.id}
+                      id={`tc-${tc.id}`}
+                      className={cn(
+                        'rounded-md border transition-all scroll-mt-4',
+                        isSelected ? 'border-primary/60 bg-primary/5' : 'border-border',
+                      )}
                     >
-                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                        <TestCaseAccordionHeader tc={tc} />
-                        {tc.isHumanModified ? (
-                          <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
-                            <UserIcon className="h-2.5 w-2.5" /> Edited
+                      <div className="flex items-center gap-2 p-2 hover:bg-muted/30">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleTc(tc.id)}
+                          className="cursor-pointer shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select ${tc.testCaseId}`}
+                        />
+                        <button
+                          className="flex-1 flex items-center justify-between gap-2 text-left min-w-0"
+                          onClick={() => setOpenTc(isOpen ? null : tc.id)}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                            <TestCaseAccordionHeader tc={tc} />
+                            {tc.isHumanModified ? (
+                              <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
+                                <UserIcon className="h-2.5 w-2.5" /> Edited
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
+                                <Sparkles className="h-2.5 w-2.5" /> AI
+                              </span>
+                            )}
+                          </div>
+                          <span className={cn('text-[10px] text-muted-foreground shrink-0')}>
+                            {isOpen ? '▼' : '▶'}
                           </span>
-                        ) : (
-                          <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
-                            <Sparkles className="h-2.5 w-2.5" /> AI
-                          </span>
-                        )}
+                        </button>
                       </div>
-                      <span className={cn('text-[10px] text-muted-foreground shrink-0')}>
-                        {isOpen ? '▼' : '▶'}
-                      </span>
-                    </button>
-                    {isOpen && (
-                      <div className="border-t border-border bg-muted/10">
-                        <TestCaseBody tc={tc} resolveFiles={resolveFiles} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ))}
+                      {isOpen && (
+                        <div className="border-t border-border bg-muted/10">
+                          <TestCaseBody tc={tc} resolveFiles={resolveFiles} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
       </CardContent>
+
+      {bulkDialogOpen && (
+        <BulkRunDialog
+          selectedTcs={testCases.filter((t) => selected.has(t.id))}
+          onClose={() => setBulkDialogOpen(false)}
+          onSuccess={async () => {
+            setBulkDialogOpen(false);
+            clearSelection();
+            await reload();
+            onUpdated?.();
+          }}
+        />
+      )}
     </Card>
+  );
+}
+
+// ─── Bulk Run Dialog ────────────────────────────────────────────────────────
+
+interface BulkRunDialogProps {
+  selectedTcs: BaTestCase[];
+  onClose: () => void;
+  onSuccess: () => void | Promise<void>;
+}
+
+function BulkRunDialog({ selectedTcs, onClose, onSuccess }: BulkRunDialogProps) {
+  const [status, setStatus] = useState<BaTestRun['status']>('PASS');
+  const [executor, setExecutor] = useState('');
+  const [environment, setEnvironment] = useState('');
+  const [sprintId, setSprintId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await bulkCreateTestRuns({
+        testCaseIds: selectedTcs.map((t) => t.id),
+        status,
+        executor: executor.trim() || null,
+        environment: environment.trim() || null,
+        sprintId: sprintId.trim() || null,
+        notes: notes.trim() || null,
+      });
+      if (res.created === 0) {
+        setError('No runs were created. Check server logs.');
+      } else {
+        if (res.missingCount > 0) {
+          alert(`Recorded ${res.created} runs. ${res.missingCount} TC(s) were not found and skipped.`);
+        }
+        await onSuccess();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      setError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-lg border border-border">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h3 className="text-sm font-semibold">Bulk Record Run — {selectedTcs.length} test case{selectedTcs.length > 1 ? 's' : ''}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto">
+          <div className="text-xs text-muted-foreground bg-muted/40 rounded p-2">
+            The same status + metadata will be recorded against each selected test case.
+            Need to open defects? Use the per-TC flow after this bulk pass — defects aren&apos;t created in bulk by design.
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold block mb-1">Status</label>
+            <div className="flex gap-1.5 flex-wrap">
+              {(['PASS', 'FAIL', 'BLOCKED', 'SKIPPED'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setStatus(s)}
+                  type="button"
+                  className={cn(
+                    'px-2.5 py-1 rounded text-xs font-bold border',
+                    status === s
+                      ? s === 'PASS' ? 'bg-green-500 text-white border-green-500' :
+                        s === 'FAIL' ? 'bg-rose-500 text-white border-rose-500' :
+                        s === 'BLOCKED' ? 'bg-amber-500 text-white border-amber-500' :
+                        'bg-sky-500 text-white border-sky-500'
+                      : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted/60',
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-xs font-semibold block mb-1">Executor</label>
+              <input
+                type="text"
+                value={executor}
+                onChange={(e) => setExecutor(e.target.value)}
+                placeholder="QA name"
+                className="w-full text-xs border border-input rounded px-2 py-1 bg-background"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold block mb-1">Environment</label>
+              <input
+                type="text"
+                value={environment}
+                onChange={(e) => setEnvironment(e.target.value)}
+                placeholder="dev / stage / prod"
+                className="w-full text-xs border border-input rounded px-2 py-1 bg-background"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold block mb-1">Sprint</label>
+              <input
+                type="text"
+                value={sprintId}
+                onChange={(e) => setSprintId(e.target.value)}
+                placeholder="v2.3"
+                className="w-full text-xs border border-input rounded px-2 py-1 bg-background"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold block mb-1">Notes (optional, applied to all)</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Regression suite pre-release smoke …"
+              className="w-full text-xs border border-input rounded px-2 py-1 bg-background resize-none"
+            />
+          </div>
+
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground">Selected test cases ({selectedTcs.length})</summary>
+            <ul className="mt-1 max-h-40 overflow-y-auto font-mono text-[11px] space-y-0.5 pl-4">
+              {selectedTcs.map((tc) => (
+                <li key={tc.id} className="text-muted-foreground">
+                  <span className="text-primary">{tc.testCaseId}</span> — {tc.title}
+                </li>
+              ))}
+            </ul>
+          </details>
+
+          {error && <div className="text-xs text-rose-600 bg-rose-50 rounded p-2">{error}</div>}
+        </div>
+        <div className="p-4 border-t border-border flex items-center justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Play className="h-3 w-3 mr-1" />}
+            Record {selectedTcs.length} run{selectedTcs.length > 1 ? 's' : ''}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
