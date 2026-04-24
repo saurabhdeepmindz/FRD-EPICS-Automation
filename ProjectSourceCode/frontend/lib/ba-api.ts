@@ -1236,6 +1236,14 @@ export function downloadPlaywrightZip(artifactDbId: string, filename: string): P
 }
 
 /**
+ * D1 — Download runnable unit-test scaffolds derived from an LLD's pseudo-code
+ * files. Deterministic template codegen: pytest / Jest / JUnit per language.
+ */
+export function downloadUnitTestsZip(lldArtifactDbId: string, filename: string): Promise<void> {
+  return downloadBlob(`/ba/lld-artifacts/${lldArtifactDbId}/unit-tests-zip`, filename);
+}
+
+/**
  * F3: Re-verify AC coverage first, then stream the Playwright ZIP. Returns
  * the fresh coverage bundle so the UI can show "X uncovered" etc. before the
  * download completes. The ZIP itself is always fresh server-side (it reads

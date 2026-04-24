@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   ArrowLeft, Loader2, Save, Rocket, Upload, Plus, AlertTriangle, FileText, Eye, Download,
-  Sparkles, User as UserIcon,
+  Sparkles, User as UserIcon, FlaskConical,
 } from 'lucide-react';
 import {
   getLldConfig,
@@ -20,6 +20,7 @@ import {
   dedupeCheck,
   uploadTemplate,
   getBaModule,
+  downloadUnitTestsZip,
   CATEGORY_LABELS,
   type BaLldConfig,
   type BaMasterDataCategory,
@@ -225,6 +226,19 @@ export default function LldConfiguratorPage() {
                 <Link href={`/ba-tool/preview/artifact/${lldArtifactId}?back=/ba-tool/project/${projectId}/module/${moduleDbId}/lld`} target="_blank">
                   <Eye className="h-3.5 w-3.5 mr-1" /> Preview
                 </Link>
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const artifactId = lld?.artifact?.artifactId ?? 'lld';
+                  downloadUnitTestsZip(lldArtifactId, `${artifactId}-unit-tests.zip`)
+                    .catch((err) => alert(`Unit test export failed: ${err instanceof Error ? err.message : 'unknown'}`));
+                }}
+                title="Generate runnable unit-test scaffolds (pytest / Jest / JUnit) from this LLD's pseudo-code files. Every test starts red; turns green as you implement."
+              >
+                <FlaskConical className="h-3.5 w-3.5 mr-1" />
+                Export Unit Tests
               </Button>
             </>
           )}

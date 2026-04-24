@@ -16,6 +16,7 @@ import type { Response } from 'express';
 import { BaLldService, LldConfigPayload } from './ba-lld.service';
 import { BaLldNarrativeService, MAX_TOTAL_ATTACHMENT_BYTES } from './ba-lld-narrative.service';
 import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
+import { BaUnitTestExportService } from './ba-unit-test-export.service';
 
 @Controller('ba')
 export class BaLldController {
@@ -23,7 +24,24 @@ export class BaLldController {
     private readonly lld: BaLldService,
     private readonly orchestrator: BaSkillOrchestratorService,
     private readonly narrative: BaLldNarrativeService,
+    private readonly unitTestExport: BaUnitTestExportService,
   ) {}
+
+  /**
+   * D1 — GET /api/ba/lld-artifacts/:id/unit-tests-zip
+   * Download a ZIP of runnable unit-test scaffolds (pytest / Jest / JUnit)
+   * derived from the LLD's pseudo-code files. Deterministic codegen, no AI.
+   */
+  @Get('lld-artifacts/:id/unit-tests-zip')
+  async exportUnitTestsZip(@Param('id') lldArtifactDbId: string, @Res() res: Response) {
+    const { buffer, filename } = await this.unitTestExport.buildZip(lldArtifactDbId);
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
+  }
 
   /** GET /api/ba/modules/:id/lld/config — load saved Architect selections */
   @Get('modules/:id/lld/config')
