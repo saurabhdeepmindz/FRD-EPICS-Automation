@@ -1132,8 +1132,40 @@ export class BaSkillOrchestratorService {
         currentFocusStory: storyId,
       };
 
-      const out = await this.callAiService(focusOverride, narrowedContext);
+      // Retry on 429s — OpenAI rate-limits sequential calls. Exponential
+      // backoff with a cap at 3 attempts so a sustained outage fails fast.
+      let out = '';
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          out = await this.callAiService(focusOverride, narrowedContext);
+          lastErr = null;
+          break;
+        } catch (err: unknown) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          const is429 = /429|rate limit/i.test(msg);
+          if (!is429 && attempt === 0) {
+            // Non-rate-limit error — don't blindly retry, rethrow.
+            throw err;
+          }
+          const backoffMs = 15_000 * Math.pow(2, attempt); // 15s, 30s, 60s
+          this.logger.warn(
+            `SKILL-05 per-story loop: ${storyId} attempt ${attempt + 1} failed (${msg.slice(0, 120)}), ` +
+            `backing off ${backoffMs / 1000}s`,
+          );
+          await new Promise((r) => setTimeout(r, backoffMs));
+        }
+      }
+      if (lastErr) throw lastErr;
       perStoryOutputs.push(out);
+
+      // Gentle pacing between per-story calls to stay well under per-minute
+      // rate limits. ~2s per iteration adds ~44s across 22 stories — trivial
+      // vs the ~22min total runtime.
+      if (i < storyIds.length - 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
 
     // Stitch: a brief Introduction + concatenated per-story outputs.
