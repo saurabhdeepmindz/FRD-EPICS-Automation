@@ -110,6 +110,41 @@ export class BaDefectService {
     });
   }
 
+  /**
+   * Project-wide defect feed for the global Defect list page. Pulls TC + module
+   * context via the artifact→module path since BaTestCase has no direct module
+   * relation. Includes the first-seen run's sprintId so the UI can filter by
+   * sprint without another round-trip.
+   */
+  async listDefectsForProject(projectId: string) {
+    return this.prisma.baDefect.findMany({
+      where: { testCase: { artifact: { module: { projectId } } } },
+      orderBy: { reportedAt: 'desc' },
+      include: {
+        testCase: {
+          select: {
+            id: true,
+            testCaseId: true,
+            title: true,
+            sprintId: true,
+            artifact: {
+              select: {
+                id: true,
+                artifactId: true,
+                module: { select: { id: true, moduleId: true, moduleName: true } },
+              },
+            },
+          },
+        },
+        firstSeenRun: {
+          select: { id: true, sprintId: true, environment: true, executedAt: true },
+        },
+        attachments: { select: { id: true, fileName: true, sizeBytes: true } },
+        rcas: { select: { id: true, source: true } },
+      },
+    });
+  }
+
   async updateDefect(defectId: string, payload: UpdateDefectPayload) {
     const defect = await this.prisma.baDefect.findUnique({ where: { id: defectId } });
     if (!defect) throw new NotFoundException(`Defect ${defectId} not found`);

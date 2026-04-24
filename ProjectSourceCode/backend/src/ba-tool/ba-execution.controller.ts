@@ -72,6 +72,12 @@ export class BaExecutionController {
     return this.defects.listDefectsForTestCase(testCaseId);
   }
 
+  /** GET /api/ba/projects/:id/defects — project-wide defect feed for the global list. */
+  @Get('projects/:id/defects')
+  listDefectsForProject(@Param('id') projectId: string) {
+    return this.defects.listDefectsForProject(projectId);
+  }
+
   /** POST /api/ba/test-cases/:id/defects — open a defect without a triggering run. */
   @Post('test-cases/:id/defects')
   createDefect(@Param('id') testCaseId: string, @Body() payload: CreateDefectPayload) {

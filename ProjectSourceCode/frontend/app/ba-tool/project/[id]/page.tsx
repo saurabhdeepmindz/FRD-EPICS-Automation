@@ -16,6 +16,7 @@ import {
 } from '@/lib/ba-api';
 import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug } from 'lucide-react';
 import { api } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import Link from 'next/link';
 
 export default function BaProjectWorkspacePage() {
@@ -162,6 +163,20 @@ export default function BaProjectWorkspacePage() {
             <Link href={`/ba-tool/project/${projectId}/rtm`}>
               <BarChart3 className="h-3.5 w-3.5 mr-1" />
               RTM
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <Link href={`/ba-tool/project/${projectId}/defects`}>
+              <Bug className="h-3.5 w-3.5 mr-1" />
+              Defects
+              {health && health.openDefects > 0 && (
+                <span className={cn(
+                  'ml-1 px-1 py-0 rounded text-[9px] font-bold leading-none',
+                  health.criticalOpenDefects > 0 ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-700',
+                )}>
+                  {health.openDefects}
+                </span>
+              )}
             </Link>
           </Button>
           <Button size="sm" variant="outline" asChild>

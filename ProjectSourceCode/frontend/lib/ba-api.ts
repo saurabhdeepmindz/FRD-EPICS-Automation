@@ -1410,6 +1410,26 @@ export async function listDefectsForTc(testCaseId: string): Promise<BaDefect[]> 
   return data;
 }
 
+export interface BaProjectDefect extends Omit<BaDefect, 'testCase'> {
+  testCase: {
+    id: string;
+    testCaseId: string;
+    title: string;
+    sprintId: string | null;
+    artifact: {
+      id: string;
+      artifactId: string;
+      module: { id: string; moduleId: string; moduleName: string };
+    };
+  };
+  firstSeenRun?: { id: string; sprintId: string | null; environment: string | null; executedAt: string } | null;
+}
+
+export async function listDefectsForProject(projectId: string): Promise<BaProjectDefect[]> {
+  const { data } = await api.get<BaProjectDefect[]>(`/ba/projects/${projectId}/defects`);
+  return data;
+}
+
 export interface CreateDefectPayload {
   title: string;
   description?: string | null;
