@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
-  ArrowLeft, Loader2, Save, Rocket, AlertTriangle, Sparkles, User as UserIcon, Download,
+  ArrowLeft, Loader2, Save, Rocket, AlertTriangle, Sparkles, User as UserIcon, Download, ShieldCheck,
 } from 'lucide-react';
 import {
   getFtcConfig,
@@ -17,12 +17,15 @@ import {
   getBaModule,
   downloadFtcCsv,
   downloadPlaywrightZip,
+  listAcCoverage,
+  reverifyAndExportPlaywright,
   type BaFtcConfig,
   type BaModule,
   type FtcConfigBundle,
   type FtcBundle,
   type FtcArtifactSummary,
   type BaTestCase,
+  type AcCoverageBundle,
 } from '@/lib/ba-api';
 import { cn } from '@/lib/utils';
 import { FtcNarrativeCard } from '@/components/ba-tool/FtcNarrativeCard';
@@ -92,6 +95,8 @@ export default function FtcWorkbenchPage() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [coverage, setCoverage] = useState<AcCoverageBundle | null>(null);
+  const [exportingSafe, setExportingSafe] = useState(false);
 
   const [form, setForm] = useState<Partial<BaFtcConfig>>({});
 
@@ -145,6 +150,43 @@ export default function FtcWorkbenchPage() {
   }, [moduleDbId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // F3: fetch the latest AC coverage summary once the FTC artifact is ready
+  // so the export buttons can show a drift badge without extra clicks.
+  useEffect(() => {
+    if (!ftc?.artifact?.id) { setCoverage(null); return; }
+    let cancelled = false;
+    listAcCoverage(ftc.artifact.id)
+      .then((c) => { if (!cancelled) setCoverage(c); })
+      .catch(() => { if (!cancelled) setCoverage(null); });
+    return () => { cancelled = true; };
+  }, [ftc?.artifact?.id]);
+
+  const handleSafeExport = useCallback(async () => {
+    if (!ftc?.artifact) return;
+    setExportingSafe(true);
+    try {
+      const fresh = await reverifyAndExportPlaywright(
+        ftc.artifact.id,
+        `${ftc.artifact.artifactId}-playwright.zip`,
+      );
+      setCoverage(fresh);
+      const gaps = fresh.summary.uncovered + fresh.summary.partial;
+      if (gaps > 0) {
+        alert(
+          `Playwright suite exported.\n\n` +
+          `AC Coverage (fresh): ${fresh.summary.covered}/${fresh.summary.total} covered\n` +
+          `${fresh.summary.partial} partial · ${fresh.summary.uncovered} uncovered\n\n` +
+          `The ZIP reflects the current TCs; uncovered ACs have no automation yet.`,
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      alert(`Safe export failed: ${msg}`);
+    } finally {
+      setExportingSafe(false);
+    }
+  }, [ftc?.artifact]);
 
   const toggleInList = (list: string[] | null | undefined, code: string): string[] => {
     const arr = list ?? [];
@@ -294,15 +336,51 @@ export default function FtcWorkbenchPage() {
                 <Download className="h-3.5 w-3.5 mr-1" />
                 Export CSV
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => downloadPlaywrightZip(ftc.artifact!.id, `${ftc.artifact!.artifactId}-playwright.zip`).catch(() => alert('Playwright export failed'))}
-                title="Export a runnable Playwright test suite (config + fixtures + one spec per scenario group)"
-              >
-                <Download className="h-3.5 w-3.5 mr-1" />
-                Export Playwright Suite
-              </Button>
+              {(() => {
+                const gaps = coverage ? coverage.summary.uncovered + coverage.summary.partial : 0;
+                const hasCoverage = coverage && coverage.summary.total > 0;
+                const driftTooltip = !hasCoverage
+                  ? 'AC coverage not yet analyzed. Click "Re-verify + Export" for a checked export.'
+                  : gaps > 0
+                    ? `${coverage!.summary.covered}/${coverage!.summary.total} ACs covered — ` +
+                      `${coverage!.summary.partial} partial, ${coverage!.summary.uncovered} uncovered. ` +
+                      `Re-verify + Export runs a fresh check first.`
+                    : `${coverage!.summary.covered}/${coverage!.summary.total} ACs covered. Suite is complete.`;
+                return (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => downloadPlaywrightZip(ftc.artifact!.id, `${ftc.artifact!.artifactId}-playwright.zip`).catch(() => alert('Playwright export failed'))}
+                      title={driftTooltip}
+                      className="relative"
+                    >
+                      <Download className="h-3.5 w-3.5 mr-1" />
+                      Export Playwright Suite
+                      {hasCoverage && gaps > 0 && (
+                        <span
+                          className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] font-bold rounded-full h-4 min-w-4 px-1 flex items-center justify-center leading-none"
+                          aria-label={`${gaps} AC gaps`}
+                        >
+                          !{gaps}
+                        </span>
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={hasCoverage && gaps > 0 ? 'default' : 'outline'}
+                      onClick={handleSafeExport}
+                      disabled={exportingSafe}
+                      title="Re-verify AC coverage first, then download the Playwright ZIP. Use this after editing ACs or TCs."
+                    >
+                      {exportingSafe
+                        ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                        : <ShieldCheck className="h-3.5 w-3.5 mr-1" />}
+                      Re-verify + Export
+                    </Button>
+                  </>
+                );
+              })()}
             </>
           )}
           <Button size="sm" variant="outline" onClick={handleSave} disabled={saving}>

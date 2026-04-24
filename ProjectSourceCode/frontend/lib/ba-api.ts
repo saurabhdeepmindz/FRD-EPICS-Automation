@@ -1235,6 +1235,22 @@ export function downloadPlaywrightZip(artifactDbId: string, filename: string): P
   return downloadBlob(`/ba/artifacts/${artifactDbId}/playwright-zip`, filename);
 }
 
+/**
+ * F3: Re-verify AC coverage first, then stream the Playwright ZIP. Returns
+ * the fresh coverage bundle so the UI can show "X uncovered" etc. before the
+ * download completes. The ZIP itself is always fresh server-side (it reads
+ * current DB state), but without re-verifying ACs the gap count shown to the
+ * user could be stale.
+ */
+export async function reverifyAndExportPlaywright(
+  artifactDbId: string,
+  filename: string,
+): Promise<AcCoverageBundle> {
+  const coverage = await analyzeAcCoverage(artifactDbId);
+  await downloadPlaywrightZip(artifactDbId, filename);
+  return coverage;
+}
+
 // ─── AC Coverage ────────────────────────────────────────────────────────────
 
 export interface BaAcCoverage {
