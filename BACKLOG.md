@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `3165599 feat(sprints): B1 real Sprint entity`
+> **Last updated:** 2026-04-24 — after `c546537 feat(sprints): B2 SprintPicker wired into run dialogs`
 
 Priority scale:
 
@@ -23,9 +23,8 @@ _P0 lane is clear. Next push starts from P1._
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| B2 | **Sprint picker in Record Run dialog + bulk dialog + Open Defect dialog** — replace free-text input with a dropdown backed by BaSprint; populate the new `sprintDbId` FK on create | B1 shipped the entity; now wire the UI layer. | S |
-| B3 | Sprint burndown chart on dashboard — PASS/FAIL over time for ACTIVE sprint(s) | Depends on B1 + run history. | M |
-| B4 | Filter runs/defects by sprint FK in RTM and FTC views; Defect list already has string sprint filter | Depends on B2 populating `sprintDbId`. | S |
+| B3 | **Sprint burndown chart on dashboard** — PASS/FAIL/remaining over time for ACTIVE sprint(s) | Depends on B1 + B2; run history now carries `sprintDbId`. | M |
+| B4 | **Filter runs/defects by sprint FK in RTM + FTC views** — upgrade the existing string-based sprint filters to use the FK so sprint codes stay canonical. Defect list + Dashboard drill-downs can reuse the same filter. | Depends on B2. | S |
 | F3 | **Re-run Playwright export with one click** — ZIP download currently is static; wire it to re-generate after AC changes | AC Coverage verifier already detects drift; wire it in. | S |
 
 ### P2 — TDD Codegen (active)
@@ -114,7 +113,8 @@ _P0 lane is clear. Next push starts from P1._
 
 ## Recently Completed (reverse chronological)
 
-- ✅ 2026-04-24 — **B1: Real Sprint entity** — new `BaSprint` table (projectId + sprintCode unique, name, goal, startDate, endDate, status=PLANNING/ACTIVE/COMPLETED/CANCELLED); nullable `sprintDbId` FK added to BaTestCase + BaTestRun (legacy string `sprintId` kept for backward compat); full CRUD endpoints at `/ba/projects/:id/sprints` + `/ba/sprints/:id`; new Sprints mgmt page at `/ba-tool/project/[id]/sprints` with create/edit/delete + legacy-string backfill button; "Sprints" nav added to project header. **Requires backend restart to pick up regenerated Prisma client** (`3165599`)
+- ✅ 2026-04-24 — **B2: SprintPicker wired into Record Run + Bulk Run dialogs** — new reusable `SprintPicker` component (status-aware dropdown, hides COMPLETED/CANCELLED by default, deep-link to Sprints mgmt); payload types extended with `sprintDbId`; `BaTestRunService.resolveSprintFields` maps FK → sprintCode and writes both columns atomically (backward-compat safety); TC's own sprint is mirrored from the latest run's sprint so RTM groupings stay consistent (`c546537`)
+- ✅ 2026-04-24 — **B1: Real Sprint entity** — new `BaSprint` table (projectId + sprintCode unique, name, goal, startDate, endDate, status=PLANNING/ACTIVE/COMPLETED/CANCELLED); nullable `sprintDbId` FK added to BaTestCase + BaTestRun (legacy string `sprintId` kept for backward compat); full CRUD endpoints at `/ba/projects/:id/sprints` + `/ba/sprints/:id`; new Sprints mgmt page at `/ba-tool/project/[id]/sprints` with create/edit/delete + legacy-string backfill button; "Sprints" nav added to project header (`3165599`)
 - ✅ 2026-04-24 — **Global Defect list page** — new route `/ba-tool/project/[id]/defects` with search + 5 filters (status incl. "Open all" shortcut, severity, sprint, module, reporter); header nav pill shows open-defect count (red when P0/P1 critical); CSV export; "direct" badge for run-less defects; new endpoint `GET /api/ba/projects/:id/defects` (`82f2ff9`)
 - ✅ 2026-04-24 — **Standalone "Open defect" button** on each TC — logs bugs outside a formal run (spec review, prod report, ad-hoc exploration); new `POST /api/ba/test-cases/:id/defects` endpoint with nullable `firstSeenRunId`; denormalizes defect ref onto `BaTestCase.defectIds` like the run-triggered flow (`ea0ba94`)
 - ✅ 2026-04-24 — **Bulk test-run recording** — multi-select checkboxes per TC, per-group "select all", sticky toolbar with "Run selected (N)" button, modal dialog for shared status/executor/env/sprint/notes; new backend endpoint `POST /api/ba/test-cases/bulk-runs` (200-TC cap, continues on individual failures) (`399b9d8`)
