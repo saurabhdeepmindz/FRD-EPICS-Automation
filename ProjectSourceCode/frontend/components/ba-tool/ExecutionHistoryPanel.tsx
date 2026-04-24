@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   analyzeDefectWithAi,
+  createDefectForTc,
   createTestRun,
   deleteTestRun,
   getDefect,
@@ -66,6 +67,7 @@ export function ExecutionHistoryPanel({ testCaseId, testCaseRef }: Props) {
   const [defects, setDefects] = useState<BaDefect[]>([]);
   const [loading, setLoading] = useState(true);
   const [showRunDialog, setShowRunDialog] = useState(false);
+  const [showDefectDialog, setShowDefectDialog] = useState(false);
   const [openDefectId, setOpenDefectId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -122,10 +124,22 @@ export function ExecutionHistoryPanel({ testCaseId, testCaseRef }: Props) {
             </>
           )}
         </div>
-        <Button size="sm" onClick={() => setShowRunDialog(true)} className="h-7">
-          <Play className="h-3 w-3 mr-1" />
-          Record run
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setShowDefectDialog(true)}
+            className="h-7"
+            title="Log a bug discovered outside a formal run (spec review, prod report, ad-hoc exploration)"
+          >
+            <Bug className="h-3 w-3 mr-1" />
+            Open defect
+          </Button>
+          <Button size="sm" onClick={() => setShowRunDialog(true)} className="h-7">
+            <Play className="h-3 w-3 mr-1" />
+            Record run
+          </Button>
+        </div>
       </header>
 
       {showRunDialog && (
@@ -134,6 +148,18 @@ export function ExecutionHistoryPanel({ testCaseId, testCaseRef }: Props) {
           testCaseRef={testCaseRef}
           onClose={() => setShowRunDialog(false)}
           onSaved={handleRunRecorded}
+        />
+      )}
+
+      {showDefectDialog && (
+        <OpenDefectDialog
+          testCaseId={testCaseId}
+          testCaseRef={testCaseRef}
+          onClose={() => setShowDefectDialog(false)}
+          onSaved={async () => {
+            setShowDefectDialog(false);
+            await refresh();
+          }}
         />
       )}
 
@@ -929,6 +955,178 @@ function RcaDualTrackPanel({ defect, onChanged }: { defect: BaDefect; onChanged:
           </ul>
         </details>
       )}
+    </div>
+  );
+}
+
+// ─── Open Defect Dialog (standalone, no run required) ──────────────────────
+
+interface OpenDefectDialogProps {
+  testCaseId: string;
+  testCaseRef: string;
+  onClose: () => void;
+  onSaved: () => void | Promise<void>;
+}
+
+function OpenDefectDialog({ testCaseId, testCaseRef, onClose, onSaved }: OpenDefectDialogProps) {
+  const [title, setTitle] = useState('');
+  const [severity, setSeverity] = useState<DefectSeverity>('P2');
+  const [description, setDescription] = useState('');
+  const [reproductionSteps, setReproductionSteps] = useState('');
+  const [externalRef, setExternalRef] = useState('');
+  const [environment, setEnvironment] = useState('');
+  const [reportedBy, setReportedBy] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    if (!title.trim()) {
+      setError('Title is required');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await createDefectForTc(testCaseId, {
+        title: title.trim(),
+        severity,
+        description: description.trim() || null,
+        reproductionSteps: reproductionSteps.trim() || null,
+        externalRef: externalRef.trim() || null,
+        environment: environment.trim() || null,
+        reportedBy: reportedBy.trim() || null,
+      });
+      await onSaved();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      setError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-lg border border-border">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <div className="flex items-center gap-2">
+            <Bug className="h-4 w-4 text-rose-600" />
+            <h3 className="text-sm font-semibold">Open defect against {testCaseRef}</h3>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">×</button>
+        </div>
+        <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+          <div className="text-xs text-muted-foreground bg-muted/40 rounded p-2">
+            Logs a bug without a triggering run. Use this for issues found during spec review,
+            prod reports, or ad-hoc exploration. For bugs discovered during a formal run,
+            use <strong>Record run</strong> with status = FAIL instead.
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold block mb-1">
+              Title <span className="text-rose-600">*</span>
+            </label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Login button disabled when email contains '+' character"
+              className="w-full text-xs border border-input rounded px-2 py-1.5 bg-background"
+              autoFocus
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-semibold block mb-1">Severity</label>
+              <div className="flex gap-1">
+                {(['P0', 'P1', 'P2', 'P3'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSeverity(s)}
+                    className={cn(
+                      'flex-1 px-2 py-1 rounded text-xs font-bold border',
+                      severity === s
+                        ? s === 'P0' ? 'bg-rose-600 text-white border-rose-600' :
+                          s === 'P1' ? 'bg-amber-500 text-white border-amber-500' :
+                          s === 'P2' ? 'bg-sky-500 text-white border-sky-500' :
+                          'bg-gray-400 text-white border-gray-400'
+                        : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted/60',
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold block mb-1">External ref (optional)</label>
+              <input
+                type="text"
+                value={externalRef}
+                onChange={(e) => setExternalRef(e.target.value)}
+                placeholder="JIRA-1234"
+                className="w-full text-xs border border-input rounded px-2 py-1.5 bg-background font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-semibold block mb-1">Environment (optional)</label>
+              <input
+                type="text"
+                value={environment}
+                onChange={(e) => setEnvironment(e.target.value)}
+                placeholder="dev / stage / prod"
+                className="w-full text-xs border border-input rounded px-2 py-1.5 bg-background"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold block mb-1">Reported by (optional)</label>
+              <input
+                type="text"
+                value={reportedBy}
+                onChange={(e) => setReportedBy(e.target.value)}
+                placeholder="Your name"
+                className="w-full text-xs border border-input rounded px-2 py-1.5 bg-background"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold block mb-1">Description (optional)</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              placeholder="What's broken, expected vs actual behaviour…"
+              className="w-full text-xs border border-input rounded px-2 py-1.5 bg-background resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold block mb-1">Reproduction steps (optional)</label>
+            <textarea
+              value={reproductionSteps}
+              onChange={(e) => setReproductionSteps(e.target.value)}
+              rows={3}
+              placeholder="1. Navigate to /login&#10;2. Enter email: user+qa@foo.com&#10;3. Observe button stays disabled"
+              className="w-full text-xs border border-input rounded px-2 py-1.5 bg-background resize-none font-mono"
+            />
+          </div>
+
+          {error && <div className="text-xs text-rose-600 bg-rose-50 rounded p-2">{error}</div>}
+        </div>
+        <div className="p-4 border-t border-border flex items-center justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={submitting || !title.trim()}>
+            {submitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Bug className="h-3 w-3 mr-1" />}
+            Open defect
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

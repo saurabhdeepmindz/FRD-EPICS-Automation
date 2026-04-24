@@ -15,6 +15,16 @@ export interface UpdateDefectPayload {
   environment?: string | null;
 }
 
+export interface CreateDefectPayload {
+  title: string;
+  description?: string | null;
+  severity?: 'P0' | 'P1' | 'P2' | 'P3' | null;
+  externalRef?: string | null;
+  reproductionSteps?: string | null;
+  environment?: string | null;
+  reportedBy?: string | null;
+}
+
 const VALID_STATUS = new Set(['OPEN', 'IN_PROGRESS', 'FIXED', 'VERIFIED', 'CLOSED', 'WONT_FIX']);
 const CLOSED_STATUSES = new Set(['FIXED', 'VERIFIED', 'CLOSED', 'WONT_FIX']);
 /** Cap matches LLD/FTC narrative attachment limits for consistency. */
@@ -42,6 +52,51 @@ export class BaDefectService {
     });
     if (!defect) throw new NotFoundException(`Defect ${defectId} not found`);
     return defect;
+  }
+
+  /**
+   * Open a defect against a TC WITHOUT a triggering run. Use this when a bug is
+   * discovered outside a formal test execution (spec review, prod report,
+   * ad-hoc exploration). No `firstSeenRunId` is set — the defect lives as a
+   * run-less issue until a future run links to it.
+   */
+  async createDefect(testCaseId: string, payload: CreateDefectPayload) {
+    const tc = await this.prisma.baTestCase.findUnique({ where: { id: testCaseId } });
+    if (!tc) throw new NotFoundException(`Test case ${testCaseId} not found`);
+    if (!payload.title?.trim()) throw new BadRequestException('title is required');
+
+    const defect = await this.prisma.baDefect.create({
+      data: {
+        testCaseId,
+        firstSeenRunId: null,
+        title: payload.title.trim(),
+        description: payload.description?.trim() || null,
+        severity: this.normalizeSeverity(payload.severity),
+        status: 'OPEN',
+        externalRef: payload.externalRef?.trim() || null,
+        reproductionSteps: payload.reproductionSteps?.trim() || null,
+        environment: payload.environment?.trim() || null,
+        reportedBy: payload.reportedBy?.trim() || null,
+      },
+    });
+
+    // Mirror the run-based flow: denormalize the defect ref onto the TC so
+    // CSV exports and the RTM "Defects" column stay consistent.
+    const ref = payload.externalRef?.trim() || defect.id.slice(0, 8);
+    const existing = tc.defectIds ?? [];
+    if (!existing.includes(ref)) {
+      await this.prisma.baTestCase.update({
+        where: { id: testCaseId },
+        data: { defectIds: [...existing, ref] },
+      });
+    }
+
+    return defect;
+  }
+
+  private normalizeSeverity(s: string | null | undefined): 'P0' | 'P1' | 'P2' | 'P3' {
+    const up = (s ?? 'P2').toUpperCase();
+    return /^P[0-3]$/.test(up) ? (up as 'P0' | 'P1' | 'P2' | 'P3') : 'P2';
   }
 
   async listDefectsForTestCase(testCaseId: string) {

@@ -1410,6 +1410,21 @@ export async function listDefectsForTc(testCaseId: string): Promise<BaDefect[]> 
   return data;
 }
 
+export interface CreateDefectPayload {
+  title: string;
+  description?: string | null;
+  severity?: DefectSeverity | null;
+  externalRef?: string | null;
+  reproductionSteps?: string | null;
+  environment?: string | null;
+  reportedBy?: string | null;
+}
+
+export async function createDefectForTc(testCaseId: string, payload: CreateDefectPayload): Promise<BaDefect> {
+  const { data } = await api.post<BaDefect>(`/ba/test-cases/${testCaseId}/defects`, payload);
+  return data;
+}
+
 export async function getDefect(defectId: string): Promise<BaDefect> {
   const { data } = await api.get<BaDefect>(`/ba/defects/${defectId}`);
   return data;

@@ -11,7 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { BaDefectService, MAX_DEFECT_ATTACHMENT_BYTES, UpdateDefectPayload } from './ba-defect.service';
+import { BaDefectService, CreateDefectPayload, MAX_DEFECT_ATTACHMENT_BYTES, UpdateDefectPayload } from './ba-defect.service';
 import { BaRcaService, SaveTesterRcaPayload } from './ba-rca.service';
 import { BaTestRunService, BulkCreateTestRunPayload, CreateTestRunPayload } from './ba-test-run.service';
 
@@ -70,6 +70,12 @@ export class BaExecutionController {
   @Get('test-cases/:id/defects')
   listDefectsForTc(@Param('id') testCaseId: string) {
     return this.defects.listDefectsForTestCase(testCaseId);
+  }
+
+  /** POST /api/ba/test-cases/:id/defects — open a defect without a triggering run. */
+  @Post('test-cases/:id/defects')
+  createDefect(@Param('id') testCaseId: string, @Body() payload: CreateDefectPayload) {
+    return this.defects.createDefect(testCaseId, payload);
   }
 
   /** GET /api/ba/defects/:id — defect + attachments + RCAs bundle. */
