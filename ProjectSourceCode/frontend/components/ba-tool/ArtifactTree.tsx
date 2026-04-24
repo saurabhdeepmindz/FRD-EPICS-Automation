@@ -218,6 +218,39 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC' &&
         !userStoryGroups; // multi-story USER_STORY uses userStoryGroups instead
 
+      // SUBTASK artifact: the skill emits one empty ST-<id>-<slug> title
+      // section followed by a `subtask_header` section that actually holds
+      // the 5-13KB body. The tree shouldn't show both — merge each pair into
+      // a single node whose label is the ST-* section's label and whose
+      // click target is the subtask_header's content row.
+      const mergedSubtaskSections = (() => {
+        if (artifact.artifactType !== 'SUBTASK') return null;
+        const out: BaArtifactSection[] = [];
+        const raw = artifact.sections;
+        for (let i = 0; i < raw.length; i++) {
+          const s = raw[i];
+          const next = raw[i + 1];
+          const isTitleStub =
+            /^st_[a-z0-9_]+$/.test(s.sectionKey) &&
+            s.sectionKey !== 'subtask_header' &&
+            (!s.content || s.content.trim().length === 0);
+          if (isTitleStub && next && next.sectionKey === 'subtask_header') {
+            // Keep the subtask_header row (which has the content) but show
+            // it under the title stub's label, so the tree reads naturally.
+            out.push({ ...next, sectionLabel: s.sectionLabel });
+            i++; // consume the paired subtask_header too
+            continue;
+          }
+          // Drop bare `subtask_header` rows that didn't follow a title stub
+          // (they'd be orphans). Also drop the empty title stubs when there
+          // wasn't a subtask_header after them.
+          if (s.sectionKey === 'subtask_header' && (!s.content || s.content.trim().length === 0)) continue;
+          if (isTitleStub) continue;
+          out.push(s);
+        }
+        return out;
+      })();
+
       // For FTC artifacts, hide the five sections whose content is now
       // surfaced via the synthetic per-category tree groups. Their raw
       // markdown view is strictly redundant with the structured drill-down.
@@ -241,7 +274,7 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         userStoryGroups,
         userStoryExtras,
         children: showRawChildren
-          ? artifact.sections
+          ? (mergedSubtaskSections ?? artifact.sections)
               .filter((s) =>
                 artifact.artifactType !== 'FTC' || !FTC_HIDDEN_SECTION_KEYS.has(s.sectionKey),
               )
