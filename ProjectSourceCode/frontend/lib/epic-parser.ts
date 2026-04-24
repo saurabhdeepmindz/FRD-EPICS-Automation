@@ -68,7 +68,18 @@ const EPIC_SECTION_ORDER: { id: EpicSectionId; label: string; labels: string[]; 
   { id: 'risks', label: 'Risks & Challenges', labels: ['Risks', 'Challenges', 'Risks & Challenges'] },
 ];
 
-export function parseEpicContent(sections: { sectionKey: string; content: string }[]): ParsedEpic {
+export function parseEpicContent(
+  rawSections: { sectionKey: string; content: string; editedContent?: string | null }[],
+): ParsedEpic {
+  // BaArtifactSection has both `content` (original AI output) and
+  // `editedContent` (human override). Edits are always written to
+  // `editedContent` — prefer it when present so saved edits become visible.
+  // Without this coalesce, the view would keep showing the AI-original text
+  // even after the user saved a change.
+  const sections = rawSections.map((s) => ({
+    sectionKey: s.sectionKey,
+    content: (s.editedContent ?? s.content) ?? '',
+  }));
   const fullContent = sections.map((s) => s.content).join('\n\n');
 
   const get = (labels: string[]): string => {
