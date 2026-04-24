@@ -352,13 +352,68 @@ export class BaArtifactExportService {
           i++;
         }
         if (i < lines.length) i++; // skip closing ```
-        blocks.push(new Paragraph({
-          children: [new TextRun({
-            text: codeLines.join('\n'),
-            font: 'Consolas',
-            size: 18,
-          })],
-        }));
+        blocks.push(this.buildPreformattedBlock(codeLines));
+        continue;
+      }
+
+      // C-style block comment — the AI's Traceability Header uses `/* ... */`
+      // with ` * Key: Value` lines. Detect the opening `/*`, collect until
+      // `*/`, strip the leading ` * ` prefix, then either emit as a 2-column
+      // key-value table (if most lines match Key: Value) or as preformatted
+      // monospace text. Without this, line breaks got collapsed and the whole
+      // block rendered as one garbled paragraph.
+      if (/^\s*\/\*/.test(line)) {
+        const commentLines: string[] = [];
+        // First line may have content after `/*`
+        const firstTail = line.replace(/^\s*\/\*\*?/, '').replace(/\*\/\s*$/, '');
+        if (firstTail.trim()) commentLines.push(firstTail);
+        const isClosingOnFirst = /\*\/\s*$/.test(line);
+        if (!isClosingOnFirst) {
+          i++;
+          while (i < lines.length && !/\*\/\s*$/.test(lines[i])) {
+            commentLines.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) {
+            const lastHead = lines[i].replace(/\*\/\s*$/, '');
+            if (lastHead.trim()) commentLines.push(lastHead);
+            i++;
+          }
+        } else {
+          i++;
+        }
+        // Strip leading ` * ` or `*` per line — docstring convention
+        const cleaned = commentLines
+          .map((l) => l.replace(/^\s*\*\s?/, '').replace(/\s+$/, ''))
+          .filter((l, idx, arr) => !(idx === 0 && l === '') && !(idx === arr.length - 1 && l === ''));
+        // If most non-empty lines look like Key: Value, render as table
+        const nonEmpty = cleaned.filter((l) => l.trim() && !/^=+$/.test(l));
+        const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s+\S/.test(l));
+        if (nonEmpty.length >= 3 && kvLines.length / nonEmpty.length >= 0.6) {
+          const rows: Array<[string, string]> = [];
+          let pendingTitle: string | null = null;
+          for (const l of cleaned) {
+            if (!l.trim()) continue;
+            if (/^=+$/.test(l)) continue;
+            const kv = /^([^:]+):\s+(.*)$/.exec(l);
+            if (kv) {
+              rows.push([kv[1].trim(), kv[2].trim()]);
+            } else if (l.trim().length > 0 && !pendingTitle) {
+              pendingTitle = l.trim();
+            }
+          }
+          if (pendingTitle) {
+            blocks.push(new Paragraph({
+              children: [new TextRun({ text: pendingTitle, bold: true })],
+            }));
+          }
+          if (rows.length > 0) {
+            blocks.push(this.buildKvTable(rows));
+            continue;
+          }
+        }
+        // Fallback — preformatted
+        blocks.push(this.buildPreformattedBlock(cleaned));
         continue;
       }
 
@@ -410,6 +465,9 @@ export class BaArtifactExportService {
       }
 
       // Plain paragraph — collect contiguous non-empty non-special lines.
+      // We used to `.join(' ')` which destroyed hard line breaks (visible
+      // symptom: Traceability Headers and key-value lists all merged into
+      // one long line). Now we preserve line breaks via TextRun break: 1.
       const paraLines: string[] = [line];
       i++;
       while (
@@ -417,6 +475,7 @@ export class BaArtifactExportService {
         lines[i].trim() &&
         !/^(#{1,6})\s+/.test(lines[i]) &&
         !lines[i].trim().startsWith('```') &&
+        !/^\s*\/\*/.test(lines[i]) &&
         !(lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) &&
         !/^\s*[-*+]\s+/.test(lines[i]) &&
         !/^\s*\d+\.\s+/.test(lines[i])
@@ -424,7 +483,12 @@ export class BaArtifactExportService {
         paraLines.push(lines[i]);
         i++;
       }
-      blocks.push(new Paragraph({ children: this.inlineRuns(paraLines.join(' ')) }));
+      const runs: TextRun[] = [];
+      paraLines.forEach((pl, idx) => {
+        runs.push(...this.inlineRuns(pl));
+        if (idx < paraLines.length - 1) runs.push(new TextRun({ text: '', break: 1 }));
+      });
+      blocks.push(new Paragraph({ children: runs }));
     }
 
     return blocks;
@@ -449,6 +513,37 @@ export class BaArtifactExportService {
     }
     if (header.length === 0) return null;
     return { header, rows };
+  }
+
+  /**
+   * Paragraph with preserved line breaks in Consolas — used for fenced code
+   * blocks and comment blocks where newline structure matters.
+   */
+  private buildPreformattedBlock(lines: string[]): Paragraph {
+    const runs: TextRun[] = [];
+    lines.forEach((l, idx) => {
+      runs.push(new TextRun({ text: l, font: 'Consolas', size: 18 }));
+      if (idx < lines.length - 1) {
+        runs.push(new TextRun({ text: '', break: 1 }));
+      }
+    });
+    return new Paragraph({ children: runs });
+  }
+
+  /** 2-column key/value Word table. Used for Traceability Header blocks etc. */
+  private buildKvTable(rows: Array<[string, string]>): Table {
+    const makeCell = (text: string, bold: boolean, widthPct: number): TableCell => new TableCell({
+      width: { size: widthPct, type: WidthType.PERCENTAGE },
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold, size: 20 })],
+      })],
+    });
+    return new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: rows.map(([k, v]) => new TableRow({
+        children: [makeCell(k, true, 30), makeCell(v, false, 70)],
+      })),
+    });
   }
 
   private buildDocxTable(table: { header: string[]; rows: string[][] }): Table {
