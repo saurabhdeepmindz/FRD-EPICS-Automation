@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { useArtifactRefs } from './ArtifactRefContext';
 
 const MERMAID_LANGUAGES = new Set(['mermaid', 'uml']);
 
@@ -378,11 +380,18 @@ function renderInline(text: string): React.ReactNode {
     // Feature/Story/EPIC/SubTask IDs inline
     const idMatch = remaining.match(/^(F-\d+-\d+|US-\d+|EPIC-\d+|ST-[A-Z0-9-]+|MOD-\d+|SCR-\d+|TBD-\d+|BR-\d+|TC-[A-Z0-9-]+)(?![A-Za-z0-9-])/);
     if (idMatch) {
-      parts.push(
-        <span key={key++} className="font-mono text-primary bg-primary/5 px-1 rounded">
-          {idMatch[1]}
-        </span>,
-      );
+      const token = idMatch[1];
+      if (/^SCR-\d+$/.test(token)) {
+        parts.push(<ScreenRefToken key={key++} screenId={token} />);
+      } else if (/^MOD-\d+$/.test(token)) {
+        parts.push(<ModuleRefToken key={key++} moduleId={token} />);
+      } else {
+        parts.push(
+          <span key={key++} className="font-mono text-primary bg-primary/5 px-1 rounded">
+            {token}
+          </span>,
+        );
+      }
       remaining = remaining.slice(idMatch[0].length);
       continue;
     }
@@ -399,4 +408,64 @@ function renderInline(text: string): React.ReactNode {
   }
 
   return parts.length === 1 ? parts[0] : <>{parts}</>;
+}
+
+// ─── Hyperlinked ID tokens ───────────────────────────────────────────────────
+
+/**
+ * Clickable SCR-XX token. Scrolls to `#screen-thumb-SCR-XX` in the current
+ * page and flashes a highlight. Falls back to a plain styled span when no
+ * such element exists (e.g. preview pages without a screens gallery).
+ */
+function ScreenRefToken({ screenId }: { screenId: string }) {
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (typeof document === 'undefined') return;
+    const target = document.getElementById(`screen-thumb-${screenId}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Flash highlight without clobbering any existing classes.
+    target.classList.add('ring-2', 'ring-primary');
+    window.setTimeout(() => target.classList.remove('ring-2', 'ring-primary'), 1600);
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="font-mono text-primary bg-primary/5 hover:bg-primary/15 px-1 rounded underline-offset-2 hover:underline cursor-pointer"
+      title={`Jump to ${screenId} in the Referenced Screens section`}
+    >
+      {screenId}
+    </button>
+  );
+}
+
+/**
+ * Clickable MOD-XX token. When an ArtifactRefContext is mounted (e.g. inside
+ * a module page) and the moduleId maps to a known sibling module, renders a
+ * Next.js Link to that module's workspace. Otherwise renders as a plain
+ * styled span so no broken links are produced.
+ */
+function ModuleRefToken({ moduleId }: { moduleId: string }) {
+  const refs = useArtifactRefs();
+  const entry = refs?.modulesById[moduleId];
+  if (!refs || !entry) {
+    return (
+      <span
+        className="font-mono text-primary bg-primary/5 px-1 rounded"
+        title={`${moduleId} — module reference`}
+      >
+        {moduleId}
+      </span>
+    );
+  }
+  return (
+    <Link
+      href={`/ba-tool/project/${refs.projectId}/module/${entry.moduleDbId}`}
+      className="font-mono text-primary bg-primary/5 hover:bg-primary/15 px-1 rounded underline-offset-2 hover:underline"
+      title={`Open ${moduleId} — ${entry.moduleName}`}
+    >
+      {moduleId}
+    </Link>
+  );
 }

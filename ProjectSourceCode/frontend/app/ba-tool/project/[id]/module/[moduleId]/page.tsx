@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { getBaModule, SKILL_NAMES, type BaModule, type BaSkillExecution } from '@/lib/ba-api';
+import { getBaModule, getBaProject, SKILL_NAMES, type BaModule, type BaProject, type BaSkillExecution } from '@/lib/ba-api';
+import { ArtifactRefProvider, type ArtifactRefContextValue } from '@/components/ba-tool/ArtifactRefContext';
 import { ScreenUploader } from '@/components/ba-tool/ScreenUploader';
 import { SkillStepper } from '@/components/ba-tool/SkillStepper';
 import { ClickThroughBuilder } from '@/components/ba-tool/ClickThroughBuilder';
@@ -41,6 +42,7 @@ export default function BaModuleWorkspacePage() {
   const moduleDbId = params.moduleId;
 
   const [mod, setMod] = useState<BaModule | null>(null);
+  const [project, setProject] = useState<BaProject | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState(0);
@@ -49,14 +51,31 @@ export default function BaModuleWorkspacePage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getBaModule(moduleDbId);
-      setMod(data);
+      const [m, p] = await Promise.all([
+        getBaModule(moduleDbId),
+        // Pull the sibling modules so cross-module references (MOD-03 etc.)
+        // in rendered EPIC / User Story content can resolve to real URLs via
+        // ArtifactRefProvider below. Fail-soft if the project call 404s.
+        getBaProject(projectId).catch(() => null),
+      ]);
+      setMod(m);
+      setProject(p);
     } catch {
       setError('Failed to load module');
     } finally {
       setLoading(false);
     }
-  }, [moduleDbId]);
+  }, [moduleDbId, projectId]);
+
+  // Build a moduleId → { dbId, name } map for the ArtifactRefProvider.
+  // Rebuilds whenever the project payload changes.
+  const artifactRefs = useMemo<ArtifactRefContextValue>(() => {
+    const modulesById: ArtifactRefContextValue['modulesById'] = {};
+    for (const m of project?.modules ?? []) {
+      modulesById[m.moduleId] = { moduleDbId: m.id, moduleName: m.moduleName };
+    }
+    return { projectId, modulesById };
+  }, [project, projectId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -136,6 +155,7 @@ export default function BaModuleWorkspacePage() {
   }
 
   return (
+    <ArtifactRefProvider value={artifactRefs}>
     <div className="flex h-screen flex-col" data-testid="ba-module-workspace">
       {/* Module header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card">
@@ -353,5 +373,6 @@ export default function BaModuleWorkspacePage() {
         </main>
       </div>
     </div>
+    </ArtifactRefProvider>
   );
 }

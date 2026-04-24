@@ -47,24 +47,29 @@ export function EpicArtifactView({ artifact, activeSectionId, onUpdated }: EpicA
         </div>
       </div>
 
-      {/* ═══ Screens — only those this EPIC references (parsed from section content) ═══ */}
+      {/* ═══ Screens — show ALL module screens; highlight the ones this EPIC references ═══ */}
       {(() => {
         const allScreens = artifact.module?.screens ?? [];
         if (allScreens.length === 0) return null;
-        const { matched } = filterReferencedScreens(
+        const { matched, referencedIds } = filterReferencedScreens(
           allScreens,
           artifact.sections.map((s) => (s.isHumanModified && s.editedContent ? s.editedContent : s.content)),
         );
-        if (matched.length === 0) return null;
+        // Reorder so referenced screens come first, non-referenced follow (dimmed).
+        const matchedSet = new Set(matched.map((m) => m.screenId));
+        const ordered = [
+          ...allScreens.filter((s) => matchedSet.has(s.screenId)),
+          ...allScreens.filter((s) => !matchedSet.has(s.screenId)),
+        ];
         return (
           <div className="rounded-lg border border-border bg-card p-4" id="epic-sec-screens">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-foreground">Referenced Screens</h3>
               <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                {matched.length} of {allScreens.length}
+                {matched.length} referenced · {allScreens.length} total
               </span>
             </div>
-            <ScreensGallery screens={matched} />
+            <ScreensGallery screens={ordered} highlightIds={referencedIds} />
           </div>
         );
       })()}

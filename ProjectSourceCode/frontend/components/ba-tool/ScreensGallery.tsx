@@ -40,9 +40,10 @@ export function ScreensGallery({ screens, highlightIds, compact = false }: Scree
             <button
               key={s.id}
               type="button"
+              id={`screen-thumb-${s.screenId}`}
               onClick={() => setActive(s)}
               className={cn(
-                'text-left rounded-md border overflow-hidden bg-card hover:shadow-md transition',
+                'text-left rounded-md border overflow-hidden bg-card hover:shadow-md transition scroll-mt-20',
                 isHighlighted ? 'border-primary/40 ring-1 ring-primary/20' : 'border-border opacity-60 hover:opacity-100',
               )}
               title={`Click to view ${s.screenId} — ${s.screenTitle}`}
