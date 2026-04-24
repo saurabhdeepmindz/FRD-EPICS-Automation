@@ -352,19 +352,32 @@ export class BaArtifactExportService {
           i++;
         }
         if (i < lines.length) i++; // skip closing ```
+        // When the fenced block contains a /* ... */ Traceability Header
+        // (common pattern for `26. Traceability Header Content` sections),
+        // render it as a proper Word table — not a preformatted monospace
+        // wall. Users expect the same tabular look they see in the
+        // Validations table a few sections earlier.
+        const asKvTable = this.extractKvBlockAsTable(codeLines);
+        if (asKvTable) {
+          if (asKvTable.title) {
+            blocks.push(new Paragraph({
+              children: [new TextRun({ text: asKvTable.title, bold: true })],
+            }));
+          }
+          blocks.push(this.buildKvTable(asKvTable.rows));
+          continue;
+        }
         blocks.push(this.buildPreformattedBlock(codeLines));
         continue;
       }
 
       // C-style block comment — the AI's Traceability Header uses `/* ... */`
-      // with ` * Key: Value` lines. Detect the opening `/*`, collect until
-      // `*/`, strip the leading ` * ` prefix, then either emit as a 2-column
-      // key-value table (if most lines match Key: Value) or as preformatted
-      // monospace text. Without this, line breaks got collapsed and the whole
-      // block rendered as one garbled paragraph.
+      // with ` * Key: Value` lines. When written OUTSIDE a fenced code block
+      // this handler catches it; when written INSIDE (same pattern but
+      // wrapped in ```), the fenced-code branch above handles it via
+      // extractKvBlockAsTable.
       if (/^\s*\/\*/.test(line)) {
         const commentLines: string[] = [];
-        // First line may have content after `/*`
         const firstTail = line.replace(/^\s*\/\*\*?/, '').replace(/\*\/\s*$/, '');
         if (firstTail.trim()) commentLines.push(firstTail);
         const isClosingOnFirst = /\*\/\s*$/.test(line);
@@ -382,37 +395,18 @@ export class BaArtifactExportService {
         } else {
           i++;
         }
-        // Strip leading ` * ` or `*` per line — docstring convention
-        const cleaned = commentLines
-          .map((l) => l.replace(/^\s*\*\s?/, '').replace(/\s+$/, ''))
-          .filter((l, idx, arr) => !(idx === 0 && l === '') && !(idx === arr.length - 1 && l === ''));
-        // If most non-empty lines look like Key: Value, render as table
-        const nonEmpty = cleaned.filter((l) => l.trim() && !/^=+$/.test(l));
-        const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s+\S/.test(l));
-        if (nonEmpty.length >= 3 && kvLines.length / nonEmpty.length >= 0.6) {
-          const rows: Array<[string, string]> = [];
-          let pendingTitle: string | null = null;
-          for (const l of cleaned) {
-            if (!l.trim()) continue;
-            if (/^=+$/.test(l)) continue;
-            const kv = /^([^:]+):\s+(.*)$/.exec(l);
-            if (kv) {
-              rows.push([kv[1].trim(), kv[2].trim()]);
-            } else if (l.trim().length > 0 && !pendingTitle) {
-              pendingTitle = l.trim();
-            }
-          }
-          if (pendingTitle) {
+        const asTable = this.extractKvBlockAsTable(commentLines);
+        if (asTable) {
+          if (asTable.title) {
             blocks.push(new Paragraph({
-              children: [new TextRun({ text: pendingTitle, bold: true })],
+              children: [new TextRun({ text: asTable.title, bold: true })],
             }));
           }
-          if (rows.length > 0) {
-            blocks.push(this.buildKvTable(rows));
-            continue;
-          }
+          blocks.push(this.buildKvTable(asTable.rows));
+          continue;
         }
-        // Fallback — preformatted
+        // Fallback — preformatted with the `*` prefixes stripped for legibility
+        const cleaned = commentLines.map((l) => l.replace(/^\s*\*\s?/, '').replace(/\s+$/, ''));
         blocks.push(this.buildPreformattedBlock(cleaned));
         continue;
       }
@@ -513,6 +507,58 @@ export class BaArtifactExportService {
     }
     if (header.length === 0) return null;
     return { header, rows };
+  }
+
+  //
+  // extractKvBlockAsTable
+  // Given a set of lines that look like a Traceability Header (either a bare
+  // C-style comment or the same pattern wrapped in a fenced code block),
+  // strip the comment prefixes and return { title, rows } if at least 60%
+  // of non-empty lines parse as Key: Value. Returns null when the heuristic
+  // doesn't match (caller falls back to preformatted rendering).
+  //
+  // Accepts all three shapes:
+  //   - bare C-style comment (lines prefixed with " * Key: Value")
+  //   - fenced code block wrapping a C-style comment
+  //   - plain key: value lines with no comment markers
+  //
+  private extractKvBlockAsTable(rawLines: string[]): { title: string | null; rows: Array<[string, string]> } | null {
+    // Strip comment chrome: leading `/*` / `*/` / ` * ` prefixes on each line.
+    const cleaned = rawLines
+      .map((l) =>
+        l
+          .replace(/^\s*\/\*+/, '')
+          .replace(/\*\/\s*$/, '')
+          .replace(/^\s*\*\s?/, '')
+          .replace(/\s+$/, ''),
+      )
+      .filter((_, idx, arr) => {
+        const head = idx === 0 && !arr[0].trim();
+        const tail = idx === arr.length - 1 && !arr[arr.length - 1].trim();
+        return !head && !tail;
+      });
+
+    const nonEmpty = cleaned.filter((l) => l.trim() && !/^=+$/.test(l.trim()));
+    const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s*\S/.test(l));
+
+    if (nonEmpty.length < 3 || kvLines.length / nonEmpty.length < 0.6) return null;
+
+    const rows: Array<[string, string]> = [];
+    let title: string | null = null;
+    for (const l of cleaned) {
+      const t = l.trim();
+      if (!t) continue;
+      if (/^=+$/.test(t)) continue; // decorative ==== divider lines
+      const kv = /^([^:]+):\s*(.*)$/.exec(l);
+      if (kv && kv[2].trim()) {
+        rows.push([kv[1].trim(), kv[2].trim()]);
+      } else if (!title && !/^\/\*|\*\/$/.test(t)) {
+        // First non-KV, non-divider line becomes the block title
+        title = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
+      }
+    }
+    if (rows.length === 0) return null;
+    return { title, rows };
   }
 
   /**
