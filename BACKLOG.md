@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `399b9d8 feat(ftc): bulk run — multi-select + shared-status dialog`
+> **Last updated:** 2026-04-24 — after `ea0ba94 feat(defects): standalone 'Open defect' button`
 
 Priority scale:
 
@@ -17,9 +17,7 @@ Priority scale:
 
 ### P0 — Do Next
 
-| # | Item | Why | Effort |
-|---|------|-----|--------|
-| 1 | **Open defect without a failing run** (from user Q) | Today the only way to open a defect is via a FAIL run. Add a standalone "Open Defect" button on each TC so you can log issues discovered outside a run. | S (~1 h) |
+_P0 lane is clear. Next push starts from P1._
 
 ### P1 — High
 
@@ -118,6 +116,7 @@ Priority scale:
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **Standalone "Open defect" button** on each TC — logs bugs outside a formal run (spec review, prod report, ad-hoc exploration); new `POST /api/ba/test-cases/:id/defects` endpoint with nullable `firstSeenRunId`; denormalizes defect ref onto `BaTestCase.defectIds` like the run-triggered flow (`ea0ba94`)
 - ✅ 2026-04-24 — **Bulk test-run recording** — multi-select checkboxes per TC, per-group "select all", sticky toolbar with "Run selected (N)" button, modal dialog for shared status/executor/env/sprint/notes; new backend endpoint `POST /api/ba/test-cases/bulk-runs` (200-TC cap, continues on individual failures) (`399b9d8`)
 - ✅ 2026-04-24 — **Dashboard tile: Test Execution Health** — pass-rate, stacked bar, PASS/FAIL/BLOCKED/SKIPPED/NOT_RUN pills, open-defect count (with P0/P1 callout), failing + blocked TC drill-downs (top 10 each with deep links to module), new endpoint `GET /api/ba/projects/:id/execution-health` (`17ec30d`)
 - ✅ 2026-04-24 — **RTM exec verdict column + filter** — per-row PASS/FAIL/BLOCKED/MIXED/NOT_RUN pill reading denormalized `BaTestCase.executionStatus`; new CSV columns (Pass/Fail/Blocked/Skipped/Not Run) (`2e4008c`)
