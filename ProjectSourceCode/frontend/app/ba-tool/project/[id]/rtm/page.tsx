@@ -25,6 +25,7 @@ export default function RtmViewerPage() {
   const [filterTbd, setFilterTbd] = useState<'' | 'yes' | 'no'>('');
   const [filterLayer, setFilterLayer] = useState('');
   const [filterTests, setFilterTests] = useState<'' | 'covered' | 'uncovered'>('');
+  const [filterExec, setFilterExec] = useState<'' | 'PASS' | 'FAIL' | 'BLOCKED' | 'MIXED' | 'NOT_RUN'>('');
   const [filterOwasp, setFilterOwasp] = useState('');
   const [backfilling, setBackfilling] = useState(false);
 
@@ -66,13 +67,14 @@ export default function RtmViewerPage() {
       const tcCount = (r.ftcTestCaseRefs ?? []).length;
       if (filterTests === 'covered' && tcCount === 0) return false;
       if (filterTests === 'uncovered' && tcCount > 0) return false;
+      if (filterExec && (r.execVerdict ?? 'NOT_RUN') !== filterExec) return false;
       if (filterOwasp) {
         const all = [...(r.owaspWebCategories ?? []), ...(r.owaspLlmCategories ?? [])];
         if (!all.includes(filterOwasp)) return false;
       }
       return true;
     });
-  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer, filterTests, filterOwasp]);
+  }, [rows, filterModule, filterEpic, filterStoryType, filterStatus, filterTbd, filterLayer, filterTests, filterExec, filterOwasp]);
 
   // CSV export
   const handleExportCsv = useCallback(() => {
@@ -82,16 +84,22 @@ export default function RtmViewerPage() {
       'Primary Class', 'Source File', 'SubTask ID', 'Team', 'Method', 'Test Cases',
       'Integration Status', 'TBD-Future Ref', 'Resolved',
       'Layer', 'LLD Source Files',
-      'Test Cases', 'OWASP Web', 'OWASP LLM',
+      'Test Cases', 'Exec Verdict', 'Pass', 'Fail', 'Blocked', 'Skipped', 'Not Run',
+      'OWASP Web', 'OWASP LLM',
     ];
-    const csvRows = filteredRows.map((r) => [
-      r.moduleId, r.moduleName, r.packageName, r.featureId, r.featureName, r.featureStatus, r.priority,
-      r.screenRef, r.epicId ?? '', r.epicName ?? '', r.storyId ?? '', r.storyName ?? '', r.storyType ?? '', r.storyStatus ?? '',
-      r.primaryClass ?? '', r.sourceFile ?? '', r.subtaskId ?? '', r.subtaskTeam ?? '', r.methodName ?? '',
-      (r.testCaseIds ?? []).join('; '), r.integrationStatus ?? '', r.tbdFutureRef ?? '', r.tbdResolved ? 'Yes' : 'No',
-      r.layer ?? '', (r.pseudoFilePaths ?? []).join('; '),
-      (r.ftcTestCaseRefs ?? []).join('; '), (r.owaspWebCategories ?? []).join('; '), (r.owaspLlmCategories ?? []).join('; '),
-    ].map((v) => `"${v}"`).join(','));
+    const csvRows = filteredRows.map((r) => {
+      const c = r.execCounts ?? { PASS: 0, FAIL: 0, BLOCKED: 0, SKIPPED: 0, NOT_RUN: 0 };
+      return [
+        r.moduleId, r.moduleName, r.packageName, r.featureId, r.featureName, r.featureStatus, r.priority,
+        r.screenRef, r.epicId ?? '', r.epicName ?? '', r.storyId ?? '', r.storyName ?? '', r.storyType ?? '', r.storyStatus ?? '',
+        r.primaryClass ?? '', r.sourceFile ?? '', r.subtaskId ?? '', r.subtaskTeam ?? '', r.methodName ?? '',
+        (r.testCaseIds ?? []).join('; '), r.integrationStatus ?? '', r.tbdFutureRef ?? '', r.tbdResolved ? 'Yes' : 'No',
+        r.layer ?? '', (r.pseudoFilePaths ?? []).join('; '),
+        (r.ftcTestCaseRefs ?? []).join('; '),
+        r.execVerdict ?? 'NOT_RUN', c.PASS, c.FAIL, c.BLOCKED, c.SKIPPED, c.NOT_RUN,
+        (r.owaspWebCategories ?? []).join('; '), (r.owaspLlmCategories ?? []).join('; '),
+      ].map((v) => `"${v}"`).join(',');
+    });
 
     const csv = [headers.join(','), ...csvRows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -195,13 +203,25 @@ export default function RtmViewerPage() {
           <option value="covered">Has test cases</option>
           <option value="uncovered">No test cases</option>
         </select>
+        <select
+          value={filterExec}
+          onChange={(e) => setFilterExec(e.target.value as '' | 'PASS' | 'FAIL' | 'BLOCKED' | 'MIXED' | 'NOT_RUN')}
+          className="text-xs border border-input rounded px-2 py-1 bg-background"
+        >
+          <option value="">Exec: All</option>
+          <option value="PASS">Pass</option>
+          <option value="FAIL">Fail</option>
+          <option value="BLOCKED">Blocked</option>
+          <option value="MIXED">Mixed</option>
+          <option value="NOT_RUN">Not run</option>
+        </select>
         <select value={filterOwasp} onChange={(e) => setFilterOwasp(e.target.value)} className="text-xs border border-input rounded px-2 py-1 bg-background">
           <option value="">All OWASP</option>
           {owaspCategories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer || filterTests || filterOwasp) && (
+        {(filterModule || filterEpic || filterStoryType || filterStatus || filterTbd || filterLayer || filterTests || filterExec || filterOwasp) && (
           <button
-            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); setFilterTests(''); setFilterOwasp(''); }}
+            onClick={() => { setFilterModule(''); setFilterEpic(''); setFilterStoryType(''); setFilterStatus(''); setFilterTbd(''); setFilterLayer(''); setFilterTests(''); setFilterExec(''); setFilterOwasp(''); }}
             className="text-xs text-primary hover:underline"
           >
             Clear filters
@@ -229,6 +249,7 @@ export default function RtmViewerPage() {
               <th className="px-3 py-2 border-b border-border font-semibold">Layer</th>
               <th className="px-3 py-2 border-b border-border font-semibold">LLD Source Files</th>
               <th className="px-3 py-2 border-b border-border font-semibold">Test Cases</th>
+              <th className="px-3 py-2 border-b border-border font-semibold">Exec</th>
               <th className="px-3 py-2 border-b border-border font-semibold">OWASP</th>
               <th className="px-3 py-2 border-b border-border font-semibold">TBD-Future</th>
             </tr>
@@ -236,7 +257,7 @@ export default function RtmViewerPage() {
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={17} className="px-3 py-12 text-center text-muted-foreground">
+                <td colSpan={18} className="px-3 py-12 text-center text-muted-foreground">
                   {rows.length === 0 ? 'No RTM data yet. Complete skill executions to populate.' : 'No rows match the current filters.'}
                 </td>
               </tr>
@@ -321,6 +342,29 @@ export default function RtmViewerPage() {
                     ) : (
                       <span className="text-[10px] text-amber-600">— uncovered</span>
                     )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {(() => {
+                      const v = row.execVerdict ?? 'NOT_RUN';
+                      const counts = row.execCounts ?? { PASS: 0, FAIL: 0, BLOCKED: 0, SKIPPED: 0, NOT_RUN: 0 };
+                      const total = (row.ftcTestCaseRefs ?? []).length;
+                      if (total === 0) return <span className="text-[10px] text-muted-foreground">—</span>;
+                      const cls =
+                        v === 'PASS' ? 'bg-green-100 text-green-700' :
+                        v === 'FAIL' ? 'bg-rose-100 text-rose-700' :
+                        v === 'BLOCKED' ? 'bg-amber-100 text-amber-700' :
+                        v === 'MIXED' ? 'bg-sky-100 text-sky-700' :
+                        'bg-gray-100 text-gray-600';
+                      const tooltip =
+                        `PASS ${counts.PASS} · FAIL ${counts.FAIL} · BLOCKED ${counts.BLOCKED} · ` +
+                        `SKIPPED ${counts.SKIPPED} · NOT_RUN ${counts.NOT_RUN} (of ${total})`;
+                      return (
+                        <span className={cn('inline-block px-1.5 py-0.5 rounded text-[9px] font-bold', cls)} title={tooltip}>
+                          {v === 'NOT_RUN' ? '—' : v}
+                          {v !== 'NOT_RUN' && ` ${counts.PASS}/${total}`}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-3 py-1.5">
                     {((row.owaspWebCategories?.length ?? 0) + (row.owaspLlmCategories?.length ?? 0)) > 0 ? (

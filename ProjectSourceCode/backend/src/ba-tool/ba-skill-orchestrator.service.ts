@@ -1605,9 +1605,45 @@ export class BaSkillOrchestratorService {
   // ─── RTM ───────────────────────────────────────────────────────────────
 
   async getProjectRtm(projectId: string) {
-    return this.prisma.baRtmRow.findMany({
+    const rows = await this.prisma.baRtmRow.findMany({
       where: { projectId },
       orderBy: [{ moduleId: 'asc' }, { featureId: 'asc' }],
+    });
+
+    // Collect every testCaseId referenced across all rows, then resolve to the
+    // denormalized executionStatus cached on BaTestCase. One bulk query instead
+    // of N per-row queries.
+    const allRefs = Array.from(
+      new Set(rows.flatMap((r) => r.ftcTestCaseRefs ?? []).filter(Boolean)),
+    );
+    const statusByRef = new Map<string, string>();
+    if (allRefs.length > 0) {
+      const tcs = await this.prisma.baTestCase.findMany({
+        where: { testCaseId: { in: allRefs } },
+        select: { testCaseId: true, executionStatus: true },
+      });
+      for (const tc of tcs) statusByRef.set(tc.testCaseId, tc.executionStatus);
+    }
+
+    return rows.map((r) => {
+      const refs = r.ftcTestCaseRefs ?? [];
+      const counts = { PASS: 0, FAIL: 0, BLOCKED: 0, SKIPPED: 0, NOT_RUN: 0 };
+      for (const ref of refs) {
+        const s = statusByRef.get(ref) ?? 'NOT_RUN';
+        if (s in counts) counts[s as keyof typeof counts] += 1;
+        else counts.NOT_RUN += 1;
+      }
+      // Collapse to a single verdict so the RTM table can show a pill at a
+      // glance: any FAIL → FAIL, any BLOCKED → BLOCKED, all PASS → PASS, else
+      // MIXED (some run, some not) or NOT_RUN (nothing executed).
+      let verdict: 'PASS' | 'FAIL' | 'BLOCKED' | 'MIXED' | 'NOT_RUN' = 'NOT_RUN';
+      if (refs.length > 0) {
+        if (counts.FAIL > 0) verdict = 'FAIL';
+        else if (counts.BLOCKED > 0) verdict = 'BLOCKED';
+        else if (counts.PASS === refs.length) verdict = 'PASS';
+        else if (counts.PASS > 0 || counts.SKIPPED > 0) verdict = 'MIXED';
+      }
+      return { ...r, execCounts: counts, execVerdict: verdict };
     });
   }
 

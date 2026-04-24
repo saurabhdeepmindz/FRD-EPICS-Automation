@@ -199,6 +199,15 @@ export interface BaRtmRow {
   ftcTestCaseRefs: string[];         // human-readable TC-001, TC-002-INT-01, …
   owaspWebCategories: string[];      // A01, A03, …
   owaspLlmCategories: string[];      // LLM01, LLM06, …
+  // Execution roll-up (denormalized from BaTestCase.executionStatus)
+  execCounts?: {
+    PASS: number;
+    FAIL: number;
+    BLOCKED: number;
+    SKIPPED: number;
+    NOT_RUN: number;
+  };
+  execVerdict?: 'PASS' | 'FAIL' | 'BLOCKED' | 'MIXED' | 'NOT_RUN';
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
