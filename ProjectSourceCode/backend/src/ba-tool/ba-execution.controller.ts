@@ -11,9 +11,16 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { BaDefectService, CreateDefectPayload, MAX_DEFECT_ATTACHMENT_BYTES, UpdateDefectPayload } from './ba-defect.service';
-import { BaRcaService, SaveTesterRcaPayload } from './ba-rca.service';
-import { BaTestRunService, BulkCreateTestRunPayload, CreateTestRunPayload } from './ba-test-run.service';
+import { BaDefectService, MAX_DEFECT_ATTACHMENT_BYTES } from './ba-defect.service';
+import { BaRcaService } from './ba-rca.service';
+import { BaTestRunService } from './ba-test-run.service';
+import {
+  BulkCreateTestRunDto,
+  CreateDefectDto,
+  CreateTestRunDto,
+  SaveTesterRcaDto,
+  UpdateDefectDto,
+} from './dto/execution.dto';
 
 /**
  * Phase 2a — execution tracking endpoints.
@@ -36,13 +43,13 @@ export class BaExecutionController {
 
   /** POST /api/ba/test-cases/:id/runs — record a new run. */
   @Post('test-cases/:id/runs')
-  createRun(@Param('id') testCaseId: string, @Body() payload: CreateTestRunPayload) {
+  createRun(@Param('id') testCaseId: string, @Body() payload: CreateTestRunDto) {
     return this.runs.createRun(testCaseId, payload);
   }
 
   /** POST /api/ba/test-cases/bulk-runs — same run payload recorded across many TCs. */
   @Post('test-cases/bulk-runs')
-  bulkCreateRuns(@Body() payload: BulkCreateTestRunPayload) {
+  bulkCreateRuns(@Body() payload: BulkCreateTestRunDto) {
     return this.runs.bulkCreateRuns(payload);
   }
 
@@ -80,7 +87,7 @@ export class BaExecutionController {
 
   /** POST /api/ba/test-cases/:id/defects — open a defect without a triggering run. */
   @Post('test-cases/:id/defects')
-  createDefect(@Param('id') testCaseId: string, @Body() payload: CreateDefectPayload) {
+  createDefect(@Param('id') testCaseId: string, @Body() payload: CreateDefectDto) {
     return this.defects.createDefect(testCaseId, payload);
   }
 
@@ -92,7 +99,7 @@ export class BaExecutionController {
 
   /** PATCH /api/ba/defects/:id — update title/status/severity/etc. */
   @Patch('defects/:id')
-  updateDefect(@Param('id') defectId: string, @Body() payload: UpdateDefectPayload) {
+  updateDefect(@Param('id') defectId: string, @Body() payload: UpdateDefectDto) {
     return this.defects.updateDefect(defectId, payload);
   }
 
@@ -147,7 +154,7 @@ export class BaExecutionController {
 
   /** POST /api/ba/defects/:id/rca — save a tester RCA (can be iterated). */
   @Post('defects/:id/rca')
-  saveTesterRca(@Param('id') defectId: string, @Body() payload: SaveTesterRcaPayload) {
+  saveTesterRca(@Param('id') defectId: string, @Body() payload: SaveTesterRcaDto) {
     return this.rca.saveTesterRca(defectId, payload);
   }
 }

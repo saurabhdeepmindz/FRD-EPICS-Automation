@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
-import { BaSprintService, CreateSprintPayload, UpdateSprintPayload } from './ba-sprint.service';
+import { BaSprintService } from './ba-sprint.service';
+import { CreateSprintDto, UpdateSprintDto } from './dto/sprint.dto';
 
 /**
  * v4.4 B1 — Sprint CRUD endpoints.
@@ -17,7 +18,7 @@ export class BaSprintController {
   }
 
   @Post('projects/:id/sprints')
-  create(@Param('id') projectId: string, @Body() payload: CreateSprintPayload) {
+  create(@Param('id') projectId: string, @Body() payload: CreateSprintDto) {
     return this.sprints.createSprint(projectId, payload);
   }
 
@@ -42,7 +43,7 @@ export class BaSprintController {
   }
 
   @Patch('sprints/:id')
-  update(@Param('id') sprintId: string, @Body() payload: UpdateSprintPayload) {
+  update(@Param('id') sprintId: string, @Body() payload: UpdateSprintDto) {
     return this.sprints.updateSprint(sprintId, payload);
   }
 
