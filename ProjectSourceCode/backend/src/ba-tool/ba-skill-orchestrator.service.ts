@@ -824,7 +824,21 @@ export class BaSkillOrchestratorService {
       return this.callAiService(systemPrompt, contextPacket);
     }
 
-    this.logger.log(`SKILL-04 per-feature loop: generating stories for ${features.length} feature(s)`);
+    // Sort features by featureId ascending so the US numbering stays aligned
+    // with feature order: F-04-01 gets the lowest US range, F-04-02 the next,
+    // and so on. Previously the loop followed whatever order the RTM rows
+    // came back in (by createdAt) — which meant F-04-09 could end up with
+    // US-052 while F-04-01 got US-073. Users rightly expect lower feature
+    // numbers to map to lower story numbers.
+    // Sort uses locale + numeric to handle F-04-10 > F-04-09 correctly.
+    features.sort((a, b) =>
+      a.featureId.localeCompare(b.featureId, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+
+    this.logger.log(
+      `SKILL-04 per-feature loop: generating stories for ${features.length} feature(s) ` +
+      `(order: ${features.map((f) => f.featureId).join(', ')})`,
+    );
 
     const perFeatureOutputs: string[] = [];
     // Story numbering is sequential across the whole project. Reserve a US
