@@ -44,7 +44,6 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 |---|------|-----|--------|
 | G1 | User manual (screenshots, end-to-end walkthrough) | Onboarding new BAs/testers. | M |
 | G2 | Admin guide (env vars, storage backends, Prisma migrations, backup) | Ops handoff. | M |
-| G3 | API reference — auto-gen from Nest decorators via `@nestjs/swagger` | Integrators. | S |
 | G5 | Video tutorial (5 min end-to-end) | Sales / demo. | M |
 
 ### P3 — Security Hardening
@@ -59,6 +58,15 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 ---
 
 ## DEFERRED Lane — parked for a future sprint (specs preserved)
+
+### G3 — API reference via `@nestjs/swagger`
+
+**Decision (2026-04-24):** Deferred. Distinct from D2 (which emits contract-test scaffolds for the user's target application). G3 documents the BA Tool's own NestJS endpoint surface for integrators.
+
+- **Scope when resumed:** install `@nestjs/swagger` + `swagger-ui-express`, call `SwaggerModule.setup()` in `main.ts`, expose at `GET /api/docs` (HTML UI) + `GET /api/docs-json` (raw OpenAPI).
+- **Controllers to annotate:** BaToolController, BaSkillController, BaLldController, BaFtcController, BaExecutionController, BaSprintController, BaMasterDataController — add `@ApiTags` + `@ApiOperation` where TS types alone aren't descriptive.
+- **Consumers:** CI pipelines auto-triggering skills; typed SDKs for external integrators; admin-guide (G2) cross-references.
+- **Estimate when resumed:** S (~30 min wiring + ~1 h decorator polish).
 
 ### F2 — Issue Tracker Integrations (Monday / Jira / ADO)
 

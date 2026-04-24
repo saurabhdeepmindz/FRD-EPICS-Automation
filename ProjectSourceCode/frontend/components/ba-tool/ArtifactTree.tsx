@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SKILL_LABELS, listPseudoFilesByArtifact, listTestCasesByArtifact, type BaArtifact, type BaArtifactSection, type BaPseudoFile, type BaSkillExecution, type BaTestCase } from '@/lib/ba-api';
 import { parseFrdContent, type ParsedFeature } from '@/lib/frd-parser';
 import { parseEpicContent, type EpicSectionId } from '@/lib/epic-parser';
-import { ChevronRight, ChevronDown, FileText, Layers, BookOpen, ListChecks, Cog, Sparkles, User, AlertTriangle, Compass } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, Layers, BookOpen, ListChecks, Cog, Sparkles, User, AlertTriangle, Compass, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // ─── Tree node types ─────────────────────────────────────────────────────────
@@ -245,6 +245,7 @@ const SKILL_ICONS: Record<string, typeof FileText> = {
 
 export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }: ArtifactTreeProps) {
   const tree = buildTree(executions, artifacts);
+  const [query, setQuery] = useState('');
   const [expandedSkills, setExpandedSkills] = useState<Record<string, boolean>>(() => {
     const map: Record<string, boolean> = {};
     for (const node of tree) map[node.skillName] = true;
@@ -300,6 +301,51 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifacts.map((a) => `${a.id}:${a.artifactType}`).join('|')]);
 
+  // UX3 — filter tree by case-insensitive substring match across skill labels,
+  // artifact labels, FRD features, EPIC sections (structural + internal),
+  // generic sections, pseudo-file paths, and test-case IDs/titles. When the
+  // query is non-empty, skills/artifacts whose subtree contains no match are
+  // hidden entirely; remaining nodes are auto-expanded so matches are visible
+  // without user clicks.
+  const q = query.trim().toLowerCase();
+  const hasQuery = q.length > 0;
+
+  const matchText = (v: string | null | undefined): boolean => !!v && v.toLowerCase().includes(q);
+
+  const artifactMatches = (a: ArtifactNode): boolean => {
+    if (matchText(a.label)) return true;
+    if (matchText(a.artifact.artifactId)) return true;
+    if (matchText(a.teamBadge)) return true;
+    if (a.features.some((f) => matchText(f.featureId) || matchText(f.featureName))) return true;
+    if (a.children.some((s) => matchText(s.label) || matchText(s.section?.sectionKey))) return true;
+    if (a.epicSections?.some((s) => matchText(s.label) || matchText(s.id))) return true;
+    if (a.epicInternalSections?.some((s) => matchText(s.label) || matchText(s.id))) return true;
+    const pseudos = pseudoFilesByArtifact[a.artifact.id] ?? [];
+    if (pseudos.some((p) => matchText(p.path) || matchText(p.language))) return true;
+    const tcs = testCasesByArtifact[a.artifact.id] ?? [];
+    if (tcs.some((t) => matchText(t.testCaseId) || matchText(t.title) || matchText(t.category))) return true;
+    return false;
+  };
+
+  const skillSubtreeMatches = (s: SkillNode): boolean =>
+    matchText(s.label) || matchText(s.skillName) || s.artifacts.some(artifactMatches);
+
+  const filteredTree: SkillNode[] = useMemo(() => {
+    if (!hasQuery) return tree;
+    return tree
+      .filter(skillSubtreeMatches)
+      .map((s) => ({
+        ...s,
+        // When the skill itself matches, keep all its artifacts so the user
+        // sees the full subtree. Otherwise, keep only artifacts that match.
+        artifacts:
+          matchText(s.label) || matchText(s.skillName)
+            ? s.artifacts
+            : s.artifacts.filter(artifactMatches),
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree, hasQuery, q, pseudoFilesByArtifact, testCasesByArtifact]);
+
   if (tree.length === 0) {
     return (
       <div className="px-4 py-8 text-center">
@@ -312,9 +358,48 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
 
   return (
     <nav className="py-1 text-[13px]" data-testid="artifact-tree">
-      {tree.map((skillNode, skillIdx) => {
+      {/* UX3 search box */}
+      <div className="px-2 pb-1.5 pt-1 sticky top-0 bg-background z-10 border-b border-border/40">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search tree…"
+            className="w-full pl-6 pr-7 py-1 text-[11px] border border-input rounded bg-background"
+            aria-label="Search artifact tree"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery('')}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+              title="Clear"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+        {hasQuery && (
+          <div className="text-[9px] text-muted-foreground mt-1 px-0.5">
+            {filteredTree.length === 0
+              ? 'No matches'
+              : `${filteredTree.reduce((n, s) => n + s.artifacts.length, 0)} artifact(s) across ${filteredTree.length} skill(s)`}
+          </div>
+        )}
+      </div>
+
+      {hasQuery && filteredTree.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[11px] text-muted-foreground italic">
+          No tree entries match &ldquo;{query}&rdquo;.
+        </div>
+      ) : null}
+
+      {filteredTree.map((skillNode, skillIdx) => {
         const skillNum = `${skillIdx + 1}`;
-        const isSkillExpanded = expandedSkills[skillNode.skillName] ?? true;
+        // UX3: when a query is active, force-expand so matches are visible.
+        const isSkillExpanded = hasQuery ? true : (expandedSkills[skillNode.skillName] ?? true);
         const SkillIcon = SKILL_ICONS[skillNode.skillName] ?? FileText;
         const isSkillActive = activeNode?.type === 'skill' && activeNode.skillName === skillNode.skillName;
 
@@ -356,8 +441,9 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
               <div className="ml-5 border-l border-border/50">
                 {skillNode.artifacts.map((artifactNode, artifactIdx) => {
                   const artifactNum = `${skillNum}.${artifactIdx + 1}`;
-                  const isArtifactExpanded = expandedArtifacts[artifactNode.artifact.id] ??
-                    (activeNode?.artifactId === artifactNode.artifact.id);
+                  const isArtifactExpanded = hasQuery
+                    ? true
+                    : (expandedArtifacts[artifactNode.artifact.id] ?? (activeNode?.artifactId === artifactNode.artifact.id));
                   const isArtifactActive = activeNode?.type === 'artifact' && activeNode.artifactId === artifactNode.artifact.id;
                   const ArtifactIcon = ICON_MAP[artifactNode.icon];
 
