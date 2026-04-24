@@ -108,21 +108,41 @@ export class BaOpenApiExportService {
     });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
 
-    const lldArtifacts = await this.prisma.baArtifact.findMany({
+    // Fetch every LLD artifact in the project, then pick only the newest per
+    // module so re-generations don't scan the same module twice. Older LLDs
+    // would otherwise overwrite endpoints in the aggregator silently.
+    const allLldArtifacts = await this.prisma.baArtifact.findMany({
       where: { artifactType: 'LLD', module: { projectId } },
       include: {
         pseudoFiles: { orderBy: { path: 'asc' } },
         module: { select: { id: true, moduleId: true, moduleName: true } },
       },
-      orderBy: { artifactId: 'asc' },
+      orderBy: { createdAt: 'desc' },
     });
+    const newestPerModule = new Map<string, typeof allLldArtifacts[number]>();
+    for (const a of allLldArtifacts) {
+      if (!newestPerModule.has(a.module.id)) newestPerModule.set(a.module.id, a);
+    }
+    const lldArtifacts = Array.from(newestPerModule.values())
+      .sort((a, b) => a.module.moduleId.localeCompare(b.module.moduleId));
 
-    // Merge all module specs; paths get prefixed with `/{moduleId}` to avoid
-    // collisions when two modules legitimately implement the same endpoint
-    // (e.g. /auth/login in both the admin and tenant-app modules).
+    // Merge newest-per-module specs; paths get prefixed with `/{moduleId}` to
+    // avoid collisions when two modules legitimately implement the same
+    // endpoint (e.g. /auth/login in both the admin and tenant-app modules).
     const allEndpoints: DetectedEndpoint[] = [];
     const allSchemas: DetectedSchema[] = [];
     const schemaNameSeen = new Set<string>();
+
+    // Per-module contribution breakdown so the description can tell the user
+    // exactly which modules contributed endpoints and which produced zero.
+    // Modules with zero endpoints are typically frontend-only (no HTTP
+    // handlers) or missing OpenAPI-friendly annotations in their pseudo-code.
+    const contribution: Array<{
+      moduleId: string;
+      moduleName: string;
+      endpoints: number;
+      schemas: number;
+    }> = [];
 
     for (const a of lldArtifacts) {
       const built = this.extractFromArtifact(a);
@@ -134,6 +154,7 @@ export class BaOpenApiExportService {
           tag: `${a.module.moduleId} · ${ep.tag}`,
         });
       }
+      let schemaContrib = 0;
       for (const sc of built.schemas) {
         // Namespace-prefix schemas too so two modules each with a `User`
         // schema stay distinct. First definition wins; duplicates dropped.
@@ -141,13 +162,20 @@ export class BaOpenApiExportService {
         if (schemaNameSeen.has(namespaced)) continue;
         schemaNameSeen.add(namespaced);
         allSchemas.push({ ...sc, name: namespaced });
+        schemaContrib += 1;
       }
+      contribution.push({
+        moduleId: a.module.moduleId,
+        moduleName: a.module.moduleName,
+        endpoints: built.endpoints.length,
+        schemas: schemaContrib,
+      });
     }
 
     const spec = this.assembleSpec({
       title: this.projectTitle(project),
       version: project.projectCode,
-      description: this.projectDescription(project, lldArtifacts.length),
+      description: this.projectDescription(project, contribution, allLldArtifacts.length, lldArtifacts.length),
       endpoints: allEndpoints,
       schemas: allSchemas,
     });
@@ -507,17 +535,58 @@ export class BaOpenApiExportService {
     ].join('\n');
   }
 
-  private projectDescription(project: BaProjectRow, moduleCount: number): string {
-    return [
-      `Auto-generated OpenAPI 3.0 contract aggregated across **${moduleCount} module(s)**.`,
+  private projectDescription(
+    project: BaProjectRow,
+    contribution: Array<{ moduleId: string; moduleName: string; endpoints: number; schemas: number }>,
+    totalLldArtifacts: number,
+    uniqueModules: number,
+  ): string {
+    const contributors = contribution.filter((c) => c.endpoints > 0);
+    const silent = contribution.filter((c) => c.endpoints === 0);
+    const totalEndpoints = contribution.reduce((n, c) => n + c.endpoints, 0);
+    const totalSchemas = contribution.reduce((n, c) => n + c.schemas, 0);
+
+    const lines: string[] = [
+      `Auto-generated OpenAPI 3.0 contract aggregated across **${uniqueModules} module(s)** ` +
+        `(${contributors.length} with HTTP endpoints, ${silent.length} without).`,
+      '',
       `Module endpoints are prefixed with their \`moduleId\` (e.g. \`/mod-01/users/{id}\`)`,
-      `so that modules that legitimately expose the same route don't collide.`,
+      `so modules that legitimately expose the same route don't collide.`,
+      '',
+      `Totals: **${totalEndpoints} endpoint(s)**, **${totalSchemas} schema(s)** ` +
+        `scanned from the newest LLD of each module.`,
+    ];
+
+    if (totalLldArtifacts > uniqueModules) {
+      lines.push(
+        '',
+        `Note: ${totalLldArtifacts} total LLD artifacts exist in this project ` +
+          `(some modules have re-generations). Only the newest LLD per module is aggregated here ` +
+          `to avoid scanning the same module twice.`,
+      );
+    }
+
+    if (contributors.length > 0) {
+      lines.push('', `Contributing modules:`);
+      for (const c of contributors) {
+        lines.push(`  • **${c.moduleId}** (${c.moduleName}) — ${c.endpoints} endpoint(s), ${c.schemas} schema(s)`);
+      }
+    }
+    if (silent.length > 0) {
+      lines.push('', `Modules with zero detected endpoints (likely frontend-only or missing OpenAPI annotations in their pseudo-code):`);
+      for (const s of silent) {
+        lines.push(`  • **${s.moduleId}** (${s.moduleName}) — 0 endpoints, ${s.schemas} schema(s)`);
+      }
+    }
+
+    lines.push(
       '',
       `Project: **${project.projectCode}** · ${project.name}`,
       '',
       `The server URL above is a placeholder — edit it (or add more entries)`,
       `to reflect your staging/production deployments before wiring clients.`,
-    ].join('\n');
+    );
+    return lines.join('\n');
   }
 
   // ─── Extraction (endpoints + schemas) ───────────────────────────────────
