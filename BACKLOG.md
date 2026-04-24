@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after `5933c76 feat(security): H1 input sanitisation audit`
+> **Last updated:** 2026-04-24 — after `3c4ef7a feat(ux): UX5 toast notifications`
 
 Priority scale:
 
@@ -34,7 +34,6 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 | UX1 | Dark mode toggle | Requested informally. | S |
 | UX2 | Keyboard shortcuts (j/k to navigate tree, r to record run, g to generate) | Power users. | S |
 | UX4 | Drag-drop reorder of TCs within a category | Current order is DB insertion order. | M |
-| UX5 | Toast notifications for long-running ops (export ZIP, AI generate) | Currently silent until done. | S |
 | UX6 | A11y audit — ARIA labels, keyboard nav, focus order | We haven't checked; likely many misses. | M |
 
 ### P3 — Docs
@@ -111,6 +110,7 @@ _P2 active lane clear. D1 + D2 both shipped. Next push goes to P3 polish or retu
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **UX5: Toast notifications for long-running ops** — fixed pre-existing broken `useToast` (per-component `useState` that never reached the mounted `<Toaster />`); rewrote as module-level singleton with subscribe/emit pattern, returns `{ id, update, dismiss }` from `pushToast()` so flows can show "Exporting…" loading → "Exported" success in one toast; new variants `loading` (spinner, no auto-dismiss, no close) + `success` (emerald bg + checkmark); wired into: LLD workbench (Export Unit Tests, Export Contract Tests), FTC workbench (Export CSV, Export Playwright Suite, Re-verify + Export), FTC artifact view (AC Re-verify, Bulk Run dialog); replaces 6+ `alert()` calls with in-app toasts (`3c4ef7a`)
 - ✅ 2026-04-24 — **H1: Input sanitisation audit** — systematic review of every `@Body()` surface; identified that Phase 2a/Sprint endpoints were accepting plain TypeScript interfaces (bypassing the global `ValidationPipe`); shipped 7 new DTO classes with `class-validator` decorators (`CreateTestRunDto`, `BulkCreateTestRunDto` w/ 200-UUID cap, `CreateDefectDto`, `UpdateDefectDto`, `SaveTesterRcaDto`, `CreateSprintDto`, `UpdateSprintDto`); wired into `ba-execution.controller` + `ba-sprint.controller`; reviewed and cleared attachment uploads (30 MB caps + Multer limits + path sanitisation), AI prompt framing, Prisma parameterisation, CORS pinning, SSRF posture; audit doc at `sprints/v4/SECURITY_AUDIT_H1.md` with deferred items flagged (E5 rate limiting, H2 AV scan, H3 secret rotation, H4 pen-test) (`5933c76`)
 - ✅ 2026-04-24 — **UX3: Tree search / filter box** — new sticky-top search input in `ArtifactTree`; case-insensitive substring match across skill labels, artifact labels + artifactId, FRD features (id + name), EPIC structural + internal sections, generic section labels/keys, pseudo-file paths + language, and test-case ids/titles/categories; when query is active all skills/artifacts without matches in their subtree are hidden AND matching nodes are auto-expanded so hits are visible without user clicks; live count shown ("3 artifact(s) across 2 skill(s)"); clear-X button resets (`d3be573`)
 - ✅ 2026-04-24 — **G3 deferred to future sprint** — moved from P3 Docs to DEFERRED lane with scope locked: `@nestjs/swagger` + `swagger-ui-express`, `@ApiTags`/`@ApiOperation` on 7 controllers, expose at `GET /api/docs` + `/api/docs-json`. Distinct from D2 (which docs the user's target app, not the BA Tool itself) (`d3be573`)
