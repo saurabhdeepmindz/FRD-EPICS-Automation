@@ -492,6 +492,45 @@ export async function getProjectRtm(projectId: string): Promise<BaRtmRow[]> {
   return data;
 }
 
+// ─── Execution Health (dashboard tile) ────────────────────────────────────
+
+export interface BaExecutionHealth {
+  total: number;
+  executed: number;
+  passRate: number;
+  counts: {
+    PASS: number;
+    FAIL: number;
+    BLOCKED: number;
+    SKIPPED: number;
+    NOT_RUN: number;
+  };
+  openDefects: number;
+  criticalOpenDefects: number;
+  lastRunAt: string | null;
+  failingTcs: Array<{
+    id: string;
+    testCaseId: string;
+    title: string;
+    moduleId: string;
+    moduleName: string;
+    moduleDbId: string;
+  }>;
+  blockedTcs: Array<{
+    id: string;
+    testCaseId: string;
+    title: string;
+    moduleId: string;
+    moduleName: string;
+    moduleDbId: string;
+  }>;
+}
+
+export async function getProjectExecutionHealth(projectId: string): Promise<BaExecutionHealth> {
+  const { data } = await api.get<BaExecutionHealth>(`/ba/projects/${projectId}/execution-health`);
+  return data;
+}
+
 // ─── Status helpers ──────────────────────────────────────────────────────────
 
 export const MODULE_STATUS_LABELS: Record<BaModuleStatus, string> = {

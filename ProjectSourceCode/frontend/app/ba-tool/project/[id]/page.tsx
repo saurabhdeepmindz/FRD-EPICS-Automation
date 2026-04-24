@@ -8,11 +8,13 @@ import {
   getBaProject,
   createBaModule,
   updateBaProject,
+  getProjectExecutionHealth,
   type BaProject,
+  type BaExecutionHealth,
   MODULE_STATUS_LABELS,
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
-import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler } from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug } from 'lucide-react';
 import { api } from '@/lib/api';
 import Link from 'next/link';
 
@@ -22,6 +24,7 @@ export default function BaProjectWorkspacePage() {
   const projectId = params.id;
 
   const [project, setProject] = useState<BaProject | null>(null);
+  const [health, setHealth] = useState<BaExecutionHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,8 +45,12 @@ export default function BaProjectWorkspacePage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getBaProject(projectId);
+      const [data, h] = await Promise.all([
+        getBaProject(projectId),
+        getProjectExecutionHealth(projectId).catch(() => null),
+      ]);
       setProject(data);
+      setHealth(h);
     } catch {
       setError('Failed to load project');
     } finally {
@@ -425,6 +432,117 @@ export default function BaProjectWorkspacePage() {
                 </Card>
               </div>
 
+              {/* Test Execution Health tile */}
+              {health && health.total > 0 && (
+                <div className="mb-8 rounded-lg border border-border bg-card p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-primary" />
+                      <h3 className="text-sm font-semibold">Test Execution Health</h3>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span>
+                        Pass rate:{' '}
+                        <span className={`font-bold ${
+                          health.passRate >= 90 ? 'text-green-600' :
+                          health.passRate >= 70 ? 'text-amber-600' :
+                          health.executed > 0 ? 'text-rose-600' :
+                          'text-muted-foreground'
+                        }`}>
+                          {health.executed > 0 ? `${health.passRate}%` : '—'}
+                        </span>
+                      </span>
+                      {health.lastRunAt && (
+                        <span title={new Date(health.lastRunAt).toLocaleString()}>
+                          Last run: {new Date(health.lastRunAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Stacked bar */}
+                  <div className="mb-4 overflow-hidden rounded h-2 bg-muted flex">
+                    {(['PASS', 'FAIL', 'BLOCKED', 'SKIPPED', 'NOT_RUN'] as const).map((key) => {
+                      const pct = health.total > 0 ? (health.counts[key] / health.total) * 100 : 0;
+                      if (pct === 0) return null;
+                      const color =
+                        key === 'PASS' ? 'bg-green-500' :
+                        key === 'FAIL' ? 'bg-rose-500' :
+                        key === 'BLOCKED' ? 'bg-amber-500' :
+                        key === 'SKIPPED' ? 'bg-sky-400' :
+                        'bg-muted-foreground/30';
+                      return <div key={key} className={color} style={{ width: `${pct}%` }} title={`${key}: ${health.counts[key]}`} />;
+                    })}
+                  </div>
+
+                  {/* Count pills */}
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+                    <HealthPill icon={CheckCircle2} label="Pass" count={health.counts.PASS} total={health.total} color="green" />
+                    <HealthPill icon={XCircle} label="Fail" count={health.counts.FAIL} total={health.total} color="rose" />
+                    <HealthPill icon={Ban} label="Blocked" count={health.counts.BLOCKED} total={health.total} color="amber" />
+                    <HealthPill icon={Clock} label="Skipped" count={health.counts.SKIPPED} total={health.total} color="sky" />
+                    <HealthPill icon={List} label="Not run" count={health.counts.NOT_RUN} total={health.total} color="gray" />
+                    <HealthPill icon={Bug} label="Open defects" count={health.openDefects} total={health.openDefects} color="rose" subtitle={health.criticalOpenDefects > 0 ? `${health.criticalOpenDefects} P0/P1` : undefined} />
+                  </div>
+
+                  {/* Drill-downs */}
+                  {(health.failingTcs.length > 0 || health.blockedTcs.length > 0) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      {health.failingTcs.length > 0 && (
+                        <div>
+                          <p className="font-semibold text-rose-700 mb-1">Failing tests ({health.counts.FAIL})</p>
+                          <ul className="space-y-0.5">
+                            {health.failingTcs.map((tc) => (
+                              <li key={tc.id}>
+                                <Link
+                                  href={`/ba-tool/project/${projectId}/module/${tc.moduleDbId}`}
+                                  className="hover:underline text-muted-foreground"
+                                  title={tc.title}
+                                >
+                                  <span className="font-mono text-rose-600">{tc.testCaseId}</span>{' '}
+                                  <span className="text-muted-foreground">[{tc.moduleId}]</span>{' '}
+                                  <span className="text-foreground">{tc.title.length > 60 ? tc.title.slice(0, 60) + '…' : tc.title}</span>
+                                </Link>
+                              </li>
+                            ))}
+                            {health.counts.FAIL > health.failingTcs.length && (
+                              <li className="text-muted-foreground/70">
+                                +{health.counts.FAIL - health.failingTcs.length} more — see RTM (Exec filter = Fail)
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                      {health.blockedTcs.length > 0 && (
+                        <div>
+                          <p className="font-semibold text-amber-700 mb-1">Blocked tests ({health.counts.BLOCKED})</p>
+                          <ul className="space-y-0.5">
+                            {health.blockedTcs.map((tc) => (
+                              <li key={tc.id}>
+                                <Link
+                                  href={`/ba-tool/project/${projectId}/module/${tc.moduleDbId}`}
+                                  className="hover:underline text-muted-foreground"
+                                  title={tc.title}
+                                >
+                                  <span className="font-mono text-amber-600">{tc.testCaseId}</span>{' '}
+                                  <span className="text-muted-foreground">[{tc.moduleId}]</span>{' '}
+                                  <span className="text-foreground">{tc.title.length > 60 ? tc.title.slice(0, 60) + '…' : tc.title}</span>
+                                </Link>
+                              </li>
+                            ))}
+                            {health.counts.BLOCKED > health.blockedTcs.length && (
+                              <li className="text-muted-foreground/70">
+                                +{health.counts.BLOCKED - health.blockedTcs.length} more — see RTM (Exec filter = Blocked)
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Skill chain diagram */}
               <div className="rounded-lg border border-border bg-muted/30 p-6">
                 <h3 className="text-sm font-semibold mb-4">Skill Chain (per module)</h3>
@@ -442,6 +560,39 @@ export default function BaProjectWorkspacePage() {
             </div>
           )}
         </main>
+      </div>
+    </div>
+  );
+}
+
+interface HealthPillProps {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  count: number;
+  total: number;
+  color: 'green' | 'rose' | 'amber' | 'sky' | 'gray';
+  subtitle?: string;
+}
+
+function HealthPill({ icon: Icon, label, count, total, color, subtitle }: HealthPillProps) {
+  const tone = {
+    green: 'border-green-200 bg-green-50 text-green-700',
+    rose: 'border-rose-200 bg-rose-50 text-rose-700',
+    amber: 'border-amber-200 bg-amber-50 text-amber-700',
+    sky: 'border-sky-200 bg-sky-50 text-sky-700',
+    gray: 'border-border bg-muted/40 text-muted-foreground',
+  }[color];
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className={`rounded border px-2.5 py-2 flex items-center gap-2 ${tone}`}>
+      <Icon className="h-4 w-4 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] uppercase tracking-wide opacity-70">{label}</div>
+        <div className="flex items-baseline gap-1">
+          <span className="text-base font-bold leading-none">{count}</span>
+          {total > 0 && count !== total && <span className="text-[10px] opacity-60">({pct}%)</span>}
+        </div>
+        {subtitle && <div className="text-[10px] opacity-80 truncate">{subtitle}</div>}
       </div>
     </div>
   );

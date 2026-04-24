@@ -1647,6 +1647,84 @@ export class BaSkillOrchestratorService {
     });
   }
 
+  /**
+   * Test-execution roll-up for the project dashboard. Uses the denormalized
+   * status on BaTestCase so this stays O(1) query-count.
+   */
+  async getProjectExecutionHealth(projectId: string) {
+    const tcs = await this.prisma.baTestCase.findMany({
+      where: { artifact: { module: { projectId } } },
+      select: {
+        id: true,
+        testCaseId: true,
+        title: true,
+        executionStatus: true,
+        lastRunAt: true,
+        artifact: {
+          select: {
+            module: { select: { id: true, moduleId: true, moduleName: true } },
+          },
+        },
+      },
+    });
+
+    const counts = { PASS: 0, FAIL: 0, BLOCKED: 0, SKIPPED: 0, NOT_RUN: 0 };
+    let lastRunAt: Date | null = null;
+    for (const tc of tcs) {
+      const s = (tc.executionStatus in counts) ? (tc.executionStatus as keyof typeof counts) : 'NOT_RUN';
+      counts[s] += 1;
+      if (tc.lastRunAt && (!lastRunAt || tc.lastRunAt > lastRunAt)) lastRunAt = tc.lastRunAt;
+    }
+    const total = tcs.length;
+    const executed = total - counts.NOT_RUN;
+    const passRate = executed > 0 ? Math.round((counts.PASS / executed) * 100) : 0;
+
+    const defects = await this.prisma.baDefect.findMany({
+      where: { testCase: { artifact: { module: { projectId } } } },
+      select: { id: true, severity: true, status: true },
+    });
+    const openDefects = defects.filter((d) => !['FIXED', 'VERIFIED', 'CLOSED', 'WONT_FIX'].includes(d.status)).length;
+    const criticalOpenDefects = defects.filter(
+      (d) => ['P0', 'P1'].includes(d.severity) && !['FIXED', 'VERIFIED', 'CLOSED', 'WONT_FIX'].includes(d.status),
+    ).length;
+
+    const failingTcs = tcs
+      .filter((tc) => tc.executionStatus === 'FAIL')
+      .slice(0, 10)
+      .map((tc) => ({
+        id: tc.id,
+        testCaseId: tc.testCaseId,
+        title: tc.title,
+        moduleId: tc.artifact.module.moduleId,
+        moduleName: tc.artifact.module.moduleName,
+        moduleDbId: tc.artifact.module.id,
+      }));
+
+    const blockedTcs = tcs
+      .filter((tc) => tc.executionStatus === 'BLOCKED')
+      .slice(0, 10)
+      .map((tc) => ({
+        id: tc.id,
+        testCaseId: tc.testCaseId,
+        title: tc.title,
+        moduleId: tc.artifact.module.moduleId,
+        moduleName: tc.artifact.module.moduleName,
+        moduleDbId: tc.artifact.module.id,
+      }));
+
+    return {
+      total,
+      executed,
+      passRate,
+      counts,
+      openDefects,
+      criticalOpenDefects,
+      lastRunAt,
+      failingTcs,
+      blockedTcs,
+    };
+  }
+
   // ─── Export ────────────────────────────────────────────────────────────
 
   async getExportData(projectId: string) {

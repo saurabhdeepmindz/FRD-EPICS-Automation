@@ -116,6 +116,14 @@ export class BaSkillController {
     return this.orchestrator.backfillProjectRtm(projectId);
   }
 
+  // ─── Execution Health ──────────────────────────────────────────────────
+
+  /** GET /api/ba/projects/:id/execution-health — PASS/FAIL/BLOCK roll-up for dashboard tile */
+  @Get('projects/:id/execution-health')
+  getExecutionHealth(@Param('id') projectId: string) {
+    return this.orchestrator.getProjectExecutionHealth(projectId);
+  }
+
   // ─── Export ────────────────────────────────────────────────────────────
 
   /** GET /api/ba/projects/:id/export/json — get all export data as JSON */
