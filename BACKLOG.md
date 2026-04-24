@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-04-24 — after scope call (defer Enterprise + non-Playwright Codegen + Monday integration)
+> **Last updated:** 2026-04-24 — after `2e4008c feat(rtm): exec verdict column + filter`
 
 Priority scale:
 
@@ -19,9 +19,8 @@ Priority scale:
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| 1 | **RTM row badges reflect latest run** | BaTestCase already has `executionStatus` + `latestRunId` denormalized. RTM table still shows stale badges. Wire them into [RtmPage](ProjectSourceCode/frontend/app/ba-tool/project/[id]/rtm/page.tsx). | S (~1 h) |
-| 2 | **Dashboard tile: "Test Execution Health"** | Module/project dashboard needs a PASS/FAIL/BLOCK roll-up. Without it, managers can't see where the red is. Uses existing `executionStatus` counts. | S (~1 h) |
-| 3 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
+| 1 | **Dashboard tile: "Test Execution Health"** | Module/project dashboard needs a PASS/FAIL/BLOCK roll-up. Without it, managers can't see where the red is. Uses existing `executionStatus` counts. | S (~1 h) |
+| 2 | **"Run all" + bulk status for a suite** | Recording runs one-by-one is painful for 30+ TCs. Add multi-select checkbox + bulk-status dropdown in the FTC artifact view. | M (~3 h) |
 
 ### P1 — High
 
@@ -120,6 +119,7 @@ Priority scale:
 
 ## Recently Completed (reverse chronological)
 
+- ✅ 2026-04-24 — **RTM exec verdict column + filter** — per-row PASS/FAIL/BLOCKED/MIXED/NOT_RUN pill reading denormalized `BaTestCase.executionStatus`; new CSV columns (Pass/Fail/Blocked/Skipped/Not Run) (`2e4008c`)
 - ✅ 2026-04-24 — Monday integration scope locked + deferred (decision captured in F2 section above)
 - ✅ 2026-04-24 — **AI RCA now ingests attachment evidence** (logs, OCR'd screenshots, docs); per-file 2 KB cap, 8 KB total, system prompt updated to cite filenames (`38f054f`)
 - ✅ 2026-04-24 — Tabular run history in ExecutionHistoryPanel (`9520d9d`)
