@@ -230,8 +230,14 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         for (let i = 0; i < raw.length; i++) {
           const s = raw[i];
           const next = raw[i + 1];
+          // Two heading formats come out of the skill depending on the AI's
+          // phrasing:
+          //   - st_<usXX>_<type>_<num>_<slug>          (e.g. st_us043_be_01_…)
+          //   - subtask_<N>_st_<usXX>_<type>_<num>_<slug>  (numbered variant)
+          // Both are empty-content stubs that precede a `subtask_header`
+          // row carrying the actual body.
           const isTitleStub =
-            /^st_[a-z0-9_]+$/.test(s.sectionKey) &&
+            (/^st_[a-z0-9_]+$/.test(s.sectionKey) || /^subtask_\d+_st_/.test(s.sectionKey)) &&
             s.sectionKey !== 'subtask_header' &&
             (!s.content || s.content.trim().length === 0);
           if (isTitleStub && next && next.sectionKey === 'subtask_header') {

@@ -10,6 +10,41 @@ You are a tech lead and senior business analyst working together. Your job is to
 
 ---
 
+## 🛠 Tech Stack — Read from Input Context
+
+The orchestrator provides a `techStack` object in the input context with fields:
+
+- `frontend` — e.g., `"Next.js (App Router, TypeScript, Tailwind CSS)"`
+- `backend` — e.g., `"NestJS (TypeScript, Prisma ORM)"`
+- `database` — e.g., `"PostgreSQL"`
+- `architecture` — e.g., `"Modular monolith"`
+- `frontendExt` — file extension for frontend source files (`.tsx` / `.ts` / `.vue` / etc.)
+- `backendExt` — file extension for backend source files (`.ts` / `.py` / `.java` / etc.)
+- `ormHint` — e.g., `"Prisma ORM (schema.prisma)"`
+- `testFrameworkFrontend` / `testFrameworkBackend` — suggested test frameworks
+
+**Every SubTask you emit MUST reflect this stack.** Concretely:
+
+- **Frontend SubTasks (FE team)**: source files end in `techStack.frontendExt` (e.g., `app/features/.../Component.tsx` for Next.js, NOT `components/Component.vue` or `src/views/Component.jsx`). Use the stack's idioms: App Router `page.tsx` / `layout.tsx` when Next.js; React Server Components where appropriate; imports from `next/*` when Next.js; Tailwind utility classes when Tailwind is in the stack.
+- **Backend SubTasks (BE team)**: source files end in `techStack.backendExt` (e.g., `src/modules/.../invoice.service.ts` for NestJS). Use `@Controller`, `@Injectable`, `@Module` decorators when NestJS; DTOs with `class-validator` decorators; dependency injection via constructor parameters; async/await returning `Promise<T>` — NEVER generic pseudocode like `function createInvoice(...)` that ignores the framework.
+- **Database SubTasks / schema changes**: emit Prisma schema diffs (`prisma/schema.prisma`) when `ormHint` mentions Prisma; otherwise emit SQL migrations compatible with `techStack.database`. Use `techStack.database` for dialect-specific syntax (e.g., PostgreSQL `SERIAL` / `TIMESTAMPTZ`, MySQL `AUTO_INCREMENT`).
+- **Integration SubTasks (IN team)**: HTTP client style matches the backend (NestJS → use `HttpService` from `@nestjs/axios` or native `fetch`; Python FastAPI → `httpx`).
+- **Test SubTasks (QA team)**: use `testFrameworkFrontend` / `testFrameworkBackend` — e.g., Jest+supertest for backend E2E, Playwright for frontend E2E.
+
+**Example section — Primary Class Name**:
+
+> ❌ Generic: `InvoiceController`
+> ✅ Stack-appropriate (NestJS): `InvoiceController` class decorated with `@Controller('invoices')`, injected via `@Injectable()`, located at `src/modules/invoice/invoice.controller.ts`
+
+**Example section — Source File Reference**:
+
+> ❌ Generic: `src/controllers/InvoiceController.java`
+> ✅ Next.js + NestJS stack: FE story → `app/invoices/page.tsx`; BE story → `src/modules/invoice/invoice.controller.ts`; DB story → `prisma/schema.prisma` (add `Invoice` model) + `prisma/migrations/XXXX_add_invoice.sql`
+
+**If `techStack` is missing from context** (pre-stack-aware module), fall back to generic pseudocode but explicitly flag the assumption in Section 22 Algorithm Outline.
+
+---
+
 ## Prerequisites — What Must Exist Before This Skill Runs
 
 | Prerequisite | Location | Status Required |

@@ -371,7 +371,13 @@ export class BaSkillOrchestratorService {
       case 'SKILL-04':
         ctx = this.assembleSkill04Context(mod, approvedModules, tbdEntries, rtmRows); break;
       case 'SKILL-05':
-        ctx = this.assembleSkill05Context(mod, approvedModules, tbdEntries, rtmRows); break;
+        ctx = this.assembleSkill05Context(mod, approvedModules, tbdEntries, rtmRows);
+        // Inject resolved tech stack so SubTasks are generated with the
+        // project's frameworks / database in mind (imports, file paths,
+        // test frameworks, ORM shape, etc.). Falls back to sensible
+        // defaults when the Architect hasn't filled BaLldConfig.
+        ctx.techStack = await this.resolveTechStack(moduleDbId, mod.projectId ?? null);
+        break;
       case 'SKILL-06-LLD':
         ctx = await this.assembleSkill06Context(moduleDbId, mod, rtmRows, tbdEntries); break;
       case 'SKILL-07-FTC':
@@ -509,6 +515,72 @@ export class BaSkillOrchestratorService {
       compactModuleIndex: approvedModules,
       tbdFutureRegistry: tbdEntries.filter((e) => !e.isResolved),
       rtmRows,
+    };
+  }
+
+  /**
+   * Resolve the tech stack for a module. Priority:
+   *   1. BaLldConfig for this specific module (Architect's selections)
+   *   2. BaLldConfig for any other module in the same project (first non-empty fields win)
+   *   3. Project default stored on BaProject.sqlDialect (DB only) + hardcoded framework fallbacks
+   *
+   * The fallback stack is intentionally Next.js + NestJS + PostgreSQL because
+   * that's what this repo itself uses; changes are one line away if needed.
+   * SubTasks read this to emit stack-appropriate code (imports, file paths,
+   * test frameworks, ORM usage).
+   */
+  private async resolveTechStack(moduleDbId: string, projectId: string | null): Promise<Record<string, string>> {
+    const nameFromMaster = async (id: string | null): Promise<string | null> => {
+      if (!id) return null;
+      const entry = await this.prisma.baMasterDataEntry.findUnique({ where: { id }, select: { name: true } });
+      return entry?.name ?? null;
+    };
+
+    // 1. Module-specific LLD config
+    let cfg = await this.prisma.baLldConfig.findUnique({ where: { moduleDbId } });
+
+    // 2. Fall back to any other module's LLD config in the same project
+    if ((!cfg || (!cfg.frontendStackId && !cfg.backendStackId && !cfg.databaseId)) && projectId) {
+      const sibling = await this.prisma.baLldConfig.findFirst({
+        where: {
+          module: { projectId },
+          OR: [
+            { frontendStackId: { not: null } },
+            { backendStackId: { not: null } },
+            { databaseId: { not: null } },
+          ],
+        },
+      });
+      if (sibling) cfg = cfg ? { ...cfg, ...sibling } : sibling;
+    }
+
+    const [frontend, backend, database, architecture] = await Promise.all([
+      nameFromMaster(cfg?.frontendStackId ?? null),
+      nameFromMaster(cfg?.backendStackId ?? null),
+      nameFromMaster(cfg?.databaseId ?? null),
+      nameFromMaster(cfg?.architectureId ?? null),
+    ]);
+
+    // 3. Project SQL dialect is also useful — plus hardcoded defaults for
+    //    any field still null so the AI always has a stack to target.
+    let sqlDialect: string | null = null;
+    if (projectId) {
+      const p = await this.prisma.baProject.findUnique({ where: { id: projectId }, select: { sqlDialect: true } });
+      sqlDialect = p?.sqlDialect ?? null;
+    }
+
+    return {
+      frontend: frontend ?? 'Next.js (App Router, TypeScript, Tailwind CSS)',
+      backend: backend ?? 'NestJS (TypeScript, Prisma ORM)',
+      database: database ?? (sqlDialect ? `PostgreSQL (dialect: ${sqlDialect})` : 'PostgreSQL'),
+      architecture: architecture ?? 'Modular monolith (frontend + backend + separate AI service)',
+      // Naming conventions implied by the stack — the AI reads these to
+      // pick file paths and imports.
+      frontendExt: /next|react/i.test(frontend ?? 'Next.js') ? '.tsx' : '.ts',
+      backendExt: /nest|express|typescript/i.test(backend ?? 'NestJS') ? '.ts' : '.py',
+      ormHint: /prisma/i.test(backend ?? 'NestJS') ? 'Prisma ORM (schema.prisma)' : 'Your project\'s preferred ORM',
+      testFrameworkFrontend: 'Jest + React Testing Library (or Playwright for E2E)',
+      testFrameworkBackend: 'Jest + supertest (for e2e), plain Jest (for unit)',
     };
   }
 
