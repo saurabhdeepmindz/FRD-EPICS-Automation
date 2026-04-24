@@ -54,12 +54,37 @@ export const CATEGORY_LABELS: Record<string, { label: string; color: string }> =
 };
 
 export function UserStoryArtifactView({ artifact, activeStorySection, onUpdated }: UserStoryArtifactViewProps) {
-  // Extract story header info from sections
+  // Detect multi-story artifact — SKILL-04's per-feature loop produces an
+  // artifact with one DB row per story (key shapes: `us_NNN_<title>` when the
+  // AI wrote a titled heading, OR `user_story_us_NNN` when it wrote just the
+  // bare ID). In that layout the 27-subsection breakdown lives inside each
+  // story's single content blob rather than as separate DB sections. A
+  // single-story artifact (the v1-v3 shape) uses numbered keys like
+  // `1_user_story_id` — detect by checking for those canonical keys.
+  const canonicalSectionKeys = new Set(Object.keys(STORY_SECTION_CONFIG));
+  const hasCanonicalSections = artifact.sections.some((s) => canonicalSectionKeys.has(s.sectionKey));
+  const storyRowRe = /^(?:us_|user_story_us_)(\d+)/;
+  const storyRows = artifact.sections
+    .map((s) => {
+      const m = storyRowRe.exec(s.sectionKey);
+      if (!m) return null;
+      return { section: s, usNumber: parseInt(m[1], 10) };
+    })
+    .filter((x): x is { section: typeof artifact.sections[number]; usNumber: number } => x !== null)
+    .sort((a, b) => a.usNumber - b.usNumber);
+  const isMultiStoryArtifact = !hasCanonicalSections && storyRows.length >= 2;
+
+  // Extract story header info from sections (only meaningful in single-story mode)
   const storyId = artifact.sections.find((s) => s.sectionKey === '1_user_story_id')?.content?.trim() ?? '';
   const storyName = artifact.sections.find((s) => s.sectionKey === '2_user_story_name')?.content?.trim() ?? '';
   const storyGoal = artifact.sections.find((s) => s.sectionKey === '3_user_story_description_goal')?.content?.trim() ?? '';
   const storyType = artifact.sections.find((s) => s.sectionKey === '7_user_story_type')?.content?.trim() ?? '';
   const storyStatus = artifact.sections.find((s) => s.sectionKey === '8_user_story_status')?.content?.trim() ?? '';
+
+  // ─── Multi-story render path ────────────────────────────────────────────
+  if (isMultiStoryArtifact) {
+    return <MultiStoryView artifact={artifact} storyRows={storyRows} activeStorySection={activeStorySection} onUpdated={onUpdated} />;
+  }
 
   // Group sections by category
   const grouped = useMemo(() => {
@@ -258,6 +283,235 @@ function StorySectionCard({
               );
             })()}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Multi-story view (SKILL-04 per-feature loop output) ────────────────────
+
+function MultiStoryView({
+  artifact,
+  storyRows,
+  activeStorySection,
+  onUpdated,
+}: {
+  artifact: BaArtifact;
+  storyRows: Array<{ section: BaArtifact['sections'][number]; usNumber: number }>;
+  activeStorySection?: string | null;
+  onUpdated?: () => void;
+}) {
+  const deriveFeatureId = (section: BaArtifact['sections'][number]): string => {
+    const content = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+    const m = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[^\n]*?(F-\d+-\d+)/i);
+    return m ? m[1] : 'UNASSIGNED';
+  };
+
+  const storiesByFeature = useMemo(() => {
+    const groups = new Map<string, typeof storyRows>();
+    for (const row of storyRows) {
+      const fid = deriveFeatureId(row.section);
+      const list = groups.get(fid) ?? [];
+      list.push(row);
+      groups.set(fid, list);
+    }
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [storyRows]);
+
+  const coverage = artifact.sections.find((s) => s.sectionKey === 'coverage_summary');
+  const rtm = artifact.sections.find((s) => s.sectionKey === 'rtm_extension');
+
+  return (
+    <div className="space-y-4" data-testid="user-story-artifact-view-multi">
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex items-center gap-3 mb-2">
+          <BookOpen className="h-5 w-5 text-primary" />
+          <span className="font-mono text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">{artifact.artifactId}</span>
+          <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-muted text-muted-foreground">
+            {storyRows.length} stories · {storiesByFeature.length} features
+          </span>
+        </div>
+        <h2 className="text-base font-semibold text-foreground">User Stories</h2>
+      </div>
+
+      {(() => {
+        const allScreens = artifact.module?.screens ?? [];
+        if (allScreens.length === 0) return null;
+        const { matched, referencedIds } = filterReferencedScreens(
+          allScreens,
+          artifact.sections.map((s) => (s.isHumanModified && s.editedContent ? s.editedContent : s.content)),
+        );
+        const matchedSet = new Set(matched.map((m) => m.screenId));
+        const ordered = [
+          ...allScreens.filter((s) => matchedSet.has(s.screenId)),
+          ...allScreens.filter((s) => !matchedSet.has(s.screenId)),
+        ];
+        return (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-foreground">Referenced Screens</h3>
+              <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                {matched.length} referenced · {allScreens.length} total
+              </span>
+            </div>
+            <ScreensGallery screens={ordered} highlightIds={referencedIds} />
+          </div>
+        );
+      })()}
+
+      {coverage && coverage.content.trim().length > 10 && (
+        <CollapsibleUsSection label="Coverage Summary" artifact={artifact} sectionKey="coverage_summary"
+          content={coverage.isHumanModified && coverage.editedContent ? coverage.editedContent : coverage.content}
+          onUpdated={onUpdated} defaultOpen
+        />
+      )}
+      {rtm && rtm.content.trim().length > 10 && (
+        <CollapsibleUsSection label="RTM Extension" artifact={artifact} sectionKey="rtm_extension"
+          content={rtm.isHumanModified && rtm.editedContent ? rtm.editedContent : rtm.content}
+          onUpdated={onUpdated}
+        />
+      )}
+
+      {storiesByFeature.map(([featureId, rows]) => (
+        <FeatureStoryGroup
+          key={featureId}
+          featureId={featureId}
+          rows={rows}
+          artifact={artifact}
+          activeStorySection={activeStorySection}
+          onUpdated={onUpdated}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FeatureStoryGroup({
+  featureId,
+  rows,
+  artifact,
+  activeStorySection,
+  onUpdated,
+}: {
+  featureId: string;
+  rows: Array<{ section: BaArtifact['sections'][number]; usNumber: number }>;
+  artifact: BaArtifact;
+  activeStorySection?: string | null;
+  onUpdated?: () => void;
+}) {
+  const anyActive = rows.some((r) => activeStorySection === r.section.sectionKey);
+  const [expanded, setExpanded] = useState(anyActive);
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <button
+        onClick={() => setExpanded((p) => !p)}
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-muted/30 text-left"
+      >
+        <div className="flex items-center gap-2">
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          <span className="font-mono text-xs text-primary bg-primary/10 px-1.5 py-0.5 rounded">{featureId}</span>
+          <span className="text-sm font-semibold">User Stories</span>
+          <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+            {rows.length} {rows.length === 1 ? 'story' : 'stories'}
+          </span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="border-t border-border/50 p-3 space-y-2">
+          {rows.map(({ section, usNumber }) => (
+            <StoryRow
+              key={section.id}
+              usNumber={usNumber}
+              section={section}
+              artifact={artifact}
+              defaultOpen={activeStorySection === section.sectionKey}
+              onUpdated={onUpdated}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StoryRow({
+  usNumber, section, artifact, defaultOpen, onUpdated,
+}: {
+  usNumber: number;
+  section: BaArtifact['sections'][number];
+  artifact: BaArtifact;
+  defaultOpen?: boolean;
+  onUpdated?: () => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  const content = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+  const titleFromLabel = section.sectionLabel && /—|\-\s/.test(section.sectionLabel) ? section.sectionLabel : null;
+  const firstHeading = content.match(/#{1,2}\s*User Story:?\s*(US-\d+[^\n]*)/i);
+  const title = titleFromLabel ?? (firstHeading ? firstHeading[1].trim() : `US-${String(usNumber).padStart(3, '0')}`);
+  const usId = `US-${String(usNumber).padStart(3, '0')}`;
+
+  const type = /frontend/i.test(title) || /frontend/i.test(content.slice(0, 500)) ? 'Frontend'
+    : /backend/i.test(title) || /backend/i.test(content.slice(0, 500)) ? 'Backend'
+    : /integration/i.test(title) || /integration/i.test(content.slice(0, 500)) ? 'Integration'
+    : null;
+  const typeBadge = type === 'Frontend' ? 'bg-blue-100 text-blue-700'
+    : type === 'Backend' ? 'bg-purple-100 text-purple-700'
+    : type === 'Integration' ? 'bg-orange-100 text-orange-700'
+    : '';
+  const hasTbd = content.includes('TBD-Future');
+
+  return (
+    <div id={`story-${usId}`} className={cn('rounded-md border overflow-hidden scroll-mt-4', hasTbd ? 'border-amber-300' : 'border-border/60')}>
+      <button onClick={() => setOpen((p) => !p)} className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/20 text-left">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          {open ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
+          <span className="font-mono text-[11px] text-primary bg-primary/10 px-1.5 py-0.5 rounded">{usId}</span>
+          {type && <span className={cn('text-[9px] px-1.5 py-0.5 rounded font-bold', typeBadge)}>{type}</span>}
+          <span className="text-xs font-medium truncate">{title.replace(/^US-\d+\s*[—-]?\s*/, '')}</span>
+          {hasTbd && <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />}
+          {section.isHumanModified && <Sparkles className="h-3 w-3 text-amber-500 shrink-0" />}
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-border/40 px-3 py-2 bg-muted/10">
+          <AiEditableSection
+            artifact={artifact}
+            label={title}
+            content={content}
+            findSection={(sections) => sections.find((s) => s.sectionKey === section.sectionKey)}
+            isAi={section.aiGenerated && !section.isHumanModified}
+            onUpdated={onUpdated}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CollapsibleUsSection({
+  label, content, artifact, sectionKey, onUpdated, defaultOpen,
+}: {
+  label: string; content: string; artifact: BaArtifact; sectionKey: string; onUpdated?: () => void; defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <button onClick={() => setOpen((p) => !p)} className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-muted/30 text-left">
+        <div className="flex items-center gap-2">
+          {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          <span className="text-sm font-semibold">{label}</span>
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-border/50 px-4 py-3">
+          <AiEditableSection
+            artifact={artifact}
+            label={label}
+            content={content}
+            findSection={(sections) => sections.find((s) => s.sectionKey === sectionKey)}
+            onUpdated={onUpdated}
+          />
         </div>
       )}
     </div>
