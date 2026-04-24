@@ -33,6 +33,21 @@ interface ArtifactNode {
   features: FeatureNode[]; // parsed FRD features (only for FRD artifacts)
   epicSections?: EpicSectionNode[]; // parsed EPIC sections (only for EPIC artifacts)
   epicInternalSections?: EpicSectionNode[]; // internal processing (Step 1, Step 2, ...)
+  /** For multi-story USER_STORY artifacts — groups stories by their parent FRD feature. */
+  userStoryGroups?: UserStoryFeatureGroup[];
+  /** Extra sections that sit alongside the per-feature groups (Coverage Summary, RTM Extension). */
+  userStoryExtras?: SectionNode[];
+}
+
+interface UserStoryFeatureGroup {
+  featureId: string;   // e.g. "F-04-02"
+  stories: Array<{
+    section: BaArtifactSection;
+    usId: string;      // e.g. "US-076"
+    title: string;     // parsed from content
+    type: 'Frontend' | 'Backend' | 'Integration' | null;
+    hasTbd: boolean;
+  }>;
 }
 
 interface EpicSectionNode {
@@ -135,8 +150,69 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         }));
       }
 
+      // USER_STORY: detect multi-story shape and build feature-grouped tree.
+      // Story keys match us_NNN_<title> OR user_story_us_NNN. Feature is
+      // parsed from the "FRD Feature Reference" line inside the content.
+      let userStoryGroups: UserStoryFeatureGroup[] | undefined;
+      let userStoryExtras: SectionNode[] | undefined;
+      if (artifact.artifactType === 'USER_STORY') {
+        const storyRe = /^(?:us_|user_story_us_)(\d+)/;
+        const storyRows = artifact.sections
+          .map((s) => {
+            const m = storyRe.exec(s.sectionKey);
+            if (!m) return null;
+            return { section: s, usNumber: parseInt(m[1], 10) };
+          })
+          .filter((x): x is { section: BaArtifactSection; usNumber: number } => x !== null);
+
+        if (storyRows.length >= 2) {
+          const groupsMap = new Map<string, UserStoryFeatureGroup>();
+          for (const { section, usNumber } of storyRows) {
+            const content = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+            const featMatch = content.match(/(?:FRD Feature|Feature ID|Feature Reference)[^\n]*?(F-\d+-\d+)/i);
+            const featureId = featMatch ? featMatch[1] : 'UNASSIGNED';
+            const titleMatch = content.match(/#{1,2}\s*User Story:?\s*(US-\d+[^\n]*)/i);
+            const title = section.sectionLabel && /—|\-\s/.test(section.sectionLabel)
+              ? section.sectionLabel.replace(/^US-\d+\s*[—-]?\s*/, '')
+              : titleMatch
+                ? titleMatch[1].replace(/^US-\d+\s*[—-]?\s*/, '').trim()
+                : `User Story US-${String(usNumber).padStart(3, '0')}`;
+            const usId = `US-${String(usNumber).padStart(3, '0')}`;
+            const type: 'Frontend' | 'Backend' | 'Integration' | null =
+              /frontend/i.test(title) || /frontend/i.test(content.slice(0, 500)) ? 'Frontend'
+                : /backend/i.test(title) || /backend/i.test(content.slice(0, 500)) ? 'Backend'
+                  : /integration/i.test(title) || /integration/i.test(content.slice(0, 500)) ? 'Integration'
+                    : null;
+            const hasTbd = content.includes('TBD-Future');
+            const group = groupsMap.get(featureId) ?? { featureId, stories: [] };
+            group.stories.push({ section, usId, title, type, hasTbd });
+            groupsMap.set(featureId, group);
+          }
+          // Sort stories inside each group by US number, sort groups by feature id.
+          for (const g of groupsMap.values()) {
+            g.stories.sort((a, b) => a.usId.localeCompare(b.usId));
+          }
+          userStoryGroups = Array.from(groupsMap.values()).sort((a, b) => a.featureId.localeCompare(b.featureId));
+
+          // Extras = coverage_summary, rtm_extension, and any empty feature
+          // placeholder sections — surface them flat under the artifact
+          // (collapsed by default). Story rows are excluded (they live in groups).
+          const consumedIds = new Set(storyRows.map((r) => r.section.id));
+          userStoryExtras = artifact.sections
+            .filter((s) => !consumedIds.has(s.id))
+            .filter((s) => s.sectionKey === 'coverage_summary' || s.sectionKey === 'rtm_extension')
+            .map((section) => ({
+              section,
+              label: section.sectionLabel,
+              isAi: section.aiGenerated && !section.isHumanModified,
+              isEdited: section.isHumanModified,
+            }));
+        }
+      }
+
       const showRawChildren =
-        artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC';
+        artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC' &&
+        !userStoryGroups; // multi-story USER_STORY uses userStoryGroups instead
 
       // For FTC artifacts, hide the five sections whose content is now
       // surfaced via the synthetic per-category tree groups. Their raw
@@ -158,6 +234,8 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         features,
         epicSections,
         epicInternalSections,
+        userStoryGroups,
+        userStoryExtras,
         children: showRawChildren
           ? artifact.sections
               .filter((s) =>
@@ -339,6 +417,11 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
     if (pseudos.some((p) => matchText(p.path) || matchText(p.language))) return true;
     const tcs = testCasesByArtifact[a.artifact.id] ?? [];
     if (tcs.some((t) => matchText(t.testCaseId) || matchText(t.title) || matchText(t.category))) return true;
+    // User Story multi-story artifacts — search feature ids + per-story usId/title/type.
+    if (a.userStoryGroups?.some((g) =>
+      matchText(g.featureId) ||
+      g.stories.some((s) => matchText(s.usId) || matchText(s.title) || matchText(s.type ?? undefined))
+    )) return true;
     return false;
   };
 
@@ -621,6 +704,112 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                   >
                                     <span className="text-muted-foreground/60 shrink-0 font-mono text-[9px]">{intNum}</span>
                                     <span className="truncate">{sec.label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Level 2: User Story feature groups + nested stories ── */}
+                      {isArtifactExpanded && artifactNode.userStoryGroups && artifactNode.userStoryGroups.length > 0 && (
+                        <div className="ml-5 border-l border-border/30">
+                          {artifactNode.userStoryGroups.map((group, gIdx) => {
+                            const groupNum = `${artifactNum}.${gIdx + 1}`;
+                            const isGroupExpanded = expandedArtifacts[`usgroup:${artifactNode.artifact.id}:${group.featureId}`] ?? true;
+                            const toggleKey = `usgroup:${artifactNode.artifact.id}:${group.featureId}`;
+                            return (
+                              <div key={group.featureId}>
+                                <div className="flex items-center">
+                                  <button
+                                    onClick={() => setExpandedArtifacts((p) => ({ ...p, [toggleKey]: !(p[toggleKey] ?? true) }))}
+                                    className="pl-2 pr-0 py-1 text-muted-foreground hover:text-foreground"
+                                  >
+                                    {isGroupExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                  </button>
+                                  <button
+                                    onClick={() => setExpandedArtifacts((p) => ({ ...p, [toggleKey]: !(p[toggleKey] ?? true) }))}
+                                    className="flex-1 flex items-center gap-1.5 pl-1 pr-2 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                  >
+                                    <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{groupNum}</span>
+                                    <span className="font-mono text-primary shrink-0">{group.featureId}</span>
+                                    <span className="truncate">User Stories</span>
+                                    <span className="ml-auto text-[9px] text-muted-foreground/60 shrink-0">{group.stories.length}</span>
+                                  </button>
+                                </div>
+                                {isGroupExpanded && (
+                                  <div className="ml-5 border-l border-border/30">
+                                    {group.stories.map((story, sIdx) => {
+                                      const storyNum = `${groupNum}.${sIdx + 1}`;
+                                      const isSectionActive = activeNode?.type === 'section' && activeNode.sectionId === story.section.id;
+                                      const typeCls = story.type === 'Frontend' ? 'bg-blue-100 text-blue-700'
+                                        : story.type === 'Backend' ? 'bg-purple-100 text-purple-700'
+                                        : story.type === 'Integration' ? 'bg-orange-100 text-orange-700'
+                                        : '';
+                                      return (
+                                        <button
+                                          key={story.section.id}
+                                          onClick={() => onNodeSelect({
+                                            type: 'section',
+                                            artifactId: artifactNode.artifact.id,
+                                            sectionId: story.section.id,
+                                          })}
+                                          className={cn(
+                                            'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                            isSectionActive
+                                              ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                          )}
+                                        >
+                                          <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{storyNum}</span>
+                                          <span className="font-mono text-primary shrink-0">{story.usId}</span>
+                                          {story.type && (
+                                            <span className={cn('text-[8px] px-1 py-0.5 rounded font-bold shrink-0', typeCls)}>
+                                              {story.type.slice(0, 2).toUpperCase()}
+                                            </span>
+                                          )}
+                                          <span className="truncate">{story.title}</span>
+                                          {story.hasTbd && (
+                                            <span title="TBD-Future"><AlertTriangle className="h-2.5 w-2.5 text-amber-500 shrink-0" /></span>
+                                          )}
+                                          {story.section.isHumanModified && (
+                                            <User className="h-2.5 w-2.5 text-amber-500 shrink-0" />
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {/* Extras (Coverage Summary, RTM Extension) at bottom */}
+                          {artifactNode.userStoryExtras && artifactNode.userStoryExtras.length > 0 && (
+                            <div className="mt-1 pt-1 border-t border-border/30">
+                              <div className="pl-3 pr-2 py-1 text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+                                Artifact Extras
+                              </div>
+                              {artifactNode.userStoryExtras.map((sectionNode, eIdx) => {
+                                const extraNum = `${artifactNum}.e${eIdx + 1}`;
+                                const isSectionActive = activeNode?.type === 'section' && activeNode.sectionId === sectionNode.section.id;
+                                return (
+                                  <button
+                                    key={sectionNode.section.id}
+                                    onClick={() => onNodeSelect({
+                                      type: 'section',
+                                      artifactId: artifactNode.artifact.id,
+                                      sectionId: sectionNode.section.id,
+                                    })}
+                                    className={cn(
+                                      'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                      isSectionActive
+                                        ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                    )}
+                                  >
+                                    <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{extraNum}</span>
+                                    <span className="truncate">{sectionNode.label}</span>
                                   </button>
                                 );
                               })}
