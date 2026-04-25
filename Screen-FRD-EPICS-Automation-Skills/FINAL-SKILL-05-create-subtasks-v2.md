@@ -10,24 +10,6 @@ You are a tech lead and senior business analyst working together. Your job is to
 
 ---
 
-## 🚨 MANDATORY — PER-SUBTASK COMPLETENESS
-
-Every SubTask you emit MUST be fully populated with **all 24 sections** at the same depth. The automation tool runs a completeness check after this skill — any SubTask where Section 21 is blank, or where Sections 15/22/23 are abbreviated compared to peers, is rejected and the whole artifact is re-run.
-
-**Observed failure mode to avoid:** writing the first SubTask in full (~15 KB) and then compressing every subsequent one to ~3 KB without Mermaid, algorithm, or proper validation tables. **Do NOT do this.** Treat the 5th SubTask with the same depth as the 1st.
-
-Concrete requirements per SubTask, regardless of position in the output:
-
-- **Section 21** MUST include BOTH the Mermaid `sequenceDiagram` block AND the textual Message Sequence (for every BE / IN SubTask; FE SubTasks may emit a minimal diagram for any HTTP callsite).
-- **Section 15** (Integration Points) — listed as a numbered list, each with class name, method signature, and TBD-Future marking when applicable.
-- **Section 20** (Validations) — as a table with rows.
-- **Section 22** (End-to-End Flow) — identical across siblings in the same flow (copy verbatim).
-- **Section 23** (Error Handling Outline) — every exception with type + HTTP status + rollback note.
-
-If the output response would truncate before covering all SubTasks, **emit the first SubTasks in full and add `## ⚠ CONTINUATION REQUIRED — <list remaining SubTask IDs>` at the end** rather than compressing. The orchestrator will loop to cover the remainder.
-
----
-
 ## 🛠 Tech Stack — Read from Input Context
 
 The orchestrator provides a `techStack` object in the input context with fields:
