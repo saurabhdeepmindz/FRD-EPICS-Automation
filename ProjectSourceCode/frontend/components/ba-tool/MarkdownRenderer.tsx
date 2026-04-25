@@ -21,7 +21,13 @@ type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; text: string }
   | { type: 'separator' }
-  | { type: 'empty' };
+  | { type: 'empty' }
+  // KV-table: 2-col Key/Value table, used for Traceability headers
+  // and Section 20 Project Structure (everything but Directory Map).
+  | { type: 'kv_table'; title?: string; rows: Array<[string, string]> }
+  // Tree art (e.g. Directory Map under Project Structure). Rendered as
+  // monospace <pre> so the box-drawing characters align.
+  | { type: 'tree'; title?: string; lines: string[] };
 
 /**
  * Renders markdown content with proper formatting for tables, code blocks,
@@ -36,13 +42,185 @@ export function MarkdownRenderer({ content, className, plain }: MarkdownRenderer
     );
   }
 
-  const blocks = parseMarkdown(content);
+  const blocks = postProcessBlocks(parseMarkdown(content));
 
   return (
     <div className={cn('space-y-3 text-sm leading-relaxed', className)}>
       {blocks.map((block, idx) => renderBlock(block, idx))}
     </div>
   );
+}
+
+// ─── Post-processing ────────────────────────────────────────────────────────
+//
+// Convert specific paragraph and code blocks into specialized renderers:
+//   1. Traceability /* ... */ comment blocks  → 2-col Key/Value table
+//   2. "Project Structure:" KV blocks         → 2-col Key/Value table
+//   3. "Directory Map:" tree-art blocks       → monospace <pre>
+//
+// All three are detected by content shape, not by section heading, so they
+// keep working when the AI emits them in slightly different positions.
+
+function postProcessBlocks(blocks: Block[]): Block[] {
+  const out: Block[] = [];
+  for (const b of blocks) {
+    // Traceability: fenced code containing a /* ... */ KV comment
+    if (b.type === 'code') {
+      const kv = extractKvFromCommentOrPlain(b.content.split('\n'));
+      if (kv && looksLikeTraceability(kv.rows)) {
+        out.push({ type: 'kv_table', title: kv.title ?? 'Traceability', rows: kv.rows });
+        continue;
+      }
+    }
+    // Project Structure: paragraph starting with "Project Structure:" plus KV lines
+    if (b.type === 'paragraph') {
+      const ps = extractProjectStructureBlock(b.text);
+      if (ps) {
+        if (ps.kv) {
+          out.push({ type: 'kv_table', title: 'Project Structure', rows: ps.kv });
+        }
+        if (ps.treeLines && ps.treeLines.length > 0) {
+          out.push({ type: 'tree', title: 'Directory Map', lines: ps.treeLines });
+        }
+        if (ps.remainder.trim()) {
+          out.push({ type: 'paragraph', text: ps.remainder });
+        }
+        continue;
+      }
+      // Standalone Directory Map: paragraph (no preceding Project Structure)
+      const dm = extractDirectoryMapOnly(b.text);
+      if (dm) {
+        out.push({ type: 'tree', title: 'Directory Map', lines: dm.lines });
+        if (dm.remainder.trim()) out.push({ type: 'paragraph', text: dm.remainder });
+        continue;
+      }
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+// Parse a paragraph beginning with "Project Structure:" — return a KV row list,
+// the immediately-following Directory Map tree lines (if present), and any
+// remaining text as a paragraph. Returns null when the pattern doesn't match.
+function extractProjectStructureBlock(
+  text: string,
+): { kv: Array<[string, string]> | null; treeLines: string[]; remainder: string } | null {
+  const lines = text.split('\n');
+  // First non-empty line must be "Project Structure:"
+  const firstIdx = lines.findIndex((l) => l.trim());
+  if (firstIdx < 0) return null;
+  if (!/^\s*project\s+structure\s*:?\s*$/i.test(lines[firstIdx])) return null;
+
+  const rows: Array<[string, string]> = [];
+  let i = firstIdx + 1;
+  for (; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) {
+      // Blank line — peek ahead to see if "Directory Map:" follows
+      if (rows.length > 0) break;
+      continue;
+    }
+    // KV line: leading whitespace, Key (alphanumeric/space/slash), then `:` then value
+    const m = /^\s*([A-Za-z][\w\s/().\-]+?)\s*:\s+(.+)$/.exec(l);
+    if (m) {
+      rows.push([m[1].trim(), m[2].trim()]);
+      continue;
+    }
+    // Hit a non-KV line — stop the KV pass
+    break;
+  }
+  if (rows.length < 2) return null;
+
+  // Tree section detection: skip blanks, then look for "Directory Map:" header
+  while (i < lines.length && !lines[i].trim()) i++;
+  let treeLines: string[] = [];
+  if (i < lines.length && /^\s*directory\s+map\s*:?\s*$/i.test(lines[i])) {
+    i++;
+    while (i < lines.length) {
+      // Tree art lines: contain box-drawing chars OR are indented continuation
+      const l = lines[i];
+      if (!l.trim()) {
+        // Allow a single blank line inside a tree, then stop on the next blank
+        if (treeLines.length === 0) break;
+        treeLines.push('');
+        i++;
+        continue;
+      }
+      treeLines.push(l);
+      i++;
+    }
+    // Trim trailing blanks
+    while (treeLines.length > 0 && !treeLines[treeLines.length - 1].trim()) treeLines.pop();
+  }
+
+  const remainder = lines.slice(i).join('\n');
+  return { kv: rows, treeLines, remainder };
+}
+
+function extractDirectoryMapOnly(
+  text: string,
+): { lines: string[]; remainder: string } | null {
+  const lines = text.split('\n');
+  const firstIdx = lines.findIndex((l) => l.trim());
+  if (firstIdx < 0) return null;
+  if (!/^\s*directory\s+map\s*:?\s*$/i.test(lines[firstIdx])) return null;
+  const tree: string[] = [];
+  let i = firstIdx + 1;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim()) break;
+    tree.push(l);
+    i++;
+  }
+  if (tree.length < 2) return null;
+  return { lines: tree, remainder: lines.slice(i).join('\n') };
+}
+
+// Extract KV rows from a list of lines that may be a /* ... */ comment block
+// (Traceability) or plain key:value lines. Mirrors the backend extractor in
+// ba-artifact-export.service.ts so DOCX and on-screen rendering stay aligned.
+function extractKvFromCommentOrPlain(
+  rawLines: string[],
+): { title: string | null; rows: Array<[string, string]> } | null {
+  const cleaned = rawLines.map((l) =>
+    l
+      .replace(/^\s*\/\*+/, '')
+      .replace(/\*\/\s*$/, '')
+      .replace(/^\s*\*\s?/, '')
+      .replace(/\s+$/, ''),
+  );
+  const nonEmpty = cleaned.filter((l) => l.trim() && !/^=+$/.test(l.trim()));
+  const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s*\S/.test(l));
+  if (nonEmpty.length < 3 || kvLines.length / nonEmpty.length < 0.6) return null;
+
+  const rows: Array<[string, string]> = [];
+  let title: string | null = null;
+  for (const l of cleaned) {
+    const t = l.trim();
+    if (!t) continue;
+    if (/^=+$/.test(t)) continue;
+    const kv = /^([^:]+):\s*(.*)$/.exec(l);
+    if (kv && kv[2].trim()) {
+      rows.push([kv[1].trim(), kv[2].trim()]);
+    } else if (!title && !/^\/\*|\*\/$/.test(t)) {
+      title = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
+    }
+  }
+  if (rows.length === 0) return null;
+  return { title, rows };
+}
+
+// Distinguish a Traceability block (Module:/Feature:/User Story:/Epic:) from
+// a generic KV list — keeps the renderer from converting random `Note: ...`
+// code blocks into tables.
+function looksLikeTraceability(rows: Array<[string, string]>): boolean {
+  const keys = rows.map(([k]) => k.toLowerCase());
+  let hits = 0;
+  for (const k of ['module', 'feature', 'user story', 'epic', 'package', 'screen']) {
+    if (keys.some((x) => x.startsWith(k))) hits++;
+  }
+  return hits >= 3;
 }
 
 // ─── Parser ──────────────────────────────────────────────────────────────────
@@ -175,7 +353,53 @@ function renderBlock(block: Block, key: number): React.ReactNode {
       return <hr key={key} className="border-border my-2" />;
     case 'empty':
       return null;
+    case 'kv_table':
+      return <KvTableBlock key={key} title={block.title} rows={block.rows} />;
+    case 'tree':
+      return <TreeBlock key={key} title={block.title} lines={block.lines} />;
   }
+}
+
+function KvTableBlock({ title, rows }: { title?: string; rows: Array<[string, string]> }) {
+  return (
+    <div className="my-2 overflow-x-auto">
+      {title && (
+        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+          {title}
+        </div>
+      )}
+      <table className="w-full text-xs border-collapse border border-border rounded-md">
+        <tbody>
+          {rows.map(([k, v], i) => (
+            <tr key={i} className={cn('hover:bg-muted/30 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
+              <th
+                scope="row"
+                className="border border-border px-3 py-1.5 text-left align-top font-semibold text-foreground bg-muted/30 w-1/3"
+              >
+                {renderInline(k)}
+              </th>
+              <td className="border border-border px-3 py-1.5 align-top">{renderCell(v)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TreeBlock({ title, lines }: { title?: string; lines: string[] }) {
+  return (
+    <div className="my-2 rounded-md border border-border overflow-hidden">
+      {title && (
+        <div className="px-3 py-1 bg-muted/50 border-b border-border text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+          {title}
+        </div>
+      )}
+      <pre className="px-3 py-2 bg-muted/10 text-xs font-mono leading-relaxed overflow-x-auto whitespace-pre">
+        <code>{lines.join('\n')}</code>
+      </pre>
+    </div>
+  );
 }
 
 function TableBlock({ headers, rows }: { headers: string[]; rows: string[][] }) {
