@@ -399,9 +399,127 @@ Tooltips were added on `truncate` labels throughout (artifact, FRD feature, USER
 
 ### Future work
 
-- Per-story SKILL-05 orchestrator (append-mode) so a single execution covers all ~22 stories of a module
-- Defensive splitter that clamps `###` inside a SubTask body
 - Automated regression test that downloads DOCX + PDF for a known SUBTASK artifact and asserts on table count + image count
+- Per-module bulk run (one CLI command kicks off all 27 stories in sequence with checkpoints)
+- Ability to re-generate a single SubTask body without redoing the whole story
+
+---
+
+## Post-v4 patches — Per-story SKILL-05 + renderer hardening (April 25, 2026)
+
+The previous "Post-v4 patches" section was the recovery from the broken concatenated per-story loop. This second round of patches addresses the original "first-story-full, rest-compressed" coverage gap **without** the regression that bit us last time, plus a long tail of renderer fixes once we started looking at real generated output across 27 stories.
+
+### Per-story SKILL-05 append-mode
+
+The v4 SKILL-05 was strictly single-shot: one AI call, one user story decomposed, the other 21+ silently dropped. The reverted concatenated loop (now history) tried to fix this by stitching N AI responses into one document and running the splitter once — which let the AI's `### Section N` sub-headings inside SubTask bodies fragment into 2,737 separate DB rows.
+
+The new **per-story append-mode** orchestrator pattern:
+
+1. Caller hits `POST /api/ba/modules/:id/execute/SKILL-05/story/:storyId` once per story
+2. `executeSkill05ForStory` finds (or creates) the module's SUBTASK `BaArtifact`, idempotency-skips when the story already has `st_us<NNN>_*` rows, otherwise calls the AI with a **single-story focus prompt** + the full module context
+3. Each AI response is parsed and split **in isolation** (so the splitter only ever sees one story's worth of `## ST-US...` sections — identical in shape to the working single-shot path)
+4. The resulting BaArtifactSection rows are **appended** to the SUBTASK artifact, not written to a new artifact
+
+The intentional design rule: each AI response is processed exactly the same way the single-shot path processes its response. We never concatenate multiple stories' outputs and then split. The splitter is a generic markdown-heading splitter — feeding it one story keeps it predictable.
+
+Idempotency: re-running the same `storyId` skips when `st_us<NNN>_*` keys already exist on the artifact. Lets a long loop be retried on partial failures (429 backoff, network blip, etc.) without duplicating sections.
+
+A new helper endpoint `GET /api/ba/modules/:id/subtask-stories` enumerates the user-story IDs from the latest APPROVED SKILL-04 humanDocument so a caller can drive the per-story loop without re-parsing the doc itself.
+
+**Why we still need the prompt prefix even though SKILL-04 worked the same way:** SKILL-04's per-feature pattern emits user stories with `# User Story:` (level 1) and `### Section N` (level 3). Our SubTask shape uses `## ST-US...` (level 2) for separators and `#### Section N` (level 4) for fields, so the splitter can stay at level 1–3 globally without fragmenting SubTask bodies. The prompt enumerates all 25 canonical Section labels explicitly so the AI doesn't improvise alternate names like "Algorithm Outline" instead of "Algorithm" or "SubTask Description" instead of "Description".
+
+### Defensive splitter clamp (belt-and-suspenders)
+
+Even with the prompt enumeration above, a future model upgrade or prompt slip could re-introduce `### Section N` inside a SubTask body. `splitIntoSections` now tracks an `insideSubtaskBody` flag that flips on at every `## ST-US...` heading and flips off at the next `^#`/`^##`. While the flag is set, `^###` lines are kept in body content rather than starting a new section. Non-SubTask artifacts never carry a `## ST-US...` heading, so the clamp is a no-op for FRD/EPIC/USER_STORY/SCREEN_ANALYSIS.
+
+### Section 19 — Traceability table fixes (3 separate issues found in real output)
+
+**Issue 1 — bare `/* */` comments rendering as bullet lists.** The AI emits Section 19's Traceability block as a C-style comment where each metadata line is prefixed with `*` followed by `Key: Value`. Both the frontend MarkdownRenderer and the backend HTML/PDF template's markdown parser were matching that leading `*` against the unordered-list rule (`^[-*+]\s+`), turning the comment body into a `<ul>` with one `<li>` per metadata line. The DOCX path was never affected because its parser had a `^/\*` branch that ran before list detection.
+
+Fix: both renderers now intercept `^/\*` at the parser entry point, capture all lines until `*/` as a single paragraph block, and let the existing Traceability detection convert it into a 2-column KV table.
+
+**Issue 2 — missing second table when no TBD entries.** The Traceability splitter pushes a `TBD-Future Dependencies` group only when at least one Key:Value row was captured under that header. For CONFIRMED stories the AI typically writes `* None for this SubTask.` — a sentence, not a Key:Value pair — so the second group ended up empty and was suppressed.
+
+Fix: the parser now tracks `seenTbdHeader` separately and at flush time:
+
+- If we saw the literal `TBD-Future Dependencies:` header but captured zero rows, it pushes one placeholder row: `Status / None — this SubTask has no TBD-Future dependencies`
+- If the AI omitted the header entirely, the same placeholder group is appended at the end
+
+Result: every SubTask's Section 19 always renders TWO tables — main Traceability metadata, then TBD-Future Dependencies (real entries or placeholder).
+
+**Issue 3 — CONFIRMED-PARTIAL stories getting the placeholder instead of real TBD entries.** For stories that *do* have TBD-Future references in the parent story content, the AI was still defaulting to "None for this SubTask" on individual SubTasks several layers removed from the actual TBD integration. The "carry forward" model in the skill file mandates that *every* SubTask of a CONFIRMED-PARTIAL story carries the TBD context with stub guidance — even pure UI tasks should declare `Indirect — consumes data shape from <other SubTask>` in the Affected line.
+
+Fix: the per-story prompt now has a dedicated CONFIRMED-PARTIAL clause that:
+
+- Tells the AI when to spot a CONFIRMED-PARTIAL story (Story Status field in the user-story doc + presence of `[TBD-Future]` markers / `TBD-NNN` tokens)
+- Mandates real TBD-NNN / Assumed / Stub / Affected / Resolution rows in every SubTask's Section 19
+- Allows `Affected: Indirect — ...` for layers-removed SubTasks but requires the other 4 lines unchanged
+
+The same rule was added to the skill file so future regenerations of the prompt keep the contract.
+
+### Section 20 — Project Structure inside fenced code blocks
+
+The AI sometimes wraps the Section 20 body in a ```` ```text ``` ```` fence to preserve indentation. The earlier paragraph-only detection in the renderers missed these. All three renderers now detect Project Structure inside a fenced block too and emit the canonical KV table + Directory Map preformatted output. The per-story prompt was also updated to ask the AI to emit Section 20 as plain text (no fence), but the renderer fallback handles either shape.
+
+### Streaming downloads for large artifacts
+
+A 27-story SUBTASK PDF carries ~30 Mermaid diagrams + screen images and weighs ~20 MB. The original download path buffered the response through `axios → arraybuffer → Blob → URL.createObjectURL → a.click()`, which fails with `Network Error` on large payloads — Chrome's network stack chokes on the chunked response when buffered in JS heap.
+
+Fix: replaced with a direct anchor href pointing at the backend export URL. The browser's native streaming downloader handles the file the same way as right-click → Save As. No JS heap involved, no axios timeout, no Blob size limit. Works for any artifact size and removes the need for the recently-bumped 300-second timeout (left in place as a safety net for the legacy Blob path elsewhere in the app).
+
+Two paths updated: the Preview-page Download buttons (`/ba-tool/preview/...`) and the Editor toolbar PDF/DOCX buttons.
+
+### Operational milestone — all 27 MOD-04 stories generated
+
+`SUBTASK-MOD-04` artifact was rebuilt from scratch using the per-story append flow:
+
+| Metric | Value |
+|---|---|
+| `BaArtifactSection` rows | 174 |
+| Decomposition group headers | 27 (one per story) |
+| Implementation + QA SubTask bodies | 147 |
+| Stories covered | US-052 through US-078 |
+| CONFIRMED stories | 12 (Section 19 placeholder TBD-Future row) |
+| CONFIRMED-PARTIAL stories | 15 (Section 19 real TBD-001/002/003 entries with stub guidance) |
+
+DOCX export of the artifact: ~820 KB, 30+ tables, ~30 Mermaid PNGs, renders in ~98 seconds. PDF export: ~19.5 MB, renders in ~19 seconds.
+
+### New helper scripts (under `ProjectSourceCode/backend/scripts/`)
+
+| Script | Purpose |
+| --- | --- |
+| `delete-broken-subtask-artifact.ts` | Cleans orphaned DRAFT SUBTASK artifacts; dry-run by default, `--apply` to execute |
+| `inspect-subtask-artifact.ts` | Lists section keys / labels / content lengths for a module's SUBTASK artifact |
+| `peek-subtask-content.ts` | Dumps a single section's content for visual inspection |
+| `peek-shape-checks.ts` | Heuristic shape check for one section (24 headings, Traceability, Project Structure, Mermaid, NestJS markers, Java leak) |
+| `peek-sections-20-and-traceability.ts` | Side-by-side dump of Section 20 + Section 19 used during the renderer-parity work |
+| `dump-section-content.ts` | One-liner full body dump |
+| `verify-canonical-sections.ts` | Verifies all 25 canonical Section labels are present in a SubTask body — used to catch label drift mechanically |
+| `verify-tbd-parser.ts` | Unit-style demonstration that the Traceability KV-group parser correctly emits the placeholder for empty TBD-Future and real rows for CONFIRMED-PARTIAL inputs |
+| `list-story-statuses.ts` | Per-story-block scan of the SKILL-04 humanDocument to list status (CONFIRMED vs CONFIRMED-PARTIAL) and TBD-NNN refs for each story |
+| `check-story-status.ts` | Drill-down for one specific story's source content + status detection |
+| `inspect-skill04-executions.ts` | Lists all SKILL-04 executions for a module with their story counts — diagnoses "wrong story set picked up" issues when SKILL-04 has been re-run multiple times |
+| `summary-subtask-counts.ts` | Per-story FE/BE/IN/QA SubTask tally + grand total for the SUBTASK artifact |
+
+### Files touched in this round
+
+| File | Change |
+| --- | --- |
+| `ProjectSourceCode/backend/src/ba-tool/ba-skill-orchestrator.service.ts` | `executeSkill05ForStory`, `listUserStoriesForModule`, `callAiServiceWithRetry`, `extractStorySlice`; defensive splitter clamp inside `splitIntoSections`; per-story prompt with all 25 canonical labels enumerated and CONFIRMED-PARTIAL TBD clause |
+| `ProjectSourceCode/backend/src/ba-tool/ba-skill.controller.ts` | `GET /api/ba/modules/:id/subtask-stories`, `POST /api/ba/modules/:id/execute/SKILL-05/story/:storyId` |
+| `ProjectSourceCode/backend/src/ba-tool/ba-artifact-export.service.ts` | Project Structure detection inside fenced blocks; TBD-Future placeholder when group ended empty; Traceability split contract kept aligned with the other two renderers |
+| `ProjectSourceCode/backend/src/ba-tool/templates/artifact-html.ts` | `^/\*` branch in markdown parser; Project Structure inside fenced blocks; TBD-Future placeholder; Traceability split |
+| `ProjectSourceCode/frontend/components/ba-tool/MarkdownRenderer.tsx` | `^/\*` branch in `parseMarkdown`; bare-comment Traceability detection in `postProcessBlocks`; Project Structure inside fenced blocks; empty-TBD placeholder |
+| `ProjectSourceCode/frontend/app/ba-tool/preview/[kind]/[id]/page.tsx` | Preview-page Download switched to anchor href streaming; previously also gained the 300s axios timeout (still useful as fallback for other call sites) and surfaced-error reporting |
+| `ProjectSourceCode/frontend/components/ba-tool/ArtifactContentPanel.tsx` | Editor toolbar Download switched to anchor href streaming |
+| `Screen-FRD-EPICS-Automation-Skills/FINAL-SKILL-05-create-subtasks-v2.md` | CONFIRMED-PARTIAL TBD-Future enforcement clause; expanded Section 19 parser-contract section to cover both CONFIRMED and CONFIRMED-PARTIAL cases |
+
+### Carryover lessons for future skill work
+
+- **Always enumerate canonical Section labels in the orchestrator prompt.** The skill file's section-by-section template is comprehensive but sits in 800+ lines of context; the AI pattern-matches a memorised template instead. Spelling out `#### Section N — <Label>` in a list at the top forces it to use the exact labels.
+- **Splitter clamps belong in the orchestrator, not the renderer.** The 2,737-fragment regression was a parser-side bug; once fixed there, every renderer benefits automatically.
+- **Renderer parity has a price — when the AI changes one shape, three renderers need updating in lockstep.** The duplicated `extractProjectStructureBlock` / `extractKvBlockAsGroups` helpers in DOCX, PDF, and frontend MarkdownRenderer are intentional copies; any change must be applied to all three. A regression test that downloads DOCX + PDF for a known SubTask and diffs the table count would catch the asymmetric update we hit twice during this round.
+- **Network-buffered downloads break for large artifacts on real browsers.** Always prefer `<a href>` streaming for files > a few MB.
 
 ---
 
