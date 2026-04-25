@@ -402,17 +402,20 @@ export class BaArtifactExportService {
 
         // When the fenced block contains a /* ... */ Traceability Header
         // (common pattern for `26. Traceability Header Content` sections),
-        // render it as a proper Word table — not a preformatted monospace
-        // wall. Users expect the same tabular look they see in the
-        // Validations table a few sections earlier.
-        const asKvTable = this.extractKvBlockAsTable(codeLines);
-        if (asKvTable) {
-          if (asKvTable.title) {
-            blocks.push(new Paragraph({
-              children: [new TextRun({ text: asKvTable.title, bold: true })],
-            }));
+        // render it as one or more proper Word tables — not a preformatted
+        // monospace wall. The Traceability header carries a "TBD-Future
+        // Dependencies:" sub-block that gets emitted as its own table so
+        // the AI's two-section structure stays visible in Word.
+        const asKvGroups = this.extractKvBlockAsGroups(codeLines);
+        if (asKvGroups) {
+          for (const g of asKvGroups) {
+            if (g.title) {
+              blocks.push(new Paragraph({
+                children: [new TextRun({ text: g.title, bold: true })],
+              }));
+            }
+            blocks.push(this.buildKvTable(g.rows));
           }
-          blocks.push(this.buildKvTable(asKvTable.rows));
           continue;
         }
         blocks.push(this.buildPreformattedBlock(codeLines));
@@ -423,7 +426,7 @@ export class BaArtifactExportService {
       // with ` * Key: Value` lines. When written OUTSIDE a fenced code block
       // this handler catches it; when written INSIDE (same pattern but
       // wrapped in ```), the fenced-code branch above handles it via
-      // extractKvBlockAsTable.
+      // extractKvBlockAsGroups.
       if (/^\s*\/\*/.test(line)) {
         const commentLines: string[] = [];
         const firstTail = line.replace(/^\s*\/\*\*?/, '').replace(/\*\/\s*$/, '');
@@ -443,14 +446,16 @@ export class BaArtifactExportService {
         } else {
           i++;
         }
-        const asTable = this.extractKvBlockAsTable(commentLines);
-        if (asTable) {
-          if (asTable.title) {
-            blocks.push(new Paragraph({
-              children: [new TextRun({ text: asTable.title, bold: true })],
-            }));
+        const asGroups = this.extractKvBlockAsGroups(commentLines);
+        if (asGroups) {
+          for (const g of asGroups) {
+            if (g.title) {
+              blocks.push(new Paragraph({
+                children: [new TextRun({ text: g.title, bold: true })],
+              }));
+            }
+            blocks.push(this.buildKvTable(g.rows));
           }
-          blocks.push(this.buildKvTable(asTable.rows));
           continue;
         }
         // Fallback — preformatted with the `*` prefixes stripped for legibility
@@ -654,21 +659,21 @@ export class BaArtifactExportService {
     return { header, rows };
   }
 
-  //
-  // extractKvBlockAsTable
-  // Given a set of lines that look like a Traceability Header (either a bare
-  // C-style comment or the same pattern wrapped in a fenced code block),
-  // strip the comment prefixes and return { title, rows } if at least 60%
-  // of non-empty lines parse as Key: Value. Returns null when the heuristic
-  // doesn't match (caller falls back to preformatted rendering).
-  //
-  // Accepts all three shapes:
-  //   - bare C-style comment (lines prefixed with " * Key: Value")
-  //   - fenced code block wrapping a C-style comment
-  //   - plain key: value lines with no comment markers
-  //
-  private extractKvBlockAsTable(rawLines: string[]): { title: string | null; rows: Array<[string, string]> } | null {
-    // Strip comment chrome: leading `/*` / `*/` / ` * ` prefixes on each line.
+  /**
+   * Split a Traceability /* ... *\/ block (or fenced equivalent) into one or
+   * more KV-table groups. The block typically has two natural sections:
+   *
+   *   1. Module / Feature / User Story / ... Generated metadata
+   *   2. TBD-Future Dependencies (TBD-002, Assumed, Stub, Affected, Resolution)
+   *
+   * The "TBD-Future Dependencies:" line acts as a section break — everything
+   * before it goes into the main "Traceability" group, everything after into
+   * the "TBD-Future Dependencies" group. Each becomes its own Word table so
+   * the visual separation matches the AI's two-section authoring intent.
+   */
+  private extractKvBlockAsGroups(
+    rawLines: string[],
+  ): Array<{ title: string | null; rows: Array<[string, string]> }> | null {
     const cleaned = rawLines
       .map((l) =>
         l
@@ -685,25 +690,40 @@ export class BaArtifactExportService {
 
     const nonEmpty = cleaned.filter((l) => l.trim() && !/^=+$/.test(l.trim()));
     const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s*\S/.test(l));
-
     if (nonEmpty.length < 3 || kvLines.length / nonEmpty.length < 0.6) return null;
 
-    const rows: Array<[string, string]> = [];
-    let title: string | null = null;
+    const groups: Array<{ title: string | null; rows: Array<[string, string]> }> = [];
+    let currentTitle: string | null = null;
+    let currentRows: Array<[string, string]> = [];
+    const flush = () => {
+      if (currentRows.length > 0) {
+        groups.push({ title: currentTitle, rows: currentRows });
+      }
+      currentTitle = null;
+      currentRows = [];
+    };
+
     for (const l of cleaned) {
       const t = l.trim();
       if (!t) continue;
-      if (/^=+$/.test(t)) continue; // decorative ==== divider lines
+      if (/^=+$/.test(t)) continue;
+      // "TBD-Future Dependencies:" (with empty value) is a section break.
+      if (/^TBD[-\s]Future\s+Dependencies\s*:?\s*$/i.test(t)) {
+        flush();
+        currentTitle = 'TBD-Future Dependencies';
+        continue;
+      }
       const kv = /^([^:]+):\s*(.*)$/.exec(l);
       if (kv && kv[2].trim()) {
-        rows.push([kv[1].trim(), kv[2].trim()]);
-      } else if (!title && !/^\/\*|\*\/$/.test(t)) {
-        // First non-KV, non-divider line becomes the block title
-        title = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
+        currentRows.push([kv[1].trim(), kv[2].trim()]);
+      } else if (!currentTitle && !/^\/\*|\*\/$/.test(t)) {
+        // First non-KV non-divider line becomes the current group's title.
+        currentTitle = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
       }
     }
-    if (rows.length === 0) return null;
-    return { title, rows };
+    flush();
+    if (groups.length === 0) return null;
+    return groups;
   }
 
   /**
