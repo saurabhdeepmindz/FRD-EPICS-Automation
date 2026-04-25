@@ -47,7 +47,9 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
   const download = async (format: 'pdf' | 'docx') => {
     try {
       const response = await api.get(`/ba/artifacts/${artifact.id}/export/${format}`, {
-        responseType: 'blob', timeout: 120_000,
+        // 5-min timeout — DOCX/PDF of large SUBTASK artifacts can take 90-120s
+        // due to cold Chromium spinup + many Mermaid diagrams to render.
+        responseType: 'blob', timeout: 300_000,
       });
       const type = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
       const blob = new Blob([response.data], { type });

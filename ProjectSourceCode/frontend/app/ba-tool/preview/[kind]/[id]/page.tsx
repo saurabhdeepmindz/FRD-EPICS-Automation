@@ -208,7 +208,9 @@ export default function BaPreviewPage() {
     setDownloading(format);
     try {
       const base = kind === 'subtask' ? `/ba/subtasks/${id}/export/${format}` : `/ba/artifacts/${id}/export/${format}`;
-      const response = await api.get(base, { responseType: 'blob', timeout: 120_000 });
+      // 5-min timeout — DOCX exports of large SUBTASK artifacts (~30 Mermaid
+      // diagrams) take 90-120s on cold Chromium spinup; PDF is similar.
+      const response = await api.get(base, { responseType: 'blob', timeout: 300_000 });
       const type = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
       const blob = new Blob([response.data], { type });
       const url = URL.createObjectURL(blob);
