@@ -163,9 +163,20 @@ export class BaSkillOrchestratorService {
       // loop calls the AI once per feature with a narrow focus override
       // (~3 stories per response, well within cap) and concatenates the
       // outputs. Every other skill uses the single-shot path unchanged.
+      // SKILL-07-FTC: like SKILL-05, the comprehensive skill file gets
+      // pattern-matched away under deep context (EPIC + ~27 stories +
+      // ~150 SubTasks fed in). Observed regression: AI emits a Coverage
+      // Analysis for the LAST story only, in markdown-table form, with
+      // ZERO ```tc id=...``` fenced blocks — so the BaFtcParser finds
+      // 0 test cases. Wrap the skill prompt in a focus override that
+      // re-states the parser-shape contract + full-coverage requirement.
+      const wrappedPrompt = skillName === 'SKILL-07-FTC'
+        ? this.wrapSkill07Prompt(skillPrompt, contextPacket)
+        : skillPrompt;
+
       const aiResponse = skillName === 'SKILL-04'
         ? await this.callAiServiceSkill04PerFeature(skillPrompt, contextPacket)
-        : await this.callAiService(skillPrompt, contextPacket);
+        : await this.callAiService(wrappedPrompt, contextPacket);
 
       // 5. Parse and store output
       const { humanDocument, handoffPacket } = this.parseAiOutput(aiResponse);
@@ -871,6 +882,77 @@ export class BaSkillOrchestratorService {
    * restricts output scope to one feature. The orchestrator emits the
    * Coverage Summary table itself after all sub-calls complete.
    */
+  /**
+   * Wrap the SKILL-07-FTC prompt with a focus override that re-states the
+   * parser contract and the full-coverage requirement. Without this, the
+   * AI consistently emits a Coverage Analysis for one story in markdown-
+   * table form (no ```tc id=...``` fenced blocks) and the BaFtcParser
+   * finds zero test cases. Same root cause as the SKILL-05 single-story
+   * regression: comprehensive skill files get pattern-matched away under
+   * deep context.
+   *
+   * The override is short and explicit:
+   *  - Cover ALL user stories listed in the input (not just one)
+   *  - Every test case MUST be a ```tc id=TC-NNN ...``` fenced block
+   *    with the canonical header attrs and the §5 body shape
+   *  - The Test Case Appendix is mandatory — parser reads from there
+   */
+  private wrapSkill07Prompt(
+    skillPrompt: string,
+    contextPacket: Record<string, unknown>,
+  ): string {
+    // Pull the story IDs out of the input doc so we can name them.
+    const userStoriesDoc = String(contextPacket.userStoriesDocument ?? '');
+    const storyIds = Array.from(new Set(userStoriesDoc.match(/US-\d{3,}/g) ?? []))
+      .sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10));
+    const storyList = storyIds.length > 0
+      ? `${storyIds.length} stories: ${storyIds.slice(0, 4).join(', ')}${storyIds.length > 4 ? `, …, ${storyIds[storyIds.length - 1]}` : ''}`
+      : 'all user stories present in the input';
+
+    return [
+      '## 🎯 SKILL-07-FTC FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      `Generate test cases that cover **ALL ${storyList}** in this module — NOT a single story. The Coverage Summary, OWASP Map, AC Coverage, and especially the Test Case Appendix MUST span every user story present in the input. Do not produce a Coverage Analysis essay focused on one story.`,
+      '',
+      '### Parser contract (CRITICAL — non-negotiable)',
+      '',
+      'The backend parser ONLY reads test cases from \\`\\`\\`tc id=...\\`\\`\\` fenced blocks. A markdown table listing TC-IDs will be IGNORED entirely — the parser counts tc-fences and emits zero `BaTestCase` rows when there are none. EVERY test case must be a fenced block in this exact shape, and EVERY test case must also appear in the §8 Test Case Appendix verbatim:',
+      '',
+      '```text',
+      '```tc id=TC-001 parent= scope=black_box testKind=positive category=Functional priority=P1 owasp= isIntegrationTest=false sprintId= executionStatus=NOT_RUN scenarioGroup=US-052 Search',
+      'title: <one-line title>',
+      'preconditions: <state required before steps>',
+      '### Steps',
+      '1. <step 1>',
+      '2. <step 2>',
+      '### Expected Result',
+      '- <expected outcome>',
+      '### Traceability',
+      '- ac: <AC-ID(s) covered>',
+      '- subtask: ST-USNNN-XX-NN',
+      '```',
+      '```',
+      '',
+      'Header attrs (case-sensitive): `id` (TC-001 / Neg_TC-002 etc.), `scope` (black_box / white_box), `testKind` (positive / negative / edge), `category`, `priority` (P1/P2/P3), `owasp` (e.g. A01, A05; blank for non-security), `isIntegrationTest` (true/false), `scenarioGroup` (free-text bucket label, used to group related TCs in the UI).',
+      '',
+      'Coverage requirements:',
+      '- At least 1 happy-path TC per user story',
+      '- At least 1 negative TC per user story (Neg_TC-NNN id prefix)',
+      '- Boundary / edge TCs where the AC mentions limits, ranges, or quotas',
+      '- For CONFIRMED-PARTIAL stories with TBD-Future stubs: include stub-integration TCs marked `category=Integration` and explicitly note the stub in `preconditions`',
+      '',
+      '### What MUST appear at the bottom of the document',
+      '',
+      'A `## Test Case Appendix` heading followed by every `\\`\\`\\`tc id=...\\`\\`\\`` block from the body, repeated verbatim. The parser reads from the appendix as the authoritative source. Skip the appendix → parser finds zero test cases.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (follow all rules below — especially §5 Test Case Block Format and §8 Test Case Appendix)',
+      '',
+      skillPrompt,
+    ].join('\n');
+  }
+
   private async callAiServiceSkill04PerFeature(
     systemPrompt: string,
     contextPacket: Record<string, unknown>,
