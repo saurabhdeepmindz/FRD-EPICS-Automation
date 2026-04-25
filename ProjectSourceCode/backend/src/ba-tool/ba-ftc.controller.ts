@@ -76,6 +76,12 @@ export class BaFtcController {
     return this.orchestrator.executeSkill07ForFeature(moduleDbId, featureId);
   }
 
+  /** POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative — populate the §1-§16 narrative sections after the per-feature TC loop. */
+  @Post('modules/:id/execute/SKILL-07-FTC/narrative')
+  executeSkill07Narrative(@Param('id') moduleDbId: string) {
+    return this.orchestrator.executeSkill07Narrative(moduleDbId);
+  }
+
   /** GET /api/ba/modules/:id/ftc — fetch the current FTC artifact (or null) */
   @Get('modules/:id/ftc')
   async getFtc(@Param('id') moduleDbId: string) {

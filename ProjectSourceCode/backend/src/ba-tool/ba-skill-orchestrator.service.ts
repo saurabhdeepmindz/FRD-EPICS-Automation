@@ -1736,6 +1736,181 @@ export class BaSkillOrchestratorService {
   }
 
   /**
+   * SKILL-07-FTC narrative-only mode (mode 3 from the skill file). Runs
+   * AFTER the per-feature loop (mode 2) has populated all TCs. Generates
+   * the §1–§5 + §9–§12 + §14–§16 narrative sections that mode 2
+   * deliberately suppressed — Summary, Test Strategy, OWASP Coverage
+   * Maps, Traceability Summary, Applied Best-Practice Defaults, etc.
+   *
+   * Why this is a separate pass:
+   *   - Mode 2 produces TCs but tells the AI to skip the module-wide
+   *     narrative ("you'll get those at the end") — otherwise each per-
+   *     feature call would emit duplicate Summary / Traceability / OWASP
+   *     content and we'd have N drafts of every section.
+   *   - Mode 3 is the "stitcher" that mode 2's prompt promises. It reads
+   *     the existing TCs from the artifact, passes their IDs / OWASP
+   *     tags / categories as input context, and asks the AI to produce
+   *     ONLY the narrative sections referencing those real TC IDs.
+   *
+   * Idempotent: skips when the artifact already has > 4 BaArtifactSection
+   * rows (the narrative pass typically writes ~11 sections; mode 2 may
+   * write 0–2 stragglers; > 4 means narrative has already run).
+   */
+  async executeSkill07Narrative(
+    moduleDbId: string,
+  ): Promise<{
+    artifactId: string;
+    sectionsAdded: number;
+    skipped: boolean;
+    reason?: string;
+  }> {
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    const artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.FTC },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!artifact) {
+      throw new Error(`No FTC artifact for module ${mod.moduleId}. Run mode 1 (single-shot) or mode 2 (per-feature) first.`);
+    }
+
+    const existingSections = await this.prisma.baArtifactSection.findMany({
+      where: { artifactId: artifact.id },
+      select: { id: true, sectionKey: true },
+    });
+    if (existingSections.length > 4) {
+      return {
+        artifactId: artifact.id,
+        sectionsAdded: 0,
+        skipped: true,
+        reason: `Artifact already has ${existingSections.length} sections — narrative pass appears to have run already. Delete sections first to regenerate.`,
+      };
+    }
+
+    // Pull every TC on the artifact as context for OWASP / Traceability
+    // tables. The AI uses these IDs in §10/§11 OWASP Coverage rows and
+    // §14 Traceability Summary; without them the narrative would be
+    // generic and disconnected from the real TC catalogue.
+    const existingTcs = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId: artifact.id },
+      select: {
+        testCaseId: true,
+        title: true,
+        scope: true,
+        testKind: true,
+        category: true,
+        priority: true,
+        owaspCategory: true,
+        isIntegrationTest: true,
+        scenarioGroup: true,
+        linkedFeatureIds: true,
+        linkedStoryIds: true,
+      },
+      orderBy: { testCaseId: 'asc' },
+    });
+
+    const skillPrompt = this.loadSkillFile('SKILL-07-FTC');
+    const baseContext = await this.assembleContext(moduleDbId, 'SKILL-07-FTC');
+    // Squeeze the existing TCs into the context as a compact summary.
+    // The AI uses this list when filling OWASP coverage rows + the
+    // Traceability Summary, so the references in those sections actually
+    // resolve to TCs already in the database.
+    const tcSummary = existingTcs.map((tc) => ({
+      id: tc.testCaseId,
+      title: tc.title?.slice(0, 120) ?? null,
+      scope: tc.scope,
+      kind: tc.testKind,
+      category: tc.category,
+      priority: tc.priority,
+      owasp: tc.owaspCategory,
+      integration: tc.isIntegrationTest,
+      group: tc.scenarioGroup,
+      features: tc.linkedFeatureIds,
+      stories: tc.linkedStoryIds,
+    }));
+    const narrativeContext = {
+      ...baseContext,
+      ftcMode: 'narrative-only',
+      existingTestCaseSummary: tcSummary,
+      existingTestCaseCount: existingTcs.length,
+    };
+
+    const narrativeFocusedPrompt = [
+      '## 🎯 SKILL-07-FTC NARRATIVE-ONLY MODE — ORCHESTRATOR OVERRIDE',
+      '',
+      'You are running in mode 3 (narrative-only append). The FTC artifact already has its test cases populated (see `existingTestCaseSummary` in context — every TC ID, OWASP tag, category, scenario group, and linked feature/story is provided). Your job is to produce ONLY the module-wide narrative sections that mode 2 deliberately omitted.',
+      '',
+      `**EXISTING TEST CASES: ${existingTcs.length}**`,
+      '',
+      '### What to output NOW',
+      '',
+      'Emit these narrative sections ONLY, in this order, each as a `## ` (level-2) heading with the EXACT canonical labels (the parser matches on these):',
+      '',
+      '- `## Summary`',
+      '- `## Test Strategy`',
+      '- `## Test Environment & Dependencies`',
+      '- `## Master Data Setup`',
+      '- `## OWASP Web Top 10 Coverage Matrix` *(reference real TC IDs from `existingTestCaseSummary` where `owasp` matches A01–A10)*',
+      '- `## OWASP LLM Top 10 Coverage Matrix` *(omit row content if module has no AI/LLM content; keep heading + a one-line note)*',
+      '- `## Data Cleanup / Teardown`',
+      '- `## Playwright Automation Readiness`',
+      '- `## Traceability Summary` *(FRD → EPIC → US → ST → LLD → TC, using real TC IDs from `existingTestCaseSummary`)*',
+      '- `## Open Questions / TBD-Future Reconciliation`',
+      '- `## Applied Best-Practice Defaults`',
+      '',
+      '### What to SKIP',
+      '',
+      '- Do NOT emit any ```tc id=...``` fenced block. The TCs already exist; emitting them again would create duplicate-key warnings in the parser. Only the narrative section bodies are needed.',
+      '- Do NOT emit `## Functional Test Cases`, `## Integration Test Cases`, `## Security Test Cases`, `## UI Test Cases`, or `## White-Box Test Cases`. Mode 2 already populated those via the per-feature TC bodies.',
+      '- Do NOT emit a `## Test Case Appendix` heading or content. The appendix is irrelevant in narrative-only mode (TCs already in DB).',
+      '',
+      '### Coverage rules (use the existing TC summary)',
+      '',
+      '- §9 OWASP Web Coverage table: build a 10-row table A01–A10. For each control, list the TC IDs from `existingTestCaseSummary` whose `owasp` field equals that code. If a control has no covering TC, mark it ❌ NOT COVERED and add a one-line gap reason.',
+      '- §10 OWASP LLM Coverage table: same shape for LLM01–LLM10. Omit the table content (keep heading + "N/A — module has no LLM/AI surface") if the module is purely backend CRUD with no AI prompts.',
+      '- §14 Traceability Summary: reference TC IDs grouped by `linkedFeatureIds` and `linkedStoryIds` from the summary. Should read like "F-04-08 (Manage Verification Quota) — covered by 12 TCs across US-073/074/075: [list]".',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (the canonical labels above match §3 of the skill file; refer to §1b mode 3 author rules for full details)',
+      '',
+      skillPrompt,
+    ].join('\n');
+
+    const aiResponse = await this.callAiServiceWithRetry(
+      narrativeFocusedPrompt,
+      narrativeContext,
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for narrative-only pass on ${mod.moduleId}`);
+    }
+
+    const before = await this.prisma.baArtifactSection.count({
+      where: { artifactId: artifact.id },
+    });
+    await this.ftcParser.parseAndStore(humanDocument, artifact.id);
+    const after = await this.prisma.baArtifactSection.count({
+      where: { artifactId: artifact.id },
+    });
+    const sectionsAdded = after - before;
+
+    this.logger.log(
+      `SKILL-07-FTC narrative-only: appended ${sectionsAdded} section(s) to ${artifact.id}`,
+    );
+
+    return {
+      artifactId: artifact.id,
+      sectionsAdded,
+      skipped: false,
+    };
+  }
+
+  /**
    * Determine where this module's next US-NNN number should start so that
    * re-runs don't collide with existing stories in the project. Reads all
    * USER_STORY sections across the project, finds the max US number, and
