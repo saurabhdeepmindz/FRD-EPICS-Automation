@@ -1026,13 +1026,17 @@ export class BaSkillOrchestratorService {
   // ─── SKILL-05 per-story append-mode (v4-post) ──────────────────────────
   //
   // Generate SubTasks for ONE user story at a time and APPEND the resulting
-  // sections to the existing SUBTASK BaArtifact. Each call:
+  // sections to the module's SUBTASK BaArtifact. Each call:
   //   1. Resolves (or creates) the SUBTASK BaArtifact for the module
   //   2. Idempotency-skips when the storyId already has st_us<NNN>_* rows
-  //   3. Builds a single-story focus prompt and a narrowed user-stories slice
-  //   4. Calls the AI (with 429 retry/backoff) — same path as single-shot
-  //   5. Parses + splits the response with the defensive splitter
-  //   6. Appends each section as a new BaArtifactSection on the artifact
+  //   3. Wraps the canonical SKILL-05 prompt with a SKILL-04-style focus
+  //      override that constrains output scope to one story but keeps the
+  //      24-section template + heading rules from the skill file in charge
+  //   4. Passes the FULL user-stories context (all stories) — not a slice
+  //      — so the AI's "execution mode" matches the working single-shot
+  //   5. Calls the AI (with 429 retry/backoff)
+  //   6. Splits the response with the defensive splitter
+  //   7. Appends each section as a new BaArtifactSection on the artifact
   //
   // The intentional design choice: each AI response is processed in
   // isolation so the splitter only ever sees ONE story's worth of output —
@@ -1163,49 +1167,53 @@ export class BaSkillOrchestratorService {
       };
     }
 
-    // 3. Build the single-story focus prompt + narrowed context.
+    // 3. Build the single-story focus prompt + full context.
+    //
+    // We pass the FULL userStoriesDocument (all stories) — not a slice —
+    // so the AI sees the same input volume the working single-shot saw.
+    // Narrowing the doc to one story made the AI treat the call as a
+    // user-story drafting task rather than a subtask decomposition task,
+    // and improvise non-canonical section labels. The currentFocusStory
+    // hint + the override above are what constrain output scope.
     const skillPrompt = this.loadSkillFile('SKILL-05');
     const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-05');
-    const userStoriesDoc = String(contextPacket.userStoriesDocument ?? '');
-    const narrowed = this.extractStorySlice(userStoriesDoc, storyId);
+    // Mirror the SKILL-04 per-feature pattern that's been working in
+    // production for months — same prefix shape, same skill file appended
+    // unchanged. Critically, we DON'T enumerate Section 19/20/21 names in
+    // the prefix — that confused the AI into improvising labels. The skill
+    // file's canonical template is authoritative and we just constrain
+    // scope to one story.
     const focusedPrompt = [
-      '## 🎯 SINGLE-STORY APPEND MODE — ORCHESTRATOR OVERRIDE',
+      '## 🎯 SINGLE-STORY FOCUS — ORCHESTRATOR OVERRIDE',
       '',
-      'You are running as part of a per-story append loop. The orchestrator',
-      'will call you once per user story; each response is parsed and',
-      'appended to the same SUBTASK artifact. Your current call MUST emit',
-      `SubTasks for **${storyId} ONLY** — do not write anything for other`,
-      'user stories.',
+      'You are running as part of a per-story loop. The orchestrator will',
+      'call you once for EACH user story. Your current call is for ONE story only.',
       '',
       `**CURRENT STORY: ${storyId}**`,
       '',
-      '### What to output',
+      '### What to output NOW',
       '',
-      `1. A single intro section: \`## SubTask Decomposition for ${storyId} — <story title> (<status>, <module>, <feature>)\` followed by 1–3 plain paragraphs.`,
-      `2. One \`## ST-${storyId.replace(/^US-/, 'US')}-<TEAM>-NN — <Title>\` block per SubTask, where <TEAM> is FE / BE / IN. Each block carries the full 24-section template.`,
-      `3. A trailing \`## QA SubTasks (Mandatory for Every Story)\` group followed by ST-...-QA-01 (and optionally QA-02..04).`,
+      `1. A single \`## SubTask Decomposition for ${storyId} — <title> (<status>, <module>, <feature>)\` heading followed by 1–3 paragraphs that frame the SubTasks below.`,
+      `2. ALL implementation SubTasks for **${storyId}** (FE / BE / IN as applicable). For each one:`,
+      `   - SubTask separator at heading level 2: \`## ST-${storyId.replace(/^US-/, 'US')}-<TEAM>-NN — <Title>\``,
+      '   - The 24 numbered Section labels at heading level 4 using the EXACT skill-file format: `#### Section 1 — SubTask ID`, `#### Section 2 — SubTask Name`, …, `#### Section 19 — Traceability Header`, `#### Section 20 — Project Structure Definition`, `#### Section 21 — Sequence Diagram Inputs`, …, `#### Section 24 — Acceptance Criteria`.',
+      '   - DO NOT use bold-numbered labels (e.g. `**1. SubTask ID:**` or `**Section 1: SubTask ID**`). The renderer relies on the `#### Section N — Field` markdown heading format and will not recognise alternate formats.',
+      `3. The QA bucket: a \`## QA SubTasks (Mandatory for Every Story)\` heading at level 2, then one \`## ST-${storyId.replace(/^US-/, 'US')}-QA-NN — <Title>\` block per QA SubTask (QA-01 always; add QA-02..04 when the story warrants). Each QA SubTask body uses the same level-4 \`#### Section N — Field\` headings.`,
       '',
-      '### Heading rules — CRITICAL',
+      '### What to SKIP',
       '',
-      '- `##` is reserved for SubTask separators and the QA group header.',
-      '- `####` MUST be used for the 24 numbered Section headings inside each SubTask body (e.g. `#### Section 1 — SubTask ID`, ..., `#### Section 21 — Sequence Diagram Inputs`, ..., `#### Section 24 — Test Coverage`).',
-      '- NEVER use `###` inside a SubTask body — the orchestrator clamps it to body content but emitting the right depth keeps your output cleanly parseable.',
-      '',
-      '### What to skip',
-      '',
-      '- Do NOT emit a module-level Introduction, Coverage Summary, or RTM Extension table. Append-mode handles all module-level scaffolding.',
-      '- Do NOT regenerate other stories\' SubTasks; they are processed in their own calls.',
+      '- Do NOT write SubTasks for ANY other user story (other stories are processed in their own sub-calls)',
+      '- Do NOT write a module-level Introduction, Coverage Summary, or RTM Extension table — orchestrator handles all module-level scaffolding',
       '',
       '---',
       '',
-      '## Original Skill Definition (follow all rules below, constrained by the override above)',
+      '## Original Skill Definition (follow all rules below — especially the canonical 24-section template, Heading Hierarchy Rules, and the Section 19/20/21 field formats)',
       '',
       skillPrompt,
     ].join('\n');
 
     const narrowedContext: Record<string, unknown> = {
       ...contextPacket,
-      userStoriesDocument: narrowed ?? userStoriesDoc,
       currentFocusStory: storyId,
     };
 
