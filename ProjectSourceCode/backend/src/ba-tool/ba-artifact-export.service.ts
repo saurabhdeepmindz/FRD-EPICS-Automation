@@ -418,6 +418,31 @@ export class BaArtifactExportService {
           }
           continue;
         }
+
+        // Project Structure inside a fenced block (e.g. ```text\nProject
+        // Structure:\n  ...```). The AI sometimes wraps Section 20 in a
+        // fence so structured layout is preserved verbatim. Treat the
+        // fence body as if it were a paragraph for KV-table rendering.
+        const psFenced = this.extractProjectStructureBlock(codeLines);
+        if (psFenced) {
+          if (psFenced.kv.length > 0) {
+            blocks.push(new Paragraph({
+              children: [new TextRun({ text: 'Project Structure', bold: true })],
+            }));
+            blocks.push(this.buildKvTable(psFenced.kv));
+          }
+          if (psFenced.treeLines.length > 0) {
+            blocks.push(new Paragraph({
+              children: [new TextRun({ text: 'Directory Map', bold: true })],
+            }));
+            blocks.push(this.buildPreformattedBlock(psFenced.treeLines));
+          }
+          if (psFenced.remainder.length > 0) {
+            blocks.push(this.buildPreformattedBlock(psFenced.remainder));
+          }
+          continue;
+        }
+
         blocks.push(this.buildPreformattedBlock(codeLines));
         continue;
       }

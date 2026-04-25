@@ -77,6 +77,23 @@ function postProcessBlocks(blocks: Block[]): Block[] {
         }
         continue;
       }
+      // Project Structure inside a fenced block (e.g. ```text\nProject
+      // Structure:\n  ...```). The AI sometimes wraps Section 20 in a fence
+      // to preserve indentation; treat the body as if it were a paragraph
+      // so the KV-table + tree rendering still fires.
+      const psFenced = extractProjectStructureBlock(b.content);
+      if (psFenced) {
+        if (psFenced.kv && psFenced.kv.length > 0) {
+          out.push({ type: 'kv_table', title: 'Project Structure', rows: psFenced.kv });
+        }
+        if (psFenced.treeLines && psFenced.treeLines.length > 0) {
+          out.push({ type: 'tree', title: 'Directory Map', lines: psFenced.treeLines });
+        }
+        if (psFenced.remainder.trim()) {
+          out.push({ type: 'paragraph', text: psFenced.remainder });
+        }
+        continue;
+      }
     }
     // Project Structure: paragraph starting with "Project Structure:" plus KV lines
     if (b.type === 'paragraph') {

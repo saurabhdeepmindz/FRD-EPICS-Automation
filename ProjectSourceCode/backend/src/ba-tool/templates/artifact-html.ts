@@ -131,6 +131,25 @@ function renderMarkdown(md: string): string {
         out.push(renderKvGroups(groups, 'Traceability'));
         continue;
       }
+      // Project Structure inside a fenced block (e.g. ```text\nProject
+      // Structure:\n  ...```). The AI sometimes wraps Section 20 in a
+      // fence to preserve indentation; treat the body as a paragraph
+      // for KV-table + tree rendering.
+      const psFenced = extractProjectStructureBlock(buf);
+      if (psFenced) {
+        const parts: string[] = [];
+        if (psFenced.kv.length > 0) {
+          parts.push(renderKvGroups([{ title: 'Project Structure', rows: psFenced.kv }], 'Project Structure'));
+        }
+        if (psFenced.treeLines.length > 0) {
+          parts.push(`<div class="tree-block"><div class="tree-title">Directory Map</div><pre><code>${esc(psFenced.treeLines.join('\n'))}</code></pre></div>`);
+        }
+        if (psFenced.remainder.length > 0 && psFenced.remainder.some((r) => r.trim())) {
+          parts.push(`<pre class="code"><code>${esc(psFenced.remainder.join('\n'))}</code></pre>`);
+        }
+        out.push(parts.join('\n'));
+        continue;
+      }
       out.push(`<pre class="code${lang ? ' lang-' + esc(lang) : ''}"><code>${esc(body)}</code></pre>`);
       continue;
     }
