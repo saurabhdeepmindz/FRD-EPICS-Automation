@@ -307,6 +307,27 @@ function parseMarkdown(content: string): Block[] {
       continue;
     }
 
+    // C-style block comment /* ... */ — captured as a single paragraph
+    // before the list-item rule (`/^[-*+]\s+/`) gets a chance to chop the
+    // ` * Key: Value` lines into a bulleted list. Section 19 Traceability
+    // is emitted in this shape for FE SubTasks; postProcessBlocks then
+    // converts the captured paragraph into a kv_table.
+    if (trimmed.startsWith('/*')) {
+      const buf: string[] = [line];
+      const closesOnFirst = /\*\//.test(trimmed);
+      i++;
+      if (!closesOnFirst) {
+        while (i < lines.length) {
+          buf.push(lines[i]);
+          const closes = /\*\//.test(lines[i]);
+          i++;
+          if (closes) break;
+        }
+      }
+      blocks.push({ type: 'paragraph', text: buf.join('\n') });
+      continue;
+    }
+
     // Fenced code block ```lang ... ```
     if (trimmed.startsWith('```')) {
       const language = trimmed.slice(3).trim();

@@ -101,6 +101,32 @@ function renderMarkdown(md: string): string {
       i++; continue;
     }
 
+    // C-style block comment /* ... */ — captured before the list-item rule
+    // (`/^[-*]\s+/`) gets to chop the ` * Key: Value` lines into <li>s.
+    // Treated as a Traceability-candidate; the renderKvGroups path takes
+    // over below if it parses out as a Traceability KV block.
+    if (/^\/\*/.test(trimmed)) {
+      const buf: string[] = [line];
+      const closesOnFirst = /\*\//.test(trimmed);
+      i++;
+      if (!closesOnFirst) {
+        while (i < lines.length) {
+          buf.push(lines[i]);
+          const closes = /\*\//.test(lines[i]);
+          i++;
+          if (closes) break;
+        }
+      }
+      const groups = extractKvGroupsFromLines(buf);
+      if (groups && allRowsLookLikeTraceability(groups)) {
+        out.push(renderKvGroups(groups, 'Traceability'));
+        continue;
+      }
+      // Not a Traceability shape — fall back to preformatted so structure stays visible.
+      out.push(`<pre class="code"><code>${esc(buf.join('\n'))}</code></pre>`);
+      continue;
+    }
+
     // Code fence
     if (/^```/.test(trimmed)) {
       const lang = trimmed.slice(3).trim().toLowerCase();
