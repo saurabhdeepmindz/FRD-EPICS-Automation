@@ -766,10 +766,28 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                   const isArtifactActive = activeNode?.type === 'artifact' && activeNode.artifactId === artifactNode.artifact.id;
                   const ArtifactIcon = ICON_MAP[artifactNode.icon];
 
+                  // Display count = total renderable items under this artifact
+                  // node, regardless of which specialised array carries them.
+                  // Generic `children` is empty for FRD/EPIC/multi-story
+                  // USER_STORY/SUBTASK because those types route through their
+                  // own arrays (features, epicSections, userStoryGroups,
+                  // subtaskGroups) — sum across whichever path is populated.
+                  const displayCount =
+                    artifactNode.features.length +
+                    (artifactNode.epicSections?.length ?? 0) +
+                    (artifactNode.epicInternalSections?.length ?? 0) +
+                    (artifactNode.userStoryGroups?.reduce((sum, g) => sum + g.stories.length, 0) ?? 0) +
+                    (artifactNode.userStoryExtras?.length ?? 0) +
+                    (artifactNode.subtaskGroups?.reduce((sum, g) => sum + g.subtasks.length, 0) ?? 0) +
+                    artifactNode.children.length;
+                  const hasChildren = displayCount > 0
+                    || (artifactNode.subtaskGroups?.length ?? 0) > 0
+                    || (artifactNode.userStoryGroups?.length ?? 0) > 0;
+
                   return (
                     <div key={artifactNode.artifact.id}>
                       <div className="flex items-center">
-                        {artifactNode.children.length > 0 ? (
+                        {hasChildren ? (
                           <button
                             onClick={() => setExpandedArtifacts((p) => ({ ...p, [artifactNode.artifact.id]: !p[artifactNode.artifact.id] }))}
                             className="pl-2 pr-0 py-1 text-muted-foreground hover:text-foreground"
@@ -810,7 +828,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                             <span title="TBD-Future"><AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" /></span>
                           )}
                           <span className="ml-auto text-[9px] text-muted-foreground/50 shrink-0">
-                            {artifactNode.children.length}
+                            {displayCount}
                           </span>
                         </button>
                       </div>
