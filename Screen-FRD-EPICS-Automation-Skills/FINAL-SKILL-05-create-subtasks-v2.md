@@ -445,7 +445,26 @@ Libraries, frameworks, patterns, coding standards relevant to this SubTask.
 1. **Main Traceability** — Module → Generated metadata
 2. **TBD-Future Dependencies** — TBD-NNN, Assumed, Stub, Affected, Resolution
 
-The split point is the literal line `TBD-Future Dependencies:` (with empty value). Always include this header verbatim, even when the SubTask has no TBD-Future entries (in which case the second table is omitted automatically). Do NOT rename it to "Future Dependencies", "TBD Dependencies", etc. — the parser's regex matches `TBD-Future Dependencies:?` exactly.
+The split point is the literal line `TBD-Future Dependencies:` (with empty value). Always include this header verbatim. The parser regex matches `TBD-Future Dependencies:?` exactly — do NOT rename it to "Future Dependencies", "TBD Dependencies", etc.
+
+**For CONFIRMED stories with no TBD references**: write `* None for this SubTask.` after the header. The renderer will substitute a "Status — None" placeholder row so both tables are always visible.
+
+**For CONFIRMED-PARTIAL stories (CRITICAL — carry-forward model):** every SubTask in the story — including pure UI SubTasks and QA SubTasks — MUST emit REAL TBD-Future Dependencies entries. **Do NOT write "None for this SubTask."** in this case. The "carry forward" principle is non-negotiable: a developer reading any SubTask of a CONFIRMED-PARTIAL story must see the TBD context with stub guidance, even if the SubTask is several layers removed from the actual TBD integration.
+
+Required entry format (one block per TBD-NNN reference the parent story carries):
+
+```text
+* TBD-Future Dependencies:
+*   TBD-NNN: <integration name> — pending <module-id> approval
+*   Assumed: <method signature> → <return type or shape>
+*   Stub: <stub class name> — replace with real service when <module-id> confirmed
+*   Affected: <which Algorithm steps / Integration points / Exceptions in THIS SubTask use the stub>
+*   Resolution: Update Called Class, Method, Return type when <module-id> SubTasks approved
+```
+
+For SubTasks one or two layers removed from the TBD integration (e.g. a UI design subtask that doesn't directly call the TBD service), the `Affected` line can read `Indirect — consumes data shape from <other SubTask>`. The other four lines (TBD-NNN, Assumed, Stub, Resolution) are still mandatory so the carry-forward chain stays intact.
+
+Identify which TBD-NNN refs apply by reading the parent story body (look for `[TBD-Future]` markers, `TBD-NNN` tokens, and the FRD/EPIC TBD-Future Integration Registry).
 
 ---
 
