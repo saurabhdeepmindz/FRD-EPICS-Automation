@@ -117,10 +117,21 @@ function renderMarkdown(md: string): string {
       if (looksMermaid) {
         // Emit a <div class="mermaid"> — the mermaid CDN script will render it
         // client-side (browser) or inside Puppeteer (PDF) before capture.
+        // The body is NOT HTML-escaped: Mermaid's parser reads the textContent
+        // which automatically decodes HTML entities, but escaping breaks the
+        // arrow operators (-->) in some Mermaid 11.x parser paths.
         out.push(`<div class="mermaid">${esc(body)}</div>`);
-      } else {
-        out.push(`<pre class="code${lang ? ' lang-' + esc(lang) : ''}"><code>${esc(body)}</code></pre>`);
+        continue;
       }
+      // Traceability /* ... */ block wrapped in a code fence — split into
+      // 2 KV tables (main metadata + TBD-Future Dependencies) so PDF/HTML
+      // matches the DOCX renderer.
+      const groups = extractKvGroupsFromLines(buf);
+      if (groups && allRowsLookLikeTraceability(groups)) {
+        out.push(renderKvGroups(groups, 'Traceability'));
+        continue;
+      }
+      out.push(`<pre class="code${lang ? ' lang-' + esc(lang) : ''}"><code>${esc(body)}</code></pre>`);
       continue;
     }
 
@@ -183,19 +194,161 @@ function renderMarkdown(md: string): string {
       i++; continue;
     }
 
-    // Paragraph — collect until blank line or special
-    const para: string[] = [trimmed];
+    // Paragraph — collect until blank line or special. Preserve raw lines
+    // (NOT trimmed) so detectors that depend on indentation (Project
+    // Structure KV alignment, Directory Map tree art) still work.
+    const paraRaw: string[] = [line];
     i++;
     while (i < lines.length) {
       const t = lines[i].trim();
       if (t === '' || /^(#{1,6}\s|---+$|[-*]\s|\d+\.\s|\|.+\||```|>\s)/.test(t)) break;
-      para.push(t);
+      paraRaw.push(lines[i]);
       i++;
     }
-    out.push(`<p>${renderInline(para.join(' '))}</p>`);
+
+    // Project Structure detection: "Project Structure:" + KV lines, optional
+    // trailing "Directory Map:" tree art. Mirrors DOCX + non-preview.
+    const ps = extractProjectStructureBlock(paraRaw);
+    if (ps) {
+      const parts: string[] = [];
+      if (ps.kv.length > 0) {
+        parts.push(renderKvGroups([{ title: 'Project Structure', rows: ps.kv }], 'Project Structure'));
+      }
+      if (ps.treeLines.length > 0) {
+        parts.push(`<div class="tree-block"><div class="tree-title">Directory Map</div><pre><code>${esc(ps.treeLines.join('\n'))}</code></pre></div>`);
+      }
+      if (ps.remainder.length > 0 && ps.remainder.some((r) => r.trim())) {
+        parts.push(`<p>${renderInline(ps.remainder.map((r) => r.trim()).filter(Boolean).join(' '))}</p>`);
+      }
+      out.push(parts.join('\n'));
+      continue;
+    }
+
+    // Standalone "Directory Map:" paragraph
+    if (/^\s*directory\s+map\s*:?\s*$/i.test(paraRaw[0])) {
+      out.push(`<div class="tree-block"><div class="tree-title">Directory Map</div><pre><code>${esc(paraRaw.slice(1).join('\n'))}</code></pre></div>`);
+      continue;
+    }
+
+    out.push(`<p>${renderInline(paraRaw.map((r) => r.trim()).join(' '))}</p>`);
   }
 
   return out.join('\n');
+}
+
+// ─── KV-group helpers (mirrors backend ba-artifact-export.service.ts) ───
+
+function extractKvGroupsFromLines(
+  rawLines: string[],
+): Array<{ title: string | null; rows: Array<[string, string]> }> | null {
+  const cleaned = rawLines.map((l) =>
+    l
+      .replace(/^\s*\/\*+/, '')
+      .replace(/\*\/\s*$/, '')
+      .replace(/^\s*\*\s?/, '')
+      .replace(/\s+$/, ''),
+  );
+  const nonEmpty = cleaned.filter((l) => l.trim() && !/^=+$/.test(l.trim()));
+  const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s*\S/.test(l));
+  if (nonEmpty.length < 3 || kvLines.length / nonEmpty.length < 0.6) return null;
+
+  const groups: Array<{ title: string | null; rows: Array<[string, string]> }> = [];
+  let currentTitle: string | null = null;
+  let currentRows: Array<[string, string]> = [];
+  const flush = (): void => {
+    if (currentRows.length > 0) {
+      groups.push({ title: currentTitle, rows: currentRows });
+    }
+    currentTitle = null;
+    currentRows = [];
+  };
+
+  for (const l of cleaned) {
+    const t = l.trim();
+    if (!t) continue;
+    if (/^=+$/.test(t)) continue;
+    if (/^TBD[-\s]Future\s+Dependencies\s*:?\s*$/i.test(t)) {
+      flush();
+      currentTitle = 'TBD-Future Dependencies';
+      continue;
+    }
+    const kv = /^([^:]+):\s*(.*)$/.exec(l);
+    if (kv && kv[2].trim()) {
+      currentRows.push([kv[1].trim(), kv[2].trim()]);
+    } else if (!currentTitle && !/^\/\*|\*\/$/.test(t)) {
+      currentTitle = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
+    }
+  }
+  flush();
+  if (groups.length === 0) return null;
+  return groups;
+}
+
+function allRowsLookLikeTraceability(
+  groups: Array<{ rows: Array<[string, string]> }>,
+): boolean {
+  const keys = groups.flatMap((g) => g.rows.map(([k]) => k.toLowerCase()));
+  let hits = 0;
+  for (const k of ['module', 'feature', 'user story', 'epic', 'package', 'screen']) {
+    if (keys.some((x) => x.startsWith(k))) hits++;
+  }
+  return hits >= 3;
+}
+
+function renderKvGroups(
+  groups: Array<{ title: string | null; rows: Array<[string, string]> }>,
+  fallbackTitle: string,
+): string {
+  return groups
+    .map((g) => {
+      const tbody = g.rows
+        .map(([k, v]) => `<tr><th class="kv-key">${renderInline(k)}</th><td class="kv-val">${renderInline(v)}</td></tr>`)
+        .join('');
+      const title = g.title || fallbackTitle;
+      return `<div class="kv-block"><div class="kv-title">${esc(title)}</div><table class="kv-table"><tbody>${tbody}</tbody></table></div>`;
+    })
+    .join('\n');
+}
+
+function extractProjectStructureBlock(
+  lines: string[],
+): { kv: Array<[string, string]>; treeLines: string[]; remainder: string[] } | null {
+  if (lines.length === 0) return null;
+  if (!/^\s*project\s+structure\s*:?\s*$/i.test(lines[0])) return null;
+
+  const kv: Array<[string, string]> = [];
+  let i = 1;
+  for (; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) {
+      if (kv.length > 0) break;
+      continue;
+    }
+    const m = /^\s*([A-Za-z][\w\s/().\-]+?)\s*:\s+(.+)$/.exec(l);
+    if (m) {
+      kv.push([m[1].trim(), m[2].trim()]);
+      continue;
+    }
+    break;
+  }
+  if (kv.length < 2) return null;
+  while (i < lines.length && !lines[i].trim()) i++;
+  const treeLines: string[] = [];
+  if (i < lines.length && /^\s*directory\s+map\s*:?\s*$/i.test(lines[i])) {
+    i++;
+    while (i < lines.length) {
+      if (!lines[i].trim()) {
+        if (treeLines.length === 0) break;
+        treeLines.push('');
+        i++;
+        continue;
+      }
+      treeLines.push(lines[i]);
+      i++;
+    }
+    while (treeLines.length > 0 && !treeLines[treeLines.length - 1].trim()) treeLines.pop();
+  }
+  return { kv, treeLines, remainder: lines.slice(i) };
 }
 
 function splitRow(row: string): string[] {
@@ -330,6 +483,15 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
   .status-partial { background: #fef3c7; color: #b45309; }
   .mermaid { background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 12px 0; overflow-x: auto; text-align: center; }
   .mermaid svg { max-width: 100%; height: auto; }
+  .kv-block { margin: 10px 0 16px; }
+  .kv-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; margin-bottom: 4px; }
+  .kv-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  .kv-table th.kv-key { width: 30%; background: #f8fafc; font-weight: 600; text-align: left; vertical-align: top; padding: 6px 10px; border: 1px solid #e2e8f0; }
+  .kv-table td.kv-val { padding: 6px 10px; border: 1px solid #e2e8f0; vertical-align: top; }
+  .kv-table tr:nth-child(even) td.kv-val { background: #fafbfc; }
+  .tree-block { margin: 10px 0 16px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
+  .tree-block .tree-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; padding: 6px 10px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+  .tree-block pre { margin: 0; padding: 10px 12px; background: #fafbfc; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9pt; white-space: pre; overflow-x: auto; }
 </style>
 <!-- Mermaid script for UML diagrams. Rendered client-side in the browser
      and also during PDF capture inside Puppeteer. Loaded from CDN for
