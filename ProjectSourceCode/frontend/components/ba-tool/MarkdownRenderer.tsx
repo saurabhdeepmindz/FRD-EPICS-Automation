@@ -64,11 +64,17 @@ export function MarkdownRenderer({ content, className, plain }: MarkdownRenderer
 function postProcessBlocks(blocks: Block[]): Block[] {
   const out: Block[] = [];
   for (const b of blocks) {
-    // Traceability: fenced code containing a /* ... */ KV comment
+    // Traceability: fenced code containing a /* ... */ KV comment.
+    // Returns one or more KV-table groups — typically:
+    //   1. main Traceability metadata
+    //   2. TBD-Future Dependencies sub-table (split on the "TBD-Future
+    //      Dependencies:" header line)
     if (b.type === 'code') {
-      const kv = extractKvFromCommentOrPlain(b.content.split('\n'));
-      if (kv && looksLikeTraceability(kv.rows)) {
-        out.push({ type: 'kv_table', title: kv.title ?? 'Traceability', rows: kv.rows });
+      const groups = extractKvGroups(b.content.split('\n'));
+      if (groups && allRowsLookLikeTraceability(groups)) {
+        for (const g of groups) {
+          out.push({ type: 'kv_table', title: g.title ?? 'Traceability', rows: g.rows });
+        }
         continue;
       }
     }
@@ -177,12 +183,14 @@ function extractDirectoryMapOnly(
   return { lines: tree, remainder: lines.slice(i).join('\n') };
 }
 
-// Extract KV rows from a list of lines that may be a /* ... */ comment block
-// (Traceability) or plain key:value lines. Mirrors the backend extractor in
-// ba-artifact-export.service.ts so DOCX and on-screen rendering stay aligned.
-function extractKvFromCommentOrPlain(
+// Extract KV groups from a list of lines that may be a /* ... */ comment
+// block (Traceability) or plain key:value lines. Splits on a "TBD-Future
+// Dependencies:" header line so the AI's two-section authoring (main
+// metadata + TBD sub-block) becomes two distinct tables. Mirrors the backend
+// extractKvBlockAsGroups in ba-artifact-export.service.ts.
+function extractKvGroups(
   rawLines: string[],
-): { title: string | null; rows: Array<[string, string]> } | null {
+): Array<{ title: string | null; rows: Array<[string, string]> }> | null {
   const cleaned = rawLines.map((l) =>
     l
       .replace(/^\s*\/\*+/, '')
@@ -194,28 +202,47 @@ function extractKvFromCommentOrPlain(
   const kvLines = nonEmpty.filter((l) => /^[\w\s().\-/]+:\s*\S/.test(l));
   if (nonEmpty.length < 3 || kvLines.length / nonEmpty.length < 0.6) return null;
 
-  const rows: Array<[string, string]> = [];
-  let title: string | null = null;
+  const groups: Array<{ title: string | null; rows: Array<[string, string]> }> = [];
+  let currentTitle: string | null = null;
+  let currentRows: Array<[string, string]> = [];
+  const flush = () => {
+    if (currentRows.length > 0) {
+      groups.push({ title: currentTitle, rows: currentRows });
+    }
+    currentTitle = null;
+    currentRows = [];
+  };
+
   for (const l of cleaned) {
     const t = l.trim();
     if (!t) continue;
     if (/^=+$/.test(t)) continue;
+    if (/^TBD[-\s]Future\s+Dependencies\s*:?\s*$/i.test(t)) {
+      flush();
+      currentTitle = 'TBD-Future Dependencies';
+      continue;
+    }
     const kv = /^([^:]+):\s*(.*)$/.exec(l);
     if (kv && kv[2].trim()) {
-      rows.push([kv[1].trim(), kv[2].trim()]);
-    } else if (!title && !/^\/\*|\*\/$/.test(t)) {
-      title = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
+      currentRows.push([kv[1].trim(), kv[2].trim()]);
+    } else if (!currentTitle && !/^\/\*|\*\/$/.test(t)) {
+      currentTitle = t.replace(/^\/\*+/, '').replace(/\*\/$/, '').trim();
     }
   }
-  if (rows.length === 0) return null;
-  return { title, rows };
+  flush();
+  if (groups.length === 0) return null;
+  return groups;
 }
 
 // Distinguish a Traceability block (Module:/Feature:/User Story:/Epic:) from
 // a generic KV list — keeps the renderer from converting random `Note: ...`
-// code blocks into tables.
-function looksLikeTraceability(rows: Array<[string, string]>): boolean {
-  const keys = rows.map(([k]) => k.toLowerCase());
+// code blocks into tables. Inspects keys across all groups so a Traceability
+// block whose main metadata is in one group and TBD-Future is in another
+// still matches.
+function allRowsLookLikeTraceability(
+  groups: Array<{ rows: Array<[string, string]> }>,
+): boolean {
+  const keys = groups.flatMap((g) => g.rows.map(([k]) => k.toLowerCase()));
   let hits = 0;
   for (const k of ['module', 'feature', 'user story', 'epic', 'package', 'screen']) {
     if (keys.some((x) => x.startsWith(k))) hits++;
