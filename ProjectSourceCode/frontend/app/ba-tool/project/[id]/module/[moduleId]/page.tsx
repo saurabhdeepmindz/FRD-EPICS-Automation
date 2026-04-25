@@ -225,11 +225,15 @@ export default function BaModuleWorkspacePage() {
         </div>
       </header>
 
-      {/* Skill Stepper */}
+      {/* Skill Stepper — linear chain (0-5) + LLD / FTC links (6, 7) */}
       <SkillStepper
         moduleStatus={mod.moduleStatus}
         activeStep={activeStep}
         onStepClick={(step) => { setActiveStep(step); setActiveTreeNode(null); }}
+        projectId={projectId}
+        moduleDbId={moduleDbId}
+        lldComplete={mod.artifacts.some((a) => a.artifactType === 'LLD')}
+        ftcComplete={mod.artifacts.some((a) => a.artifactType === 'FTC')}
       />
 
       {/* Main content area */}
