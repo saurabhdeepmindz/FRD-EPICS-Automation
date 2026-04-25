@@ -29,7 +29,8 @@ import { Edit3, Save, X, Sparkles, User, Lock, FileText, Eye, Download } from 'l
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { api } from '@/lib/api';
+// `api` (axios) is intentionally not imported here for downloads — see
+// download() below. Anchor-href streaming bypasses JS heap limits.
 
 interface ArtifactContentPanelProps {
   activeNode: TreeNodeId | null;
@@ -44,26 +45,27 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
   const backParam = pathname ? `?back=${encodeURIComponent(pathname)}` : '';
   const previewHref = `/ba-tool/preview/artifact/${artifact.id}${backParam}`;
 
-  const download = async (format: 'pdf' | 'docx') => {
+  const download = (format: 'pdf' | 'docx') => {
+    // Direct anchor link to the backend export URL — let the browser stream
+    // the file natively rather than buffering it through axios + a Blob in
+    // JS heap. The buffered approach failed with "Network Error" on ~20 MB+
+    // payloads (a 27-story SUBTASK PDF can hit 19+ MB once every Mermaid
+    // diagram + screen image is embedded). Streaming has no in-memory size
+    // limit, no axios timeout edge cases, and the browser drives the
+    // download exactly the same way as right-click → Save As.
     try {
-      const response = await api.get(`/ba/artifacts/${artifact.id}/export/${format}`, {
-        // 5-min timeout — DOCX/PDF of large SUBTASK artifacts can take 90-120s
-        // due to cold Chromium spinup + many Mermaid diagrams to render.
-        responseType: 'blob', timeout: 300_000,
-      });
-      const type = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      const blob = new Blob([response.data], { type });
-      const url = URL.createObjectURL(blob);
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
       const a = document.createElement('a');
-      a.href = url;
+      a.href = `${apiBase}/api/ba/artifacts/${artifact.id}/export/${format}`;
       a.download = `${artifact.artifactId}.${format}`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[${format} download] failed:`, err);
-      const detail = err instanceof Error ? err.message : String(err);
-      alert(`Download failed: ${detail}\n\nSee browser console for full error. Direct URL: ${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/ba/artifacts/${artifact.id}/export/${format}`);
+      alert(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 

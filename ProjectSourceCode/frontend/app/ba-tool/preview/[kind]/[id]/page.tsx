@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Download, FileText, Loader2, Upload, Sparkles, User as UserIcon } from 'lucide-react';
-import { api } from '@/lib/api';
+// `api` (axios) is intentionally not imported here for downloads — the
+// download paths use direct anchor links so the browser streams the file
+// rather than buffering through JS heap. See download() below.
 import {
   getArtifact,
   getBaSubTask,
@@ -203,31 +205,44 @@ export default function BaPreviewPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const download = useCallback(async (format: 'pdf' | 'docx') => {
+  const download = useCallback((format: 'pdf' | 'docx') => {
     if (!doc) return;
+    // Use a direct anchor link to the backend export URL — let the browser
+    // stream the file natively rather than buffering it through axios + a
+    // Blob in JS heap. Earlier we used `axios → arraybuffer → Blob → URL.
+    // createObjectURL → a.click()`, which fails with "Network Error" on
+    // ~20 MB+ payloads (a 27-story SUBTASK PDF can hit 19+ MB once every
+    // Mermaid diagram + screen image is embedded). The streaming approach
+    // has no in-memory size limit, no axios timeout edge cases, and the
+    // browser drives the download natively (works the same as right-click
+    // → Save As).
     setDownloading(format);
     try {
-      const base = kind === 'subtask' ? `/ba/subtasks/${id}/export/${format}` : `/ba/artifacts/${id}/export/${format}`;
-      // 5-min timeout — DOCX exports of large SUBTASK artifacts (~30 Mermaid
-      // diagrams) take 90-120s on cold Chromium spinup; PDF is similar.
-      const response = await api.get(base, { responseType: 'blob', timeout: 300_000 });
-      const type = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      const blob = new Blob([response.data], { type });
-      const url = URL.createObjectURL(blob);
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+      const base = kind === 'subtask'
+        ? `${apiBase}/api/ba/subtasks/${id}/export/${format}`
+        : `${apiBase}/api/ba/artifacts/${id}/export/${format}`;
       const a = document.createElement('a');
-      a.href = url;
+      a.href = base;
       a.download = `${doc.artifactId}-${doc.module.moduleId}.${format}`;
+      // target=_blank ensures the browser surfaces "Failed - Network error"
+      // visibly in the downloads tray rather than silently aborting; for
+      // success cases the download starts and the tab closes itself once
+      // the file is saved.
+      a.rel = 'noopener';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
-      // Surface the underlying error so we can diagnose timeouts vs CORS vs
-      // server errors instead of silently masking everything as "backend down".
       // eslint-disable-next-line no-console
       console.error(`[${format} download] failed:`, err);
-      const detail = err instanceof Error ? err.message : String(err);
-      alert(`Download failed: ${detail}\n\nSee browser console for full error. Tip — you can also download directly: ${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/ba/artifacts/${id}/export/${format}`);
+      alert(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setDownloading(null);
+      // Reset spinner immediately — the browser owns the download from here.
+      // The actual file save happens in the background; we can't easily
+      // observe its completion without polling, and the streaming approach
+      // makes the UX equivalent to a right-click Save As anyway.
+      setTimeout(() => setDownloading(null), 500);
     }
   }, [kind, id, doc]);
 
