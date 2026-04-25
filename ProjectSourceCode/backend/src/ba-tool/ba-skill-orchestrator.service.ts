@@ -165,9 +165,7 @@ export class BaSkillOrchestratorService {
       // outputs. Every other skill uses the single-shot path unchanged.
       const aiResponse = skillName === 'SKILL-04'
         ? await this.callAiServiceSkill04PerFeature(skillPrompt, contextPacket)
-        : skillName === 'SKILL-05'
-          ? await this.callAiServiceSkill05PerStory(skillPrompt, contextPacket)
-          : await this.callAiService(skillPrompt, contextPacket);
+        : await this.callAiService(skillPrompt, contextPacket);
 
       // 5. Parse and store output
       const { humanDocument, handoffPacket } = this.parseAiOutput(aiResponse);
@@ -1049,125 +1047,6 @@ export class BaSkillOrchestratorService {
       }
     }
     return max + 1;
-  }
-
-  /**
-   * SKILL-05 variant — call the AI once per user story and stitch the
-   * outputs. Same motivation as SKILL-04's per-feature loop: asking the AI
-   * to decompose ~22 stories into ~70+ subtasks in a single response makes
-   * it write the first 1-2 fully and compress the rest (missing Mermaid,
-   * abbreviated algorithm outlines, etc.). One focused call per story gives
-   * every subtask the full 24-section treatment.
-   */
-  private async callAiServiceSkill05PerStory(
-    systemPrompt: string,
-    contextPacket: Record<string, unknown>,
-  ): Promise<string> {
-    const userStoriesDoc = String(contextPacket.userStoriesDocument ?? '');
-    if (!userStoriesDoc.trim()) {
-      this.logger.warn('SKILL-05 per-story loop: userStoriesDocument empty, falling back to single-shot');
-      return this.callAiService(systemPrompt, contextPacket);
-    }
-
-    // Parse story IDs from the user stories document. Matches the "US-NNN"
-    // tokens inside `# User Story: US-NNN` or `## <anything> US-NNN` etc.
-    // Dedupe and sort numerically so iteration order is stable.
-    const storyIds = Array.from(new Set(
-      (userStoriesDoc.match(/US-\d{3,}/g) ?? []),
-    )).sort((a, b) => {
-      const na = parseInt(a.slice(3), 10);
-      const nb = parseInt(b.slice(3), 10);
-      return na - nb;
-    });
-
-    if (storyIds.length === 0) {
-      this.logger.warn('SKILL-05 per-story loop: no US-NNN IDs in story doc, falling back');
-      return this.callAiService(systemPrompt, contextPacket);
-    }
-
-    this.logger.log(
-      `SKILL-05 per-story loop: generating subtasks for ${storyIds.length} story(ies) ` +
-      `(${storyIds.slice(0, 5).join(', ')}${storyIds.length > 5 ? ', ...' : ''})`,
-    );
-
-    const perStoryOutputs: string[] = [];
-
-    for (let i = 0; i < storyIds.length; i++) {
-      const storyId = storyIds[i];
-      const focusOverride = [
-        '## 🎯 SINGLE-STORY FOCUS — ORCHESTRATOR OVERRIDE',
-        '',
-        'You are running as part of a per-story loop. The orchestrator will',
-        'call you once for EACH user story. Your current call is for ONE story only.',
-        '',
-        `**CURRENT STORY: ${storyId}**`,
-        `- Position in loop: ${i + 1} of ${storyIds.length}`,
-        '',
-        '### What to output NOW',
-        '',
-        `1. Decompose **only ${storyId}** into its SubTasks (typically 3–6 BE/IN subtasks plus 1 consolidated QA subtask block).`,
-        '2. Each SubTask uses the full 24-section template.',
-        '3. Section 21 for every BE / IN SubTask MUST include the Mermaid `sequenceDiagram` block AND the textual Message Sequence — both.',
-        '4. Use Next.js / NestJS / Prisma / PostgreSQL stack idioms (from `techStack` in context).',
-        '',
-        '### What to SKIP',
-        '',
-        '- Do NOT write subtasks for other stories (they are handled by their own sub-calls).',
-        '- Do NOT write a module-level Introduction or Coverage Summary — the orchestrator handles scaffolding.',
-        '',
-        '---',
-        '',
-        '## Original Skill Definition (follow all rules below, constrained by the override above)',
-        '',
-        systemPrompt,
-      ].join('\n');
-
-      // Narrow the context to just this story's slice of the document. Cheap
-      // way: grep the story section out by heading. Falls back to the full
-      // doc if we can't find a clean boundary.
-      const narrowed = this.extractStorySlice(userStoriesDoc, storyId);
-      const narrowedContext: Record<string, unknown> = {
-        ...contextPacket,
-        userStoriesDocument: narrowed ?? userStoriesDoc,
-        currentFocusStory: storyId,
-      };
-
-      const out = await this.callAiService(focusOverride, narrowedContext);
-      perStoryOutputs.push(out);
-    }
-
-    // Stitch: a brief Introduction + concatenated per-story outputs.
-    return [
-      `# SubTasks — ${contextPacket.moduleId ?? 'Module'}`,
-      '',
-      `Aggregated across **${storyIds.length} user story(ies)**: ${storyIds.join(', ')}`,
-      '',
-      '---',
-      '',
-      ...perStoryOutputs,
-    ].join('\n');
-  }
-
-  /**
-   * Return the slice of the user-story document that belongs to one story.
-   * Looks for a heading containing the storyId and captures until the next
-   * story heading or end of document. Null if no clear boundary found.
-   */
-  private extractStorySlice(fullDoc: string, storyId: string): string | null {
-    // Match "# User Story: US-NNN ..." or "## US-NNN — ..." or similar.
-    const headingRe = new RegExp(
-      `(#{1,4}\\s*[^\\n]*${storyId.replace(/-/g, '\\-')}[^\\n]*\\n)`,
-      'g',
-    );
-    const match = headingRe.exec(fullDoc);
-    if (!match) return null;
-    const start = match.index;
-    // Find next story heading (different US-ID) after this one.
-    const nextRe = /#{1,4}\s*[^\n]*US-\d{3,}[^\n]*\n/g;
-    nextRe.lastIndex = start + match[0].length;
-    const nextMatch = nextRe.exec(fullDoc);
-    const end = nextMatch ? nextMatch.index : fullDoc.length;
-    return fullDoc.slice(start, end);
   }
 
   // ─── Output parsing ────────────────────────────────────────────────────
