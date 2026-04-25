@@ -237,7 +237,18 @@ function extractKvGroups(
   const groups: Array<{ title: string | null; rows: Array<[string, string]> }> = [];
   let currentTitle: string | null = null;
   let currentRows: Array<[string, string]> = [];
+  let seenTbdHeader = false;
   const flush = () => {
+    // The TBD-Future Dependencies group is special — when the source had a
+    // TBD header but yielded no Key:Value rows (typically because the AI
+    // wrote "None for this SubTask." instead of structured TBD entries),
+    // emit a placeholder row so the second table is always visible. The
+    // user-facing contract is "two tables in Section 19, even when there
+    // are no TBD entries" — without the placeholder, an empty group would
+    // be dropped and the second table would silently disappear.
+    if (currentTitle === 'TBD-Future Dependencies' && currentRows.length === 0) {
+      currentRows.push(['Status', 'None — this SubTask has no TBD-Future dependencies']);
+    }
     if (currentRows.length > 0) {
       groups.push({ title: currentTitle, rows: currentRows });
     }
@@ -252,6 +263,7 @@ function extractKvGroups(
     if (/^TBD[-\s]Future\s+Dependencies\s*:?\s*$/i.test(t)) {
       flush();
       currentTitle = 'TBD-Future Dependencies';
+      seenTbdHeader = true;
       continue;
     }
     const kv = /^([^:]+):\s*(.*)$/.exec(l);
@@ -262,6 +274,15 @@ function extractKvGroups(
     }
   }
   flush();
+  // Edge case: AI omitted the literal "TBD-Future Dependencies:" header
+  // entirely. Append a TBD group with the placeholder so the rendering
+  // contract still holds.
+  if (!seenTbdHeader && groups.length > 0) {
+    groups.push({
+      title: 'TBD-Future Dependencies',
+      rows: [['Status', 'None — this SubTask has no TBD-Future dependencies']],
+    });
+  }
   if (groups.length === 0) return null;
   return groups;
 }

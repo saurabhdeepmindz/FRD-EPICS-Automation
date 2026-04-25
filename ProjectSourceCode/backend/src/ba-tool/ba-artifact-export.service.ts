@@ -720,7 +720,14 @@ export class BaArtifactExportService {
     const groups: Array<{ title: string | null; rows: Array<[string, string]> }> = [];
     let currentTitle: string | null = null;
     let currentRows: Array<[string, string]> = [];
-    const flush = () => {
+    let seenTbdHeader = false;
+    const flush = (): void => {
+      // TBD-Future group with no KV rows → insert a placeholder so the
+      // second Word table is always rendered (matches the "two tables in
+      // Section 19, always" UX contract).
+      if (currentTitle === 'TBD-Future Dependencies' && currentRows.length === 0) {
+        currentRows.push(['Status', 'None — this SubTask has no TBD-Future dependencies']);
+      }
       if (currentRows.length > 0) {
         groups.push({ title: currentTitle, rows: currentRows });
       }
@@ -736,6 +743,7 @@ export class BaArtifactExportService {
       if (/^TBD[-\s]Future\s+Dependencies\s*:?\s*$/i.test(t)) {
         flush();
         currentTitle = 'TBD-Future Dependencies';
+        seenTbdHeader = true;
         continue;
       }
       const kv = /^([^:]+):\s*(.*)$/.exec(l);
@@ -747,6 +755,14 @@ export class BaArtifactExportService {
       }
     }
     flush();
+    // AI omitted the literal "TBD-Future Dependencies:" header → append
+    // the placeholder group so DOCX still renders both tables.
+    if (!seenTbdHeader && groups.length > 0) {
+      groups.push({
+        title: 'TBD-Future Dependencies',
+        rows: [['Status', 'None — this SubTask has no TBD-Future dependencies']],
+      });
+    }
     if (groups.length === 0) return null;
     return groups;
   }
