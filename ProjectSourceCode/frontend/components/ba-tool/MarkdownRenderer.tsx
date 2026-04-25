@@ -95,6 +95,21 @@ function postProcessBlocks(blocks: Block[]): Block[] {
         continue;
       }
     }
+    // Bare /* ... */ Traceability comment — emitted by SKILL-05 for FE
+    // SubTasks WITHOUT a surrounding ```text fence. Detected here in the
+    // paragraph branch (the fenced equivalent is handled above in 'code').
+    if (b.type === 'paragraph') {
+      const t = b.text.trim();
+      if (t.startsWith('/*') && /\*\//.test(t)) {
+        const groups = extractKvGroups(b.text.split('\n'));
+        if (groups && allRowsLookLikeTraceability(groups)) {
+          for (const g of groups) {
+            out.push({ type: 'kv_table', title: g.title ?? 'Traceability', rows: g.rows });
+          }
+          continue;
+        }
+      }
+    }
     // Project Structure: paragraph starting with "Project Structure:" plus KV lines
     if (b.type === 'paragraph') {
       const ps = extractProjectStructureBlock(b.text);

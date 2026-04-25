@@ -225,6 +225,17 @@ function renderMarkdown(md: string): string {
       i++;
     }
 
+    // Bare /* ... */ Traceability comment — emitted for FE SubTasks
+    // without a surrounding ```text fence. Mirrors the non-preview
+    // MarkdownRenderer paragraph-branch detection.
+    if (/^\s*\/\*/.test(paraRaw[0]) && paraRaw.some((r) => /\*\//.test(r))) {
+      const groups = extractKvGroupsFromLines(paraRaw);
+      if (groups && allRowsLookLikeTraceability(groups)) {
+        out.push(renderKvGroups(groups, 'Traceability'));
+        continue;
+      }
+    }
+
     // Project Structure detection: "Project Structure:" + KV lines, optional
     // trailing "Directory Map:" tree art. Mirrors DOCX + non-preview.
     const ps = extractProjectStructureBlock(paraRaw);
