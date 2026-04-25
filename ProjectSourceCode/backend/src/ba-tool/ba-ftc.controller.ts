@@ -49,6 +49,33 @@ export class BaFtcController {
     return { executionId, skill: 'SKILL-07-FTC', status: 'RUNNING' };
   }
 
+  // ─── Per-feature FTC append-mode (mirrors SKILL-05 per-story) ─────
+  //
+  // Single-shot SKILL-07-FTC consistently caps at ~10-15 test cases for
+  // one feature group due to the AI's output token budget. To get full
+  // module coverage (~80-100 TCs across all features), drive this loop:
+  //   1. GET .../ftc-features  → list of feature IDs
+  //   2. POST .../execute/SKILL-07-FTC/feature/:featureId  per feature
+  // Each call appends parsed TCs to the same FTC artifact.
+
+  /** GET /api/ba/modules/:id/ftc-features — enumerate features for the per-feature loop */
+  @Get('modules/:id/ftc-features')
+  listFeaturesForFtc(@Param('id') moduleDbId: string) {
+    return this.orchestrator.listFeaturesForFtc(moduleDbId);
+  }
+
+  /** POST /api/ba/modules/:id/execute/SKILL-07-FTC/feature/:featureId — generate TCs for one feature */
+  @Post('modules/:id/execute/SKILL-07-FTC/feature/:featureId')
+  executeSkill07ForFeature(
+    @Param('id') moduleDbId: string,
+    @Param('featureId') featureId: string,
+  ) {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new BadRequestException(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+    return this.orchestrator.executeSkill07ForFeature(moduleDbId, featureId);
+  }
+
   /** GET /api/ba/modules/:id/ftc — fetch the current FTC artifact (or null) */
   @Get('modules/:id/ftc')
   async getFtc(@Param('id') moduleDbId: string) {

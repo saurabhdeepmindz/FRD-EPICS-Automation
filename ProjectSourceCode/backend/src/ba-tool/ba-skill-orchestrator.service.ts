@@ -1507,6 +1507,234 @@ export class BaSkillOrchestratorService {
     return fullDoc.slice(start, end);
   }
 
+  // ─── SKILL-07-FTC per-feature append-mode ─────────────────────────────
+  //
+  // Generate test cases for ONE feature at a time and APPEND the resulting
+  // BaTestCase rows to the module's FTC artifact. Mirrors the SKILL-05
+  // per-story append pattern.
+  //
+  // Why per-feature instead of per-story or single-shot:
+  //  - Single-shot blows the response token budget (~16-32K out) — the AI
+  //    settles for ~10-20 TCs covering one feature group, leaving the other
+  //    ~8 features with no coverage.
+  //  - Per-story would fragment the FTC artifact (the "Coverage Summary"
+  //    is naturally feature-scoped, and many stories under one feature
+  //    share scenario groups).
+  //  - Per-feature is the right grain: each call produces ~10-15 TCs
+  //    spanning all stories under that feature, in proper ```tc id=...```
+  //    format so BaFtcParser picks them up.
+
+  /** Enumerate features for a module from RTM rows. */
+  async listFeaturesForFtc(
+    moduleDbId: string,
+  ): Promise<Array<{ featureId: string; featureName: string; featureStatus: string }>> {
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      select: { moduleId: true, projectId: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+    const rtmRows = await this.prisma.baRtmRow.findMany({
+      where: { projectId: mod.projectId, moduleId: mod.moduleId },
+      select: { featureId: true, featureName: true, featureStatus: true },
+    });
+    // RTM rows from old runs sometimes carry markdown-parsing artifacts
+    // in the featureId column (e.g. "** F-04-02", "| F-04-06 ... |").
+    // Only accept clean F-NN-NN ids; the garbage ones get silently dropped.
+    const FEATURE_ID_RE = /^F-\d+-\d+$/;
+    const seen = new Map<string, { featureId: string; featureName: string; featureStatus: string }>();
+    for (const r of rtmRows) {
+      const fid = r.featureId?.trim();
+      if (!fid || !FEATURE_ID_RE.test(fid) || seen.has(fid)) continue;
+      seen.set(fid, {
+        featureId: fid,
+        featureName: r.featureName ?? '',
+        featureStatus: (r.featureStatus ?? '').replace(/^"(.+)",?$/, '$1'),
+      });
+    }
+    return Array.from(seen.values()).sort((a, b) =>
+      a.featureId.localeCompare(b.featureId, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+  }
+
+  /**
+   * Generate test cases for one feature and append the parsed BaTestCase
+   * rows to the module's FTC artifact (creating the artifact on the first
+   * call). Returns a summary so callers (a script or a UI loop) can show
+   * progress.
+   */
+  async executeSkill07ForFeature(
+    moduleDbId: string,
+    featureId: string,
+  ): Promise<{
+    featureId: string;
+    artifactId: string;
+    tcsAdded: number;
+    sectionsAdded: number;
+    skipped: boolean;
+    reason?: string;
+  }> {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new Error(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: {
+        project: true,
+        skillExecutions: {
+          where: { status: BaExecutionStatus.APPROVED },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // 1. Find or create the FTC artifact. Suffix = "playwright" or whatever
+    //    the architect picked in BaFtcConfig (matches the existing single-
+    //    shot path's deriveFtcSuffix output).
+    let artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.FTC },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!artifact) {
+      const suffix = await this.deriveFtcSuffix(moduleDbId);
+      artifact = await this.prisma.baArtifact.create({
+        data: {
+          moduleDbId,
+          artifactType: BaArtifactType.FTC,
+          artifactId: `FTC-${mod.moduleId}-${suffix}`,
+          status: BaArtifactStatus.DRAFT,
+        },
+      });
+    }
+
+    // 2. Idempotency — skip when this feature already has TCs on the
+    //    artifact. We detect via the linkedFeatureIds array on existing
+    //    BaTestCase rows; if any TC already references this featureId,
+    //    we assume the feature is done.
+    const existingTcs = await this.prisma.baTestCase.findMany({
+      where: {
+        artifactDbId: artifact.id,
+        linkedFeatureIds: { has: featureId },
+      },
+      select: { id: true },
+    });
+    if (existingTcs.length > 0) {
+      this.logger.log(
+        `SKILL-07-FTC per-feature: skipping ${featureId} — already has ${existingTcs.length} test case(s)`,
+      );
+      return {
+        featureId,
+        artifactId: artifact.id,
+        tcsAdded: 0,
+        sectionsAdded: 0,
+        skipped: true,
+        reason: `${existingTcs.length} test case(s) for ${featureId} already on the FTC artifact; delete them first to regenerate`,
+      };
+    }
+
+    // 3. Build the FTC context (same shape as single-shot SKILL-07-FTC).
+    const skillPrompt = this.loadSkillFile('SKILL-07-FTC');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-07-FTC');
+
+    // 4. Compose the per-feature focus override on top of the existing
+    //    parser-shape wrapper. The wrapper enforces the ```tc id=...```
+    //    format; we add the single-feature scope on top.
+    const featureFocusedPrompt = [
+      '## 🎯 SKILL-07-FTC FEATURE FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      `You are running as part of a per-feature loop. Each call generates test cases for ONE feature only — the orchestrator runs you once per feature and appends each response's TCs to the same FTC artifact.`,
+      '',
+      `**CURRENT FEATURE: ${featureId}**`,
+      '',
+      'Generate test cases for **all user stories under this feature only**. Do',
+      'not produce TCs for any other feature — those are processed in their own',
+      'sub-calls.',
+      '',
+      'Every TC you emit MUST tag this feature in `linkedFeatureIds` (the parser',
+      `reads this list to attribute the TC to the right feature). Set scenarioGroup`,
+      `to a short label that mentions ${featureId} so the UI groups your TCs`,
+      'cleanly within the FTC artifact.',
+      '',
+      'Coverage requirements per story under this feature:',
+      '- ≥1 happy-path TC',
+      '- ≥1 negative TC (`Neg_TC-...` id prefix, `testKind=negative`)',
+      '- Boundary / edge TCs where the AC mentions limits, ranges, or quotas',
+      '- For CONFIRMED-PARTIAL stories with TBD-Future stubs: include a',
+      '  stub-integration TC marked `category=Integration` and explicitly',
+      '  reference the stub in `preconditions`',
+      '',
+      'Do NOT emit a module-wide Coverage Summary, OWASP Map, or AC Coverage',
+      'spanning all features — those are stitched at the end after all per-',
+      'feature calls complete. Just emit the §6 / §7 / §8 content (TC bodies +',
+      'OWASP entries that apply + AC coverage rows) for this feature, with',
+      'every TC also repeated verbatim in the §8 Test Case Appendix.',
+      '',
+      '---',
+      '',
+      // Reuse the same parser-contract wrapper used by single-shot — keeps
+      // the ```tc id=...``` format requirement front and centre.
+      this.wrapSkill07Prompt(skillPrompt, contextPacket),
+    ].join('\n');
+
+    // 5. Call the AI with retry-on-429.
+    const aiResponse = await this.callAiServiceWithRetry(
+      featureFocusedPrompt,
+      { ...contextPacket, currentFocusFeature: featureId },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for ${featureId}`);
+    }
+
+    // 6. Run the FTC parser. parseAndStore is idempotent at the section
+    //    level (warns and continues on duplicate sectionKey conflicts) and
+    //    creates new BaTestCase rows for any TC IDs it sees — which are
+    //    naturally unique across features since the AI tags them with the
+    //    feature/story prefix (TC-USNNN-XX-NNN).
+    const before = await this.prisma.baTestCase.count({
+      where: { artifactDbId: artifact.id },
+    });
+    const parsed = await this.ftcParser.parseAndStore(humanDocument, artifact.id);
+    const after = await this.prisma.baTestCase.count({
+      where: { artifactDbId: artifact.id },
+    });
+    const tcsAdded = after - before;
+
+    // 7. Backfill linkedFeatureIds — the AI may forget to set it explicitly;
+    //    we know which feature this call was for, so ensure every TC created
+    //    in this call has the featureId in linkedFeatureIds.
+    const newTcs = await this.prisma.baTestCase.findMany({
+      where: {
+        artifactDbId: artifact.id,
+        OR: [
+          { linkedFeatureIds: { isEmpty: true } },
+          { NOT: { linkedFeatureIds: { has: featureId } } },
+        ],
+      },
+      select: { id: true, linkedFeatureIds: true },
+    });
+    for (const tc of newTcs) {
+      const updated = Array.from(new Set([...(tc.linkedFeatureIds ?? []), featureId]));
+      await this.prisma.baTestCase.update({
+        where: { id: tc.id },
+        data: { linkedFeatureIds: updated },
+      });
+    }
+
+    this.logger.log(
+      `SKILL-07-FTC per-feature ${featureId}: appended ${tcsAdded} test case(s) to ${artifact.id}`,
+    );
+
+    return {
+      featureId,
+      artifactId: artifact.id,
+      tcsAdded,
+      sectionsAdded: parsed.sectionsCreated,
+      skipped: false,
+    };
+  }
+
   /**
    * Determine where this module's next US-NNN number should start so that
    * re-runs don't collide with existing stories in the project. Reads all
