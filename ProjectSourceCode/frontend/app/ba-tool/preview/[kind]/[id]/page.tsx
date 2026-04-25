@@ -436,6 +436,82 @@ export default function BaPreviewPage() {
       return out;
     }
 
+    // ── SUBTASK: 4-level grouping mirrors ArtifactTree subtaskGroups ──
+    // User Story groups (US-074, US-075, …) followed by a QA SubTasks
+    // sibling group. Group label = "US-NNN — title" or "QA SubTasks ...".
+    // The `subtask_decomposition_for_us_NNN_*` intro and
+    // `qa_subtasks_mandatory_*` empty header rows feed the group labels and
+    // are dropped from the body so each ST-* shows once with full content.
+    if (doc.artifactType === 'SUBTASK') {
+      const SUBTASK_RE = /^(?:subtask_\d+_)?st_us(\d+)_(be|fe|qa|in|int)_(\d+)/i;
+      const DECOMP_RE = /^subtask_decomposition_for_us_(\d+)/i;
+      const QA_HEADER_RE = /^qa_subtasks_mandatory/i;
+
+      const usDecompLabel = new Map<string, string>();
+      let qaHeaderLabel = 'QA SubTasks (Mandatory for Every Story)';
+      for (const s of raw) {
+        const dm = DECOMP_RE.exec(s.sectionKey);
+        if (dm) {
+          const usId = `US-${dm[1].padStart(3, '0')}`;
+          const fullTitle = s.sectionLabel || `User Story ${usId}`;
+          const m = /SubTask Decomposition for (?:US-\d+)\s*[—–-]?\s*(.+)/i.exec(fullTitle);
+          const tail = m ? m[1] : fullTitle;
+          const cleaned = tail.replace(/\s*\([^)]*\)\s*$/, '').trim();
+          usDecompLabel.set(usId, cleaned ? `${usId} — ${cleaned}` : usId);
+          continue;
+        }
+        if (QA_HEADER_RE.test(s.sectionKey) && s.sectionLabel?.trim()) qaHeaderLabel = s.sectionLabel;
+      }
+
+      type Bucket = { title: string; usSort: number; sections: BaArtifactSection[] };
+      const usBuckets = new Map<string, Bucket>();
+      const qaBucket: Bucket = { title: qaHeaderLabel, usSort: Number.MAX_SAFE_INTEGER, sections: [] };
+      for (const s of raw) {
+        if (DECOMP_RE.test(s.sectionKey) || QA_HEADER_RE.test(s.sectionKey)) continue;
+        const m = SUBTASK_RE.exec(s.sectionKey);
+        if (!m) continue;
+        const usId = `US-${m[1].padStart(3, '0')}`;
+        const team = m[2].toLowerCase();
+        if (team === 'qa') {
+          qaBucket.sections.push(s);
+          continue;
+        }
+        let bucket = usBuckets.get(usId);
+        if (!bucket) {
+          bucket = {
+            title: usDecompLabel.get(usId) ?? usId,
+            usSort: parseInt(m[1], 10),
+            sections: [],
+          };
+          usBuckets.set(usId, bucket);
+        }
+        bucket.sections.push(s);
+      }
+
+      const allBuckets = Array.from(usBuckets.values()).sort((a, b) => a.usSort - b.usSort);
+      if (qaBucket.sections.length > 0) allBuckets.push(qaBucket);
+
+      if (allBuckets.length > 0) {
+        const out: PreviewSection[] = [];
+        for (const bucket of allBuckets) {
+          for (const s of bucket.sections) {
+            const content = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+            out.push({
+              id: s.id,
+              label: s.sectionLabel,
+              sectionKey: s.sectionKey,
+              content,
+              groupLabel: bucket.title,
+              hasTbd: content.includes('TBD-Future'),
+              isAi: s.aiGenerated && !s.isHumanModified,
+              isEdited: s.isHumanModified,
+            });
+          }
+        }
+        return out;
+      }
+    }
+
     // ── SubTask / Screen Analysis / LLD / other: raw sections 1:1 ─────
     return raw.map((s) => ({
       id: s.id,

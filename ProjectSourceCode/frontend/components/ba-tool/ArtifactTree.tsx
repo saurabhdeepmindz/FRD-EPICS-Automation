@@ -37,6 +37,25 @@ interface ArtifactNode {
   userStoryGroups?: UserStoryFeatureGroup[];
   /** Extra sections that sit alongside the per-feature groups (Coverage Summary, RTM Extension). */
   userStoryExtras?: SectionNode[];
+  /** SUBTASK artifacts: subtasks grouped by their parent User Story + a QA bucket. */
+  subtaskGroups?: SubTaskGroup[];
+}
+
+interface SubTaskGroup {
+  groupKey: string;          // 'US-074' or 'qa'
+  kind: 'user_story' | 'qa';
+  label: string;             // 'US-074 — Backend: Check and Decrement Verification Quota'
+  fullTitle: string;         // includes parenthetical metadata for the tooltip
+  subtasks: SubTaskLeaf[];
+}
+
+interface SubTaskLeaf {
+  section: BaArtifactSection;
+  label: string;             // 'ST-US074-BE-01 — Implement API endpoint...'
+  fullTitle: string;
+  team: 'FE' | 'BE' | 'QA' | 'IN' | null;
+  isAi: boolean;
+  isEdited: boolean;
 }
 
 interface UserStoryFeatureGroup {
@@ -214,10 +233,6 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         }
       }
 
-      const showRawChildren =
-        artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC' &&
-        !userStoryGroups; // multi-story USER_STORY uses userStoryGroups instead
-
       // SUBTASK artifact: the skill emits one empty ST-<id>-<slug> title
       // section followed by a `subtask_header` section that actually holds
       // the 5-13KB body. The tree shouldn't show both — merge each pair into
@@ -271,6 +286,28 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         return out;
       })();
 
+      // SUBTASK: build a 4-level grouping — User Story groups + a sibling QA
+      // SubTasks group. Each individual ST-* row is a leaf one level deeper:
+      //   5.1 SUBTASK-MOD-04
+      //     5.1.1 US-074 — title (group)
+      //       5.1.1.1 ST-US074-BE-01
+      //       5.1.1.2 ST-US074-BE-02
+      //     5.1.2 QA SubTasks (Mandatory for Every Story)
+      //       5.1.2.1 ST-US074-QA-01
+      // The "subtask_decomposition_for_us_NNN_*" intro section becomes the
+      // US-NNN group label (its parenthetical metadata feeds the tooltip).
+      // The "qa_subtasks_mandatory_for_every_story" header section is dropped
+      // — its label becomes the QA group's label.
+      const subtaskGroups: SubTaskGroup[] | undefined =
+        artifact.artifactType === 'SUBTASK'
+          ? buildSubtaskGroups(mergedSubtaskSections ?? artifact.sections)
+          : undefined;
+
+      const showRawChildren =
+        artifact.artifactType !== 'FRD' && artifact.artifactType !== 'EPIC' &&
+        !userStoryGroups && // multi-story USER_STORY uses userStoryGroups instead
+        !subtaskGroups;     // SUBTASK uses subtaskGroups instead
+
       // For FTC artifacts, hide the five sections whose content is now
       // surfaced via the synthetic per-category tree groups. Their raw
       // markdown view is strictly redundant with the structured drill-down.
@@ -293,6 +330,7 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         epicInternalSections,
         userStoryGroups,
         userStoryExtras,
+        subtaskGroups,
         children: showRawChildren
           ? (mergedSubtaskSections ?? artifact.sections)
               .filter((s) =>
@@ -317,6 +355,125 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
   }
 
   return tree;
+}
+
+// Build SUBTASK groups from a flat section list. Returns undefined when the
+// shape doesn't match (e.g. empty artifact, non-SUBTASK content) so the
+// caller can fall back to the flat children list.
+function buildSubtaskGroups(sections: BaArtifactSection[]): SubTaskGroup[] | undefined {
+  // Section key shapes the AI emits:
+  //   st_us074_be_01_<slug>           — implementation subtask body
+  //   subtask_<N>_st_us074_be_01_…    — numbered variant
+  //   subtask_decomposition_for_us_074_<slug> — group intro paragraph
+  //   qa_subtasks_mandatory_for_every_story   — empty group header
+  const SUBTASK_RE = /^(?:subtask_\d+_)?st_us(\d+)_(be|fe|qa|in|int)_(\d+)/i;
+  const DECOMP_RE = /^subtask_decomposition_for_us_(\d+)/i;
+  const QA_HEADER_RE = /^qa_subtasks_mandatory/i;
+
+  const usGroupsMap = new Map<string, SubTaskGroup>();
+  const usDecompLabel = new Map<string, { label: string; fullTitle: string }>();
+  let qaGroup: SubTaskGroup | null = null;
+  let qaHeaderLabel = 'QA SubTasks (Mandatory for Every Story)';
+  let foundAny = false;
+
+  const teamFromMatch = (raw: string): SubTaskLeaf['team'] => {
+    const t = raw.toLowerCase();
+    if (t === 'be') return 'BE';
+    if (t === 'fe') return 'FE';
+    if (t === 'qa') return 'QA';
+    if (t === 'in' || t === 'int') return 'IN';
+    return null;
+  };
+
+  // First pass — detect group-header sections and stash their labels so we can
+  // use them when building the actual groups in the second pass.
+  for (const s of sections) {
+    const decompMatch = DECOMP_RE.exec(s.sectionKey);
+    if (decompMatch) {
+      const usId = `US-${decompMatch[1].padStart(3, '0')}`;
+      const fullTitle = s.sectionLabel || `User Story ${usId}`;
+      // sectionLabel typically reads:
+      //   "SubTask Decomposition for US-074 — Backend: Check and Decrement Verification Quota (CONFIRMED-PARTIAL, MOD-04, F-04-08)"
+      // Extract everything after "for US-NNN — " and strip the parenthetical
+      // metadata for the displayed label; keep the full text for the tooltip.
+      const m = /SubTask Decomposition for (?:US-\d+)\s*[—–-]?\s*(.+)/i.exec(fullTitle);
+      const tail = m ? m[1] : fullTitle;
+      const cleaned = tail.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      usDecompLabel.set(usId, {
+        label: cleaned ? `${usId} — ${cleaned}` : usId,
+        fullTitle,
+      });
+      continue;
+    }
+    if (QA_HEADER_RE.test(s.sectionKey)) {
+      if (s.sectionLabel?.trim()) qaHeaderLabel = s.sectionLabel;
+      continue;
+    }
+  }
+
+  // Second pass — assign each ST-* row to its group, creating groups on demand.
+  for (const s of sections) {
+    if (DECOMP_RE.test(s.sectionKey)) continue;       // intro — used as label only
+    if (QA_HEADER_RE.test(s.sectionKey)) continue;    // empty header — already consumed
+
+    const m = SUBTASK_RE.exec(s.sectionKey);
+    if (!m) continue;
+    foundAny = true;
+    const usId = `US-${m[1].padStart(3, '0')}`;
+    const team = teamFromMatch(m[2]);
+
+    const fullTitle = s.sectionLabel || s.sectionKey;
+    // sectionLabel is typically "ST-US074-BE-01 — Implement API endpoint..."
+    const labelClean = fullTitle.replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+    const leaf: SubTaskLeaf = {
+      section: s,
+      label: labelClean,
+      fullTitle,
+      team,
+      isAi: s.aiGenerated && !s.isHumanModified,
+      isEdited: s.isHumanModified,
+    };
+
+    if (team === 'QA') {
+      if (!qaGroup) {
+        qaGroup = {
+          groupKey: 'qa',
+          kind: 'qa',
+          label: qaHeaderLabel,
+          fullTitle: qaHeaderLabel,
+          subtasks: [],
+        };
+      }
+      qaGroup.subtasks.push(leaf);
+      continue;
+    }
+
+    let group = usGroupsMap.get(usId);
+    if (!group) {
+      const decomp = usDecompLabel.get(usId);
+      group = {
+        groupKey: usId,
+        kind: 'user_story',
+        label: decomp?.label ?? usId,
+        fullTitle: decomp?.fullTitle ?? usId,
+        subtasks: [],
+      };
+      usGroupsMap.set(usId, group);
+    }
+    group.subtasks.push(leaf);
+  }
+
+  if (!foundAny) return undefined;
+
+  // Sort: US groups by US number ascending, then QA group last.
+  const usGroupsSorted = Array.from(usGroupsMap.values()).sort((a, b) =>
+    a.groupKey.localeCompare(b.groupKey, undefined, { numeric: true, sensitivity: 'base' }),
+  );
+  // Within each group: keep emission order. Stable per AI output.
+  const all: SubTaskGroup[] = [...usGroupsSorted];
+  if (qaGroup && qaGroup.subtasks.length > 0) all.push(qaGroup);
+  return all.length > 0 ? all : undefined;
 }
 
 function getArtifactsForSkill(skillName: string, artifacts: BaArtifact[]): BaArtifact[] {
@@ -479,6 +636,13 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
       matchText(g.featureId) ||
       g.stories.some((s) => matchText(s.usId) || matchText(s.title) || matchText(s.type ?? undefined))
     )) return true;
+    // SUBTASK groups — search US ids, group labels, and individual subtask labels/team
+    if (a.subtaskGroups?.some((g) =>
+      matchText(g.groupKey) ||
+      matchText(g.label) ||
+      matchText(g.fullTitle) ||
+      g.subtasks.some((leaf) => matchText(leaf.label) || matchText(leaf.fullTitle) || matchText(leaf.team ?? undefined))
+    )) return true;
     return false;
   };
 
@@ -626,6 +790,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                             'flex-1 flex items-center gap-1.5 pl-1 pr-2 py-1 text-left text-xs transition-colors',
                             isArtifactActive ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted',
                           )}
+                          title={artifactNode.label}
                         >
                           <ArtifactIcon className="h-3 w-3 shrink-0" />
                           <span className="text-muted-foreground shrink-0 font-mono text-[10px]">{artifactNum}</span>
@@ -679,6 +844,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                     ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
                                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                                 )}
+                                title={`${feat.featureId} — ${feat.featureName}`}
                               >
                                 <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{featNum}</span>
                                 <span className="font-mono text-primary shrink-0">{feat.featureId}</span>
@@ -818,6 +984,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                               ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
                                               : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                                           )}
+                                          title={`${story.usId} — ${story.title}`}
                                         >
                                           <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{storyNum}</span>
                                           <span className="font-mono text-primary shrink-0">{story.usId}</span>
@@ -872,6 +1039,88 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                               })}
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* ── Level 2: SubTask groups (US groups + QA sibling) ── */}
+                      {isArtifactExpanded && artifactNode.subtaskGroups && artifactNode.subtaskGroups.length > 0 && (
+                        <div className="ml-5 border-l border-border/30">
+                          {artifactNode.subtaskGroups.map((group, gIdx) => {
+                            const groupNum = `${artifactNum}.${gIdx + 1}`;
+                            const toggleKey = `stgroup:${artifactNode.artifact.id}:${group.groupKey}`;
+                            const isGroupExpanded = expandedArtifacts[toggleKey] ?? true;
+                            const isQa = group.kind === 'qa';
+                            return (
+                              <div key={group.groupKey}>
+                                <div className="flex items-center">
+                                  <button
+                                    onClick={() => setExpandedArtifacts((p) => ({ ...p, [toggleKey]: !(p[toggleKey] ?? true) }))}
+                                    className="pl-2 pr-0 py-1 text-muted-foreground hover:text-foreground"
+                                  >
+                                    {isGroupExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                  </button>
+                                  <button
+                                    onClick={() => setExpandedArtifacts((p) => ({ ...p, [toggleKey]: !(p[toggleKey] ?? true) }))}
+                                    className="flex-1 flex items-center gap-1.5 pl-1 pr-2 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                    title={group.fullTitle}
+                                  >
+                                    <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{groupNum}</span>
+                                    {isQa ? (
+                                      <ListChecks className="h-3 w-3 shrink-0 text-green-600" />
+                                    ) : (
+                                      <BookOpen className="h-3 w-3 shrink-0 text-primary" />
+                                    )}
+                                    <span className="truncate">{group.label}</span>
+                                    <span className="ml-auto text-[9px] text-muted-foreground/60 shrink-0">{group.subtasks.length}</span>
+                                  </button>
+                                </div>
+                                {isGroupExpanded && (
+                                  <div className="ml-5 border-l border-border/30">
+                                    {group.subtasks.map((leaf, lIdx) => {
+                                      const leafNum = `${groupNum}.${lIdx + 1}`;
+                                      const isSectionActive = activeNode?.type === 'section' && activeNode.sectionId === leaf.section.id;
+                                      const teamCls = leaf.team === 'FE' ? 'bg-blue-100 text-blue-700'
+                                        : leaf.team === 'BE' ? 'bg-purple-100 text-purple-700'
+                                        : leaf.team === 'QA' ? 'bg-green-100 text-green-700'
+                                        : leaf.team === 'IN' ? 'bg-orange-100 text-orange-700'
+                                        : '';
+                                      return (
+                                        <button
+                                          key={leaf.section.id}
+                                          onClick={() => onNodeSelect({
+                                            type: 'section',
+                                            artifactId: artifactNode.artifact.id,
+                                            sectionId: leaf.section.id,
+                                          })}
+                                          className={cn(
+                                            'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                            isSectionActive
+                                              ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                          )}
+                                          title={leaf.fullTitle}
+                                        >
+                                          <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{leafNum}</span>
+                                          {leaf.team && (
+                                            <span className={cn('text-[8px] px-1 py-0.5 rounded font-bold shrink-0', teamCls)}>
+                                              {leaf.team}
+                                            </span>
+                                          )}
+                                          <span className="truncate">{leaf.label}</span>
+                                          {leaf.isAi && (
+                                            <Sparkles className="h-2.5 w-2.5 text-blue-500 shrink-0" />
+                                          )}
+                                          {leaf.isEdited && (
+                                            <User className="h-2.5 w-2.5 text-amber-500 shrink-0" />
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
 
