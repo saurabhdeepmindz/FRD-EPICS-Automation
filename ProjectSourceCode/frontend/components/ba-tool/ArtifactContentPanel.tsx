@@ -59,8 +59,11 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
       a.download = `${artifact.artifactId}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      alert(`Download failed. Check backend is running.`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[${format} download] failed:`, err);
+      const detail = err instanceof Error ? err.message : String(err);
+      alert(`Download failed: ${detail}\n\nSee browser console for full error. Direct URL: ${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/ba/artifacts/${artifact.id}/export/${format}`);
     }
   };
 

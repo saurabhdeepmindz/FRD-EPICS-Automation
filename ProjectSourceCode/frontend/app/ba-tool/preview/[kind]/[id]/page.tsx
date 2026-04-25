@@ -219,8 +219,13 @@ export default function BaPreviewPage() {
       a.download = `${doc.artifactId}-${doc.module.moduleId}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      alert(`Download failed. Ensure the backend is running.`);
+    } catch (err) {
+      // Surface the underlying error so we can diagnose timeouts vs CORS vs
+      // server errors instead of silently masking everything as "backend down".
+      // eslint-disable-next-line no-console
+      console.error(`[${format} download] failed:`, err);
+      const detail = err instanceof Error ? err.message : String(err);
+      alert(`Download failed: ${detail}\n\nSee browser console for full error. Tip — you can also download directly: ${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/ba/artifacts/${id}/export/${format}`);
     } finally {
       setDownloading(null);
     }
