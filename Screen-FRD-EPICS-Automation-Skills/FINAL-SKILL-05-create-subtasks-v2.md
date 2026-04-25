@@ -45,6 +45,23 @@ The orchestrator provides a `techStack` object in the input context with fields:
 
 ---
 
+## 📐 Heading Hierarchy Rules — CRITICAL FOR PARSER COMPATIBILITY
+
+The orchestrator splits the AI response into per-SubTask DB rows by scanning for `^#`, `^##`, and `^###` headings. **Heading depth determines whether a line becomes a new database section or stays inside the current SubTask body.** Use the levels below precisely:
+
+| Markdown depth  | Reserved for                                | Examples                                                                                                                                                                                                                |
+| --------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `#` (level 1)   | The single document title at the top        | `# SubTasks — MOD-04`                                                                                                                                                                                                   |
+| `##` (level 2)  | Group intros + SubTask separators           | `## SubTask Decomposition for US-074 — Backend: Check and Decrement Verification Quota`, `## ST-US074-BE-01 — Implement API endpoint`, `## QA SubTasks (Mandatory for Every Story)`                                     |
+| `###` (level 3) | Avoid — collides with the splitter          | (do NOT use inside a SubTask body)                                                                                                                                                                                      |
+| `####` (level 4)| Sub-section headings INSIDE a SubTask body  | `#### SubTask Header`, `#### Section 1 — SubTask ID`, `#### Section 21 — Sequence Diagram Inputs`                                                                                                                       |
+
+**Why this matters:** every `#`/`##`/`###` heading creates a separate `BaArtifactSection` DB row. If you write `### Section 16 — Error Handling` inside a SubTask, the parser treats it as a new top-level section and the Word/PDF/non-preview renderers split your single SubTask into 24 fragmented rows.
+
+**Always use `####` for the 24 numbered Section headings** (`#### Section 1 — SubTask ID`, `#### Section 2 — SubTask Name`, …, `#### Section 24 — Test Coverage`).
+
+---
+
 ## Prerequisites — What Must Exist Before This Skill Runs
 
 | Prerequisite | Location | Status Required |
@@ -423,54 +440,109 @@ Libraries, frameworks, patterns, coding standards relevant to this SubTask.
  */
 ```
 
+**Parser contract — Section 19 renders as TWO Word/PDF/non-preview tables:**
+
+1. **Main Traceability** — Module → Generated metadata
+2. **TBD-Future Dependencies** — TBD-NNN, Assumed, Stub, Affected, Resolution
+
+The split point is the literal line `TBD-Future Dependencies:` (with empty value). Always include this header verbatim, even when the SubTask has no TBD-Future entries (in which case the second table is omitted automatically). Do NOT rename it to "Future Dependencies", "TBD Dependencies", etc. — the parser's regex matches `TBD-Future Dependencies:?` exactly.
+
 ---
 
 #### Section 20 — Project Structure Definition **[AUTOMATION CRITICAL — LLD Generation]**
 
 The automation tool uses this section to determine the exact file system path where the source file is created. This is the bridge between Package Name and physical file location.
 
-**Format:**
+**Format — match the project's `techStack`. The example below is for the canonical Next.js + NestJS + Prisma + PostgreSQL stack.** When the stack differs, follow the same shape (`Project Structure:` header → `Key:   Value` lines → blank line → `Directory Map:` tree).
 
-```
+**Backend (NestJS) example:**
+
+```text
 Project Structure:
-  Language/Framework:   Java / Spring Boot
-  Base Package:         com.taxcompass
-  Module Package:       com.taxcompass.task_management
-  Layer Package:        com.taxcompass.task_management.service
-  Full File Path:       src/main/java/com/taxcompass/task_management/service/TaskService.java
+  Language/Framework:   TypeScript / NestJS
+  Base Directory:       src/
+  Module Directory:     src/modules/research-verification/
+  Controller Directory: src/modules/research-verification/controllers/
+  Service Directory:    src/modules/research-verification/services/
+  DTO Directory:        src/modules/research-verification/dto/
+  Exception Directory:  src/modules/research-verification/exceptions/
+  Full File Path:       src/modules/research-verification/controllers/verification-quota.controller.ts
 
   Directory Map:
     src/
-    └── main/
-        └── java/
-            └── com/
-                └── taxcompass/
-                    └── task_management/
-                        ├── controller/    TaskController.java
-                        ├── service/       TaskService.java       ← this file
-                        ├── repository/    TaskRepository.java
-                        ├── entity/        TaskEntity.java
-                        ├── dto/           TaskConfirmationResponse.java
-                        └── exception/     TaskValidationException.java
-                                           TaskPersistenceException.java
+    └── modules/
+        └── research-verification/
+            ├── controllers/
+            │     └── verification-quota.controller.ts   ← this file
+            ├── services/
+            │     └── verification-quota.service.ts
+            ├── dto/
+            │     └── check-and-decrement-quota.dto.ts
+            ├── exceptions/
+            │     ├── quota-exceeded.exception.ts
+            │     └── quota-service-unavailable.exception.ts
+            └── research-verification.module.ts
 ```
 
-**Layer naming convention (apply consistently across all SubTasks in this module):**
+**Frontend (Next.js App Router) example:**
 
-| Class Type | Layer Package Suffix | File Suffix |
-|-----------|---------------------|-------------|
-| Service | `.service` | `Service.java` |
-| Repository | `.repository` | `Repository.java` |
-| Entity / Model | `.entity` | `Entity.java` |
-| Controller / Router | `.controller` | `Controller.java` |
-| Response DTO | `.dto` | `Response.java` |
-| Request DTO | `.dto` | `Request.java` |
-| Exception | `.exception` | `Exception.java` |
-| Frontend Component | `/components/[module]/` | `.jsx` / `.tsx` |
-| Frontend Page | `/pages/[module]/` | `.jsx` / `.tsx` |
-| Frontend Service | `/services/` | `Service.js` |
+```text
+Project Structure:
+  Language/Framework:   TypeScript / Next.js (App Router)
+  Base Directory:       app/
+  Feature Directory:    app/research-verification/
+  Components Directory: components/research-verification/
+  Hooks Directory:      hooks/
+  Full File Path:       app/research-verification/[id]/page.tsx
 
-**Rule:** Every SubTask must populate Section 20. The Full File Path must be specific enough that the automation tool can call `create_file(path, content)` with zero ambiguity.
+  Directory Map:
+    app/
+    └── research-verification/
+        └── [id]/
+            ├── page.tsx                        ← this file
+            └── loading.tsx
+    components/
+    └── research-verification/
+        ├── QuotaBadge.tsx
+        └── VerificationCta.tsx
+    hooks/
+    └── useResearchVerification.ts
+```
+
+**Database (Prisma) example:**
+
+```text
+Project Structure:
+  Language/Framework:   Prisma + PostgreSQL
+  Schema File:          prisma/schema.prisma
+  Migration Directory:  prisma/migrations/
+  Full File Path:       prisma/schema.prisma  (add VerificationQuota model)
+
+  Directory Map:
+    prisma/
+    ├── schema.prisma                                                ← edit
+    └── migrations/
+        └── 20260424_add_verification_quota/
+            └── migration.sql
+```
+
+**Layer naming convention (Next.js + NestJS + Prisma stack):**
+
+| Class Type             | Backend Path                                                | Backend File Suffix    | Frontend Path                                | Frontend File Suffix |
+| ---------------------- | ----------------------------------------------------------- | ---------------------- | -------------------------------------------- | -------------------- |
+| Service                | `src/modules/[module]/services/`                            | `.service.ts`          | —                                            | —                    |
+| Controller             | `src/modules/[module]/controllers/`                         | `.controller.ts`       | —                                            | —                    |
+| Module (NestJS @Module)| `src/modules/[module]/`                                     | `.module.ts`           | —                                            | —                    |
+| DTO                    | `src/modules/[module]/dto/`                                 | `.dto.ts`              | —                                            | —                    |
+| Exception              | `src/modules/[module]/exceptions/`                          | `.exception.ts`        | —                                            | —                    |
+| Entity / Schema        | `prisma/schema.prisma` (single file, model added)           | —                      | —                                            | —                    |
+| Frontend Page          | —                                                           | —                      | `app/[feature]/[…]/`                         | `page.tsx`           |
+| Frontend Layout        | —                                                           | —                      | `app/[feature]/`                             | `layout.tsx`         |
+| Frontend Component     | —                                                           | —                      | `components/[feature]/`                      | `.tsx`               |
+| React Hook             | —                                                           | —                      | `hooks/`                                     | `.ts` (use prefix)   |
+| Frontend API Client    | —                                                           | —                      | `lib/`                                       | `.ts`                |
+
+**Rule:** Every SubTask must populate Section 20. The Full File Path must be specific enough that the automation tool can call `create_file(path, content)` with zero ambiguity. Match `techStack.frontendExt` / `techStack.backendExt` exactly — never emit `.java` / `.py` for a Next.js + NestJS project.
 
 ---
 

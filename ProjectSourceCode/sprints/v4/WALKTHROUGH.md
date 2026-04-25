@@ -330,4 +330,79 @@ Near-term maintenance items:
 
 ---
 
+## Post-v4 patches — SubTask Renderer & Tree Hierarchy (April 2026)
+
+After v4 was cut, a focused round of patches landed to make SubTask artifacts (SKILL-05 output) render consistently across the editor view, DOCX export, and PDF export. The patches also add a 4-level tree hierarchy so SubTasks visually nest under their parent User Story. This subsection records what was changed and why so future maintainers don't accidentally regress these contracts.
+
+### What broke first (so the fix makes sense)
+
+The first attempt to improve SubTask coverage introduced a **per-story AI loop** that called the AI once per user story and concatenated all responses into one document before storing. The orchestrator's section splitter then walked the concatenated document and treated every `^#`/`^##`/`^###` heading as a new database section. The per-story prompts caused the AI to emit `### Section N — Field` (level 3) headings inside each SubTask body — the splitter dutifully split each of the 24 template fields out as its own DB row. Result: ~22 stories × 6 subtasks × ~24 fields = **2,737 fragmented sections** in one SUBTASK artifact instead of one row per SubTask body.
+
+Recovery (commits `caf1cb1` / `fc008f3` / `6e18ccf`) reverted the per-story loop and the "completeness mandate" prompt that pushed the AI to ignore the existing single-shot instructions. A one-shot Prisma script (`scripts/delete-broken-subtask-artifact.ts`) cleaned out the broken artifact rows. SKILL-05 was re-run as single-shot and produced one clean SubTask body per row again.
+
+**The lesson, encoded in `FINAL-SKILL-05-create-subtasks-v2.md`:** numbered Section headings inside a SubTask body **must** use `####` (level 4). Level 1–3 are reserved for document title / SubTask separator / group intro respectively. The skill file now has a "Heading Hierarchy Rules" table making this explicit.
+
+### Renderer parity — DOCX, PDF, non-preview
+
+Three SubTask-template fields used to render as preformatted monospace walls in DOCX/PDF and as code blocks in the editor:
+
+- **Section 19 — Traceability Header** (the `/* ... */` Module/Feature/User Story/Epic block)
+- **Section 20 — Project Structure Definition** (`Project Structure:` KV lines + `Directory Map:` tree)
+- **Section 21 — Sequence Diagram Inputs** (Mermaid `sequenceDiagram` source)
+
+After the patches:
+
+- **Section 19 splits into two tables** — main Traceability metadata and TBD-Future Dependencies. The `TBD-Future Dependencies:` literal line is the section break. `extractKvBlockAsGroups` (backend) / `extractKvGroups` (frontend) both implement the split; `allRowsLookLikeTraceability` keeps the heuristic from converting unrelated comment blocks into tables.
+- **Section 20 renders as a 2-col KV table for the path lines + a monospace `<pre>` for the Directory Map tree**. `extractProjectStructureBlock` is duplicated in three locations (backend DOCX, backend HTML/PDF template, frontend MarkdownRenderer post-processor) — they are intentional copies because the runtimes can't share code; any change must be applied to all three.
+- **Section 21 Mermaid is embedded as a real PNG in DOCX exports**. `BaArtifactExportService.prepareMermaidImages` does a pre-pass over all sections, renders each unique `mermaid` fence to PNG via a single shared headless Chromium instance, and stashes buffers in a `Map<string, MermaidImage>`. The markdown→DOCX pass then swaps each fence for an `ImageRun` scaled to fit the page width. Falls back to source-as-preformatted when puppeteer is unavailable, so the export never breaks. PDF rendering already worked because the HTML template emits `<div class="mermaid">` and `pdf.service.ts` waits for SVG render before capture.
+
+### 4-level SubTask tree hierarchy
+
+Before: SubTasks rendered flat under the SUBTASK artifact (`5.1.1`, `5.1.2`, ..., `5.1.8`) with the `subtask_decomposition_for_us_NNN_*` intro and `qa_subtasks_mandatory_for_every_story` header showing as separate siblings.
+
+After: SubTasks group under their parent User Story, and QA SubTasks form a sibling group at the same depth:
+
+```text
+5.1   SUBTASK-MOD-04
+  5.1.1   US-074 — Backend: Check and Decrement Verification Quota   ← tooltip on hover
+    5.1.1.1   ST-US074-BE-01
+    5.1.1.2   ST-US074-BE-02
+    5.1.1.3   ST-US074-BE-03
+    5.1.1.4   ST-US074-BE-04
+    5.1.1.5   ST-US074-BE-05
+  5.1.2   QA SubTasks (Mandatory for Every Story)
+    5.1.2.1   ST-US074-QA-01
+```
+
+`buildSubtaskGroups` in `ArtifactTree.tsx` parses sectionKeys (`st_us074_be_01_*` → US-074 / BE / 01) to assign each leaf to its US group, with all `_qa_*` subtasks across stories collected into a single QA bucket. The `subtask_decomposition_for_us_NNN_*` and `qa_subtasks_mandatory_*` rows are dropped as separate nodes — their `sectionLabel`s feed the group node labels (parenthetical metadata stripped for the visible label, preserved for the `title=` tooltip). The same grouping mirrors in the preview-page TOC so /preview matches the editor tree.
+
+Tooltips were added on `truncate` labels throughout (artifact, FRD feature, USER_STORY leaf, SUBTASK group + leaf) so users with a fixed-width sidebar can see the full text without expanding the panel.
+
+### Files touched (post-v4)
+
+| File | Change |
+| --- | --- |
+| `ProjectSourceCode/backend/src/ba-tool/ba-artifact-export.service.ts` | Project Structure table + Directory Map preformatted block; Mermaid → PNG via puppeteer; Traceability split |
+| `ProjectSourceCode/backend/src/ba-tool/templates/artifact-html.ts` | Traceability split + Project Structure table + Directory Map block in PDF/HTML template |
+| `ProjectSourceCode/frontend/components/ba-tool/MarkdownRenderer.tsx` | `kv_table` + `tree` block types; Traceability split; Project Structure / Directory Map detection |
+| `ProjectSourceCode/frontend/components/ba-tool/ArtifactTree.tsx` | `subtaskGroups` 4-level hierarchy; tooltips on truncated labels; search match across new groups |
+| `ProjectSourceCode/frontend/app/ba-tool/preview/[kind]/[id]/page.tsx` | SUBTASK preview TOC mirrors the tree's group hierarchy |
+| `ProjectSourceCode/backend/scripts/delete-broken-subtask-artifact.ts` | One-shot Prisma cleanup for orphaned DRAFT SUBTASK artifacts (dry-run by default; `--apply` to execute) |
+| `ProjectSourceCode/backend/scripts/inspect-subtask-artifact.ts` | Read-only inspection of a SUBTASK artifact's section keys/labels/lengths |
+| `ProjectSourceCode/backend/scripts/peek-subtask-content.ts` | Sanity check that a sample body uses the expected stack (NestJS / Next.js / Prisma / no Java) |
+| `Screen-FRD-EPICS-Automation-Skills/FINAL-SKILL-05-create-subtasks-v2.md` | Heading hierarchy rules; Section 20 example switched from Java/Spring Boot to NestJS / Next.js / Prisma; Traceability split parser contract |
+
+### Known limitations carried over
+
+- **SKILL-05 single-shot only covers one user story per execution.** This was the trade-off for reverting the per-story loop. A safe per-story orchestration mode (one AI call per story, each response split independently and **appended** to the same SUBTASK artifact) is designed but not yet implemented — see future work below.
+- **Heading hierarchy is enforced by prompt only.** A defensive splitter that ignores `###` lines inside a `## ST-US...` block would close the loop, but isn't in place yet.
+
+### Future work
+
+- Per-story SKILL-05 orchestrator (append-mode) so a single execution covers all ~22 stories of a module
+- Defensive splitter that clamps `###` inside a SubTask body
+- Automated regression test that downloads DOCX + PDF for a known SUBTASK artifact and asserts on table count + image count
+
+---
+
 Generated as part of the **G4 (Architecture diagram refresh)** backlog item. Tracks every feature shipped in v4 including post-PRD expansions, and supersedes the v3 walkthrough as the canonical "current state" document.
