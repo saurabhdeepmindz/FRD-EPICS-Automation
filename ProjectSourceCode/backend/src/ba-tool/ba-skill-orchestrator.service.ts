@@ -1023,6 +1023,288 @@ export class BaSkillOrchestratorService {
     ].join('\n');
   }
 
+  // ─── SKILL-05 per-story append-mode (v4-post) ──────────────────────────
+  //
+  // Generate SubTasks for ONE user story at a time and APPEND the resulting
+  // sections to the existing SUBTASK BaArtifact. Each call:
+  //   1. Resolves (or creates) the SUBTASK BaArtifact for the module
+  //   2. Idempotency-skips when the storyId already has st_us<NNN>_* rows
+  //   3. Builds a single-story focus prompt and a narrowed user-stories slice
+  //   4. Calls the AI (with 429 retry/backoff) — same path as single-shot
+  //   5. Parses + splits the response with the defensive splitter
+  //   6. Appends each section as a new BaArtifactSection on the artifact
+  //
+  // The intentional design choice: each AI response is processed in
+  // isolation so the splitter only ever sees ONE story's worth of output —
+  // identical in shape to the (working) single-shot path. We never
+  // concatenate multiple stories' outputs and run the splitter once.
+
+  /** Enumerate user stories for a module from the SKILL-04 humanDocument. */
+  async listUserStoriesForModule(
+    moduleDbId: string,
+  ): Promise<Array<{ storyId: string; title: string; type: string | null }>> {
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: {
+        // Newest APPROVED execution first — when SKILL-04 has been re-run
+        // multiple times we want the latest story set, not whichever Prisma
+        // happens to return first.
+        skillExecutions: {
+          where: { status: BaExecutionStatus.APPROVED },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    const skill04 = mod.skillExecutions.find((e) => e.skillName === 'SKILL-04');
+    const doc = skill04?.humanDocument ?? '';
+    if (!doc.trim()) return [];
+
+    const seen = new Map<string, { storyId: string; title: string; type: string | null }>();
+    const re = /US-(\d{3,})/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(doc)) !== null) {
+      const storyId = `US-${m[1]}`;
+      if (seen.has(storyId)) continue;
+
+      // Pull a 200-char window around the first hit for a title heuristic.
+      const window = doc.slice(Math.max(0, m.index - 5), m.index + 200);
+      const titleMatch = window.match(/(?:User Story:?\s*)?US-\d{3,}\s*[—\-]\s*([^\n]{4,150})/);
+      const title = titleMatch ? titleMatch[1].trim() : '';
+      const type = /backend/i.test(window)
+        ? 'Backend'
+        : /frontend/i.test(window)
+          ? 'Frontend'
+          : /integration/i.test(window)
+            ? 'Integration'
+            : null;
+
+      seen.set(storyId, { storyId, title, type });
+    }
+
+    return Array.from(seen.values()).sort((a, b) => {
+      const na = parseInt(a.storyId.slice(3), 10);
+      const nb = parseInt(b.storyId.slice(3), 10);
+      return na - nb;
+    });
+  }
+
+  /**
+   * Generate SubTasks for one user story and append the resulting sections
+   * to the module's existing SUBTASK BaArtifact (creating one if it doesn't
+   * exist yet). Returns a summary of what was added.
+   */
+  async executeSkill05ForStory(
+    moduleDbId: string,
+    storyId: string,
+  ): Promise<{
+    storyId: string;
+    artifactId: string;
+    added: number;
+    sectionKeys: string[];
+    skipped: boolean;
+    reason?: string;
+  }> {
+    const usMatch = /^US-(\d{3,})$/.exec(storyId);
+    if (!usMatch) {
+      throw new Error(`Invalid storyId "${storyId}". Expected format: US-NNN (e.g. US-074)`);
+    }
+    const usNum = usMatch[1];
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: {
+        project: true,
+        skillExecutions: {
+          where: { status: BaExecutionStatus.APPROVED },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // 1. Find or create the SUBTASK BaArtifact.
+    let artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.SUBTASK },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!artifact) {
+      artifact = await this.prisma.baArtifact.create({
+        data: {
+          moduleDbId,
+          artifactType: BaArtifactType.SUBTASK,
+          artifactId: `SUBTASK-${mod.moduleId}`,
+          status: BaArtifactStatus.DRAFT,
+        },
+      });
+    }
+
+    // 2. Idempotency — skip when the artifact already has rows for this story.
+    const sectionKeyPrefix = `st_us${usNum}_`;
+    const existing = await this.prisma.baArtifactSection.findMany({
+      where: {
+        artifactId: artifact.id,
+        sectionKey: { startsWith: sectionKeyPrefix },
+      },
+      select: { id: true, sectionKey: true },
+    });
+    if (existing.length > 0) {
+      this.logger.log(
+        `SKILL-05 per-story: skipping ${storyId} — already has ${existing.length} section(s)`,
+      );
+      return {
+        storyId,
+        artifactId: artifact.id,
+        added: 0,
+        sectionKeys: [],
+        skipped: true,
+        reason: `${existing.length} ${storyId} section(s) already exist; delete them first to regenerate`,
+      };
+    }
+
+    // 3. Build the single-story focus prompt + narrowed context.
+    const skillPrompt = this.loadSkillFile('SKILL-05');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-05');
+    const userStoriesDoc = String(contextPacket.userStoriesDocument ?? '');
+    const narrowed = this.extractStorySlice(userStoriesDoc, storyId);
+    const focusedPrompt = [
+      '## 🎯 SINGLE-STORY APPEND MODE — ORCHESTRATOR OVERRIDE',
+      '',
+      'You are running as part of a per-story append loop. The orchestrator',
+      'will call you once per user story; each response is parsed and',
+      'appended to the same SUBTASK artifact. Your current call MUST emit',
+      `SubTasks for **${storyId} ONLY** — do not write anything for other`,
+      'user stories.',
+      '',
+      `**CURRENT STORY: ${storyId}**`,
+      '',
+      '### What to output',
+      '',
+      `1. A single intro section: \`## SubTask Decomposition for ${storyId} — <story title> (<status>, <module>, <feature>)\` followed by 1–3 plain paragraphs.`,
+      `2. One \`## ST-${storyId.replace(/^US-/, 'US')}-<TEAM>-NN — <Title>\` block per SubTask, where <TEAM> is FE / BE / IN. Each block carries the full 24-section template.`,
+      `3. A trailing \`## QA SubTasks (Mandatory for Every Story)\` group followed by ST-...-QA-01 (and optionally QA-02..04).`,
+      '',
+      '### Heading rules — CRITICAL',
+      '',
+      '- `##` is reserved for SubTask separators and the QA group header.',
+      '- `####` MUST be used for the 24 numbered Section headings inside each SubTask body (e.g. `#### Section 1 — SubTask ID`, ..., `#### Section 21 — Sequence Diagram Inputs`, ..., `#### Section 24 — Test Coverage`).',
+      '- NEVER use `###` inside a SubTask body — the orchestrator clamps it to body content but emitting the right depth keeps your output cleanly parseable.',
+      '',
+      '### What to skip',
+      '',
+      '- Do NOT emit a module-level Introduction, Coverage Summary, or RTM Extension table. Append-mode handles all module-level scaffolding.',
+      '- Do NOT regenerate other stories\' SubTasks; they are processed in their own calls.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (follow all rules below, constrained by the override above)',
+      '',
+      skillPrompt,
+    ].join('\n');
+
+    const narrowedContext: Record<string, unknown> = {
+      ...contextPacket,
+      userStoriesDocument: narrowed ?? userStoriesDoc,
+      currentFocusStory: storyId,
+    };
+
+    // 4. Call the AI with 429 retry/backoff.
+    let aiResponse: string;
+    try {
+      aiResponse = await this.callAiServiceWithRetry(focusedPrompt, narrowedContext);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'AI call failed';
+      this.logger.error(`SKILL-05 per-story ${storyId}: ${msg}`);
+      throw err;
+    }
+
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for ${storyId}`);
+    }
+
+    // 5. Split + 6. Append.
+    const sections = this.splitIntoSections(humanDocument);
+    const addedKeys: string[] = [];
+    for (const section of sections) {
+      // Skip empty / whitespace-only sections; they're not meaningful and
+      // the renderer would just show a blank node.
+      if (!section.content.trim()) continue;
+      const created = await this.prisma.baArtifactSection.create({
+        data: {
+          artifactId: artifact.id,
+          sectionKey: section.key,
+          sectionLabel: section.label,
+          aiGenerated: true,
+          content: section.content,
+        },
+      });
+      addedKeys.push(created.sectionKey);
+    }
+
+    this.logger.log(
+      `SKILL-05 per-story ${storyId}: appended ${addedKeys.length} section(s) to ${artifact.id}`,
+    );
+
+    return {
+      storyId,
+      artifactId: artifact.id,
+      added: addedKeys.length,
+      sectionKeys: addedKeys,
+      skipped: false,
+    };
+  }
+
+  /**
+   * Wrap callAiService with backoff on 429 (rate-limit). Three attempts with
+   * 15s / 30s / 60s waits — matches the behaviour we briefly had on the
+   * reverted per-story loop.
+   */
+  private async callAiServiceWithRetry(
+    systemPrompt: string,
+    contextPacket: Record<string, unknown>,
+  ): Promise<string> {
+    const delays = [15_000, 30_000, 60_000];
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        return await this.callAiService(systemPrompt, contextPacket);
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : '';
+        const is429 = /\b429\b|rate.?limit|quota/i.test(msg);
+        if (!is429 || attempt === delays.length) throw err;
+        const wait = delays[attempt];
+        this.logger.warn(
+          `AI 429 on attempt ${attempt + 1}/${delays.length + 1} — waiting ${wait / 1000}s before retry`,
+        );
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('AI call failed after retries');
+  }
+
+  /**
+   * Slice the user-stories document down to the chunk that belongs to one
+   * story. Looks for a heading containing the storyId and returns from there
+   * up to (but not including) the next story heading.
+   */
+  private extractStorySlice(fullDoc: string, storyId: string): string | null {
+    const headingRe = new RegExp(
+      `(#{1,4}\\s*[^\\n]*${storyId.replace(/-/g, '\\-')}[^\\n]*\\n)`,
+      'g',
+    );
+    const match = headingRe.exec(fullDoc);
+    if (!match) return null;
+    const start = match.index;
+    const nextRe = /#{1,4}\s*[^\n]*US-\d{3,}[^\n]*\n/g;
+    nextRe.lastIndex = start + match[0].length;
+    const nextMatch = nextRe.exec(fullDoc);
+    const end = nextMatch ? nextMatch.index : fullDoc.length;
+    return fullDoc.slice(start, end);
+  }
+
   /**
    * Determine where this module's next US-NNN number should start so that
    * re-runs don't collide with existing stories in the project. Reads all
@@ -1757,16 +2039,51 @@ export class BaSkillOrchestratorService {
     this.logger.log(`Extended ${updated}/${rtmRows.length} RTM rows with FTC test cases from ${ftcArtifactDbId}`);
   }
 
+  /**
+   * Split a markdown document into one DB-row section per `^#`, `^##`, or
+   * `^###` heading.
+   *
+   * Defensive clamp for SubTask bodies: when the current section header
+   * begins with `## ST-US...` (a SubTask separator), any `###` heading found
+   * before the next `^#` or `^##` is treated as body content — NOT a new
+   * section. This prevents the 2737-fragment regression where the AI emits
+   * `### Section N — Field` inside a SubTask body and the splitter shreds
+   * the body into 24 rows. The skill prompt already mandates `####` for
+   * those nested headings; this clamp is the belt-and-suspenders safety so
+   * a future prompt slip can't break SubTask rendering.
+   *
+   * Non-SubTask artifacts (FRD, EPIC, USER_STORY, SCREEN_ANALYSIS) never
+   * carry a `## ST-US...` heading, so the clamp is a no-op for them.
+   */
   private splitIntoSections(markdown: string): { key: string; label: string; content: string }[] {
     const lines = markdown.split('\n');
     const sections: { key: string; label: string; content: string }[] = [];
     let currentLabel = 'Introduction';
     let currentKey = 'introduction';
     let currentContent: string[] = [];
+    let insideSubtaskBody = false;
 
     for (const line of lines) {
-      const headingMatch = line.match(/^#{1,3}\s+(.+)/);
+      const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
       if (headingMatch) {
+        const depth = headingMatch[1].length;
+        const text = headingMatch[2].trim();
+
+        // Defensive clamp — `### Section N` inside a SubTask body is body
+        // content, not a new section. Recognise the SubTask boundary by the
+        // ## ST-US... heading, plus also `## SubTask Decomposition for US-...`
+        // (which is the per-story group intro) and `## QA SubTasks ...`.
+        if (insideSubtaskBody && depth === 3) {
+          currentContent.push(line);
+          continue;
+        }
+
+        // Track entry/exit of a SubTask body window. Anything at depth 1 or 2
+        // closes the window; a `## ST-US...` opens it.
+        if (depth <= 2) {
+          insideSubtaskBody = /^ST-US\d+\b/i.test(text);
+        }
+
         if (currentContent.length > 0) {
           sections.push({
             key: currentKey,
@@ -1774,7 +2091,7 @@ export class BaSkillOrchestratorService {
             content: currentContent.join('\n').trim(),
           });
         }
-        currentLabel = headingMatch[1].trim();
+        currentLabel = text;
         currentKey = currentLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
         currentContent = [];
       } else {

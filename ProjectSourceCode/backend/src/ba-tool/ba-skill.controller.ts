@@ -95,6 +95,36 @@ export class BaSkillController {
     return this.orchestrator.retryExecution(moduleDbId, skill as SkillName);
   }
 
+  // ─── SKILL-05 per-story append mode (post-v4) ─────────────────────────
+  //
+  // Decompose ONE user story at a time. Each call:
+  //   - Reuses the module's existing SUBTASK BaArtifact (creating it on
+  //     the first call) and APPENDS new sections; does not overwrite.
+  //   - Is idempotent: skips when the storyId already has rows.
+  //   - Splits the AI response with the defensive clamp (### inside a
+  //     `## ST-US...` block stays in body, never becomes a separate row).
+  //
+  // Workflow: list stories with the GET endpoint below, then drive the
+  // per-story endpoint in a loop with a checkpoint between calls.
+
+  /** GET /api/ba/modules/:id/subtask-stories — enumerate stories for SKILL-05 */
+  @Get('modules/:id/subtask-stories')
+  listSubtaskStories(@Param('id') moduleDbId: string) {
+    return this.orchestrator.listUserStoriesForModule(moduleDbId);
+  }
+
+  /** POST /api/ba/modules/:id/execute/SKILL-05/story/:storyId — generate SubTasks for one story */
+  @Post('modules/:id/execute/SKILL-05/story/:storyId')
+  executeSkill05ForStory(
+    @Param('id') moduleDbId: string,
+    @Param('storyId') storyId: string,
+  ) {
+    if (!/^US-\d{3,}$/.test(storyId)) {
+      throw new BadRequestException(`Invalid storyId "${storyId}". Expected US-NNN.`);
+    }
+    return this.orchestrator.executeSkill05ForStory(moduleDbId, storyId);
+  }
+
   // ─── Artifacts ─────────────────────────────────────────────────────────
 
   /** GET /api/ba/artifacts/:id — get an artifact with sections */
