@@ -190,6 +190,7 @@ export function ArtifactContentPanel({
           <FtcArtifactView
             artifact={artifact}
             moduleDbId={artifact.module?.id ?? ''}
+            artifacts={artifacts}
             onUpdated={onSectionUpdated}
           />
         </div>
@@ -230,6 +231,7 @@ export function ArtifactContentPanel({
             artifact={artifact}
             moduleDbId={artifact.module?.id ?? ''}
             activeTcId={activeTcId || undefined}
+            artifacts={artifacts}
             onUpdated={onSectionUpdated}
           />
         </div>

@@ -651,12 +651,17 @@ export class BaLldParserService {
     const files: ParsedPseudoFile[] = [];
     if (!pseudoBlock) return files;
 
-    // Match ``` followed by info string up to a newline, then body, then ```
-    const fenceRe = /^```([^\n]*)\n([\s\S]*?)\n```/gm;
+    // Match either ``` or ~~~ (CommonMark allows both). Some AI runs emit
+    // tilde fences (especially when the prompt example used `~~~` to escape
+    // a nested backtick block). Both delimiters parse identically per the
+    // CommonMark spec; only the opening + closing must match. We capture
+    // the opening delimiter into a backreference so a `~~~` block doesn't
+    // close on the next ```` ``` ```` (or vice versa).
+    const fenceRe = /^(```|~~~)([^\n]*)\n([\s\S]*?)\n\1/gm;
     let m: RegExpExecArray | null;
     while ((m = fenceRe.exec(pseudoBlock)) !== null) {
-      const infoString = m[1].trim();
-      const body = m[2];
+      const infoString = m[2].trim();
+      const body = m[3];
       const parsed = this.parseInfoString(infoString);
       if (!parsed || !parsed.path) continue; // not a pseudo-file block
       // Prefix with LLD-PseudoCode/ per the skill contract

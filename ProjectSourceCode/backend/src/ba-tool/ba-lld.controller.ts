@@ -148,6 +148,28 @@ export class BaLldController {
     return this.orchestrator.executeSkill06ForSection(moduleDbId, sectionKey);
   }
 
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-06-LLD/feature/:featureId — focused
+   * AI call to generate the missing pseudo-files for ONE feature on the
+   * existing LLD artifact. Mirrors the per-feature pattern used by FTC mode 2c
+   * but produces pseudo-files (controller / service / DTOs / entity / SQL
+   * migration / TBD stubs / frontend / tests) instead of test cases. Driven
+   * by the structured BaSubTask rows for the feature so the AI knows which
+   * classes/methods to scaffold. Idempotent — skips when the feature already
+   * has comprehensive coverage (≥4 files including a backend service AND
+   * controller). Cost: ~$0.10 per call.
+   */
+  @Post('modules/:id/execute/SKILL-06-LLD/feature/:featureId')
+  async executeSkill06ForFeature(
+    @Param('id') moduleDbId: string,
+    @Param('featureId') featureId: string,
+  ) {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new BadRequestException(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+    return this.orchestrator.executeSkill06ForFeature(moduleDbId, featureId);
+  }
+
   // ─── Narrative + attachments + gap-check ──────────────────────────────
 
   /** GET /api/ba/modules/:id/lld/attachments — list architect attachments */

@@ -3266,6 +3266,302 @@ export class BaSkillOrchestratorService {
     };
   }
 
+  // ─── SKILL-06-LLD per-feature pseudo-file regeneration (mode 06c) ─────
+  //
+  // Single-shot LLD generation can under-emit pseudo-files for a given
+  // feature when the module is large — e.g. the AI dumps frontend pages
+  // for every feature but skips the backend service / controller / DTOs /
+  // entity / SQL migration files for one feature in particular. The
+  // validator's "Features without pseudo-file coverage" panel surfaces
+  // this. Per-section regen (mode 06b) cannot fix this: §11 Integration
+  // Points / §16 Project Structure are SECTIONS, not pseudo-files. The
+  // pseudo-file gap requires a dedicated per-feature focused AI call.
+  //
+  // Mode 06c does that: one focused AI call that emits ONLY new pseudo-
+  // files for the focus feature, citing the feature's user stories +
+  // subtasks in their Traceability docstrings. Existing pseudo-files for
+  // OTHER features are untouched. Existing files for THIS feature that
+  // are AI-generated are skipped (idempotency via DB unique-path
+  // constraint + per-feature reference scan).
+  //
+  // Cost: ~$0.10 / call (medium prompt, focused output). Idempotent:
+  // re-runs against a feature that already has pseudo-file coverage are
+  // a fast no-op.
+
+  /**
+   * Generate pseudo-files for ONE feature on the module's existing LLD
+   * artifact. Pulls user stories + subtasks for the feature from RTM /
+   * BaSubTask rows, builds a focused prompt, runs the AI, parses the
+   * pseudo-file fenced blocks, and appends them to the artifact.
+   */
+  async executeSkill06ForFeature(
+    moduleDbId: string,
+    featureId: string,
+  ): Promise<{
+    featureId: string;
+    artifactId: string;
+    pseudoFilesAdded: number;
+    skipped: boolean;
+    reason?: string;
+  }> {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new Error(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // Prerequisite: LLD artifact must exist (we're appending pseudo-files
+    // to it, not creating from scratch).
+    const lldArtifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.LLD },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!lldArtifact) {
+      throw new Error(
+        `Cannot regenerate per-feature pseudo-files for ${mod.moduleId} / ${featureId}: ` +
+        `no LLD artifact exists. Click "Generate LLD" first.`,
+      );
+    }
+
+    // Pull user stories + subtasks for the feature from the structured
+    // tables. These drive the AI's understanding of WHAT to implement
+    // (vs the LLD's narrative sections, which describe the SHAPE).
+    const featureRtmRows = await this.prisma.baRtmRow.findMany({
+      where: { projectId: mod.projectId ?? '', moduleId: mod.moduleId, featureId },
+      select: { storyId: true },
+    });
+    const storyIds = Array.from(new Set(
+      featureRtmRows.map((r) => r.storyId).filter((s): s is string => !!s),
+    )).sort();
+
+    const subtasks = await this.prisma.baSubTask.findMany({
+      where: { moduleDbId, featureId },
+      orderBy: { subtaskId: 'asc' },
+      select: {
+        subtaskId: true, subtaskName: true, team: true, userStoryId: true,
+        className: true, methodName: true, tbdFutureRefs: true,
+      },
+    });
+
+    if (storyIds.length === 0 && subtasks.length === 0) {
+      return {
+        featureId,
+        artifactId: lldArtifact.id,
+        pseudoFilesAdded: 0,
+        skipped: true,
+        reason: `No user stories or subtasks found for ${featureId}. Run SKILL-04 + SKILL-05 first to populate the implementation surface this regen needs to target.`,
+      };
+    }
+
+    // Existing pseudo-files: which ones already cite this feature?
+    // We list them so the AI doesn't duplicate them, AND so we can
+    // surface "skipped — already covered" when the gap is already filled.
+    const allPseudoFiles = await this.prisma.baPseudoFile.findMany({
+      where: { artifactDbId: lldArtifact.id },
+      select: { id: true, path: true, language: true, aiContent: true, editedContent: true },
+    });
+    const existingForFeature = allPseudoFiles.filter((f) => {
+      const text = `${f.path}\n${f.editedContent ?? f.aiContent ?? ''}`;
+      return text.includes(featureId);
+    });
+    // Heuristic backend coverage check. We consider a feature "complete"
+    // only when ALL canonical scaffold pieces are present: backend service,
+    // backend controller, AND either entity model or SQL migration. The
+    // earlier (looser) check skipped features that had service+controller
+    // but lacked the persistence layer, leaving SQL/entity gaps unfixed.
+    const hasBackendService = existingForFeature.some(
+      (f) => /\/backend\/(service|services|src\/service)\//.test(f.path) && /\.service\.(ts|js|py|java)$/.test(f.path),
+    );
+    const hasBackendController = existingForFeature.some(
+      (f) => /\/backend\/(controller|controllers|src\/controller)\//.test(f.path) && /\.controller\.(ts|js|py|java)$/.test(f.path),
+    );
+    const hasEntityOrMigration = existingForFeature.some(
+      (f) =>
+        /\.sql$/.test(f.path)
+        || /\/(migrations|database\/migrations)\//.test(f.path)
+        || /\.entity\.(ts|js)$/.test(f.path)
+        || /\.prisma$/.test(f.path)
+        || /\/(entities|entity|models|schemas)\//.test(f.path),
+    );
+    if (
+      existingForFeature.length >= 6
+      && hasBackendService
+      && hasBackendController
+      && hasEntityOrMigration
+    ) {
+      return {
+        featureId,
+        artifactId: lldArtifact.id,
+        pseudoFilesAdded: 0,
+        skipped: true,
+        reason: `Feature ${featureId} already has ${existingForFeature.length} pseudo-file(s) including a backend service, controller, and entity/migration — no regen needed. Delete one or more files manually if you want to force a regen.`,
+      };
+    }
+
+    const skillPrompt = this.loadSkillFile('SKILL-06-LLD');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-06-LLD');
+
+    // Format the subtasks compactly for the prompt — one line per
+    // subtask with class/method when known, so the AI can target them.
+    const subtaskLines = subtasks.length > 0
+      ? subtasks.map((s) => {
+          const parts = [s.subtaskId, `team=${s.team}`, `story=${s.userStoryId ?? '?'}`];
+          if (s.className) parts.push(`class=${s.className}${s.methodName ? '.' + s.methodName : ''}`);
+          if (s.tbdFutureRefs && s.tbdFutureRefs.length > 0) parts.push(`tbd=${s.tbdFutureRefs.join(',')}`);
+          return `- ${parts.join(' | ')} :: ${s.subtaskName}`;
+        }).join('\n')
+      : '(no subtasks found in BaSubTask table — AI must infer from EPIC/User Story content)';
+
+    const existingFileLines = existingForFeature.length > 0
+      ? existingForFeature.map((f) => `- ${f.path} (${f.language})`).join('\n')
+      : '(none — this feature has no pseudo-files yet)';
+
+    const featureFocusedPrompt = [
+      '## 🎯 SKILL-06-LLD PER-FEATURE FOCUS — ORCHESTRATOR OVERRIDE (mode 06c)',
+      '',
+      `You are running in per-feature pseudo-file regeneration mode. The module's LLD already has its 19 narrative sections (Summary, Tech Stack, Architecture Overview, Class Diagram, …) populated. Some features have pseudo-file coverage; **${featureId}** does NOT (or has only partial coverage). Your job is to produce the missing pseudo-files for THIS feature only.`,
+      '',
+      `**TARGET FEATURE: ${featureId}** (module ${mod.moduleId})`,
+      '',
+      `**LLD ARTIFACT: ${lldArtifact.artifactId}** (id: ${lldArtifact.id})`,
+      '',
+      '### What to emit',
+      '',
+      `Emit ONLY a \`## Pseudo-Code Files\` heading followed by fenced code blocks — one per file. Do NOT emit any of the 19 narrative sections (\`## 1. Summary\`, \`## 2. Technology Stack\`, etc.) — those already exist. Do NOT emit pseudo-files for any feature OTHER than ${featureId}.`,
+      '',
+      '### User stories under this feature',
+      '',
+      storyIds.length > 0 ? storyIds.map((s) => `- ${s}`).join('\n') : '- (no user stories found in RTM)',
+      '',
+      '### SubTasks for this feature (use these as the implementation surface)',
+      '',
+      'Each line below is a `BaSubTask` row from the SUBTASK artifact. The `class` field is the AI\'s recommended class name; the `method` is the public method to scaffold. Generate pseudo-files that implement these subtasks. Every pseudo-file you emit MUST cite the relevant `ST-USNNN-XX-NN` IDs in its Traceability docstring.',
+      '',
+      subtaskLines,
+      '',
+      '### Existing pseudo-files for this feature (do NOT duplicate)',
+      '',
+      existingFileLines,
+      '',
+      '### What to produce (canonical scaffold for a CONFIRMED-PARTIAL feature)',
+      '',
+      'For each backend story, produce ALL of these pseudo-files (when applicable to the feature\'s surface):',
+      '',
+      '1. **Backend controller** — `backend/controller/<feature-slug>.controller.ts` (NestJS @Controller decorator + @Post/@Get methods + DTOs + auth guard reference). Cite the controller subtask in Traceability.',
+      '2. **Backend service** — `backend/service/<feature-slug>.service.ts` (class with public methods matching the subtask `method` field). Cite the service subtask + every method-level subtask. JavaDoc on each method with Algorithm step-by-step (3-8 steps).',
+      '3. **DTO** — `backend/dto/<verb>-<noun>.dto.ts` for each request and response shape. Use `class-validator` decorators (`@IsString`, `@IsUUID`, etc.).',
+      '4. **Entity / Prisma model** — `backend/entities/<noun>.entity.ts` OR `database/schema.prisma` fragment. Match the field types from §10 Schema Diagram.',
+      '5. **SQL migration** — `database/migrations/NNN_create_<table>.sql` with `CREATE TABLE` matching the entity. Include indices for hot lookup columns. Top-of-file comment cites §9 Data Model Definitions.',
+      '6. **TBD-Future stub** — for each `tbd=TBD-NNN` flag on a subtask, emit `backend/integration/<external-service>.service.stub.ts` with the contract spelled out + `// TODO:` placeholder bodies. Document the `TBD-NNN` ref in the docstring.',
+      '7. **Frontend page** — if the feature is user-facing, emit `frontend/app/<feature-slug>/page.tsx` (Next.js App Router; mark `\'use client\'` only when interactivity requires it). Use Tailwind utility classes.',
+      '8. **Frontend route handler** — `frontend/app/api/<resource>/route.ts` if the frontend mediates calls (vs calling the backend directly via api-client hooks).',
+      '9. **Frontend api-client hook** — `frontend/features/<feature-slug>/<feature-slug>api.ts` (RTK Query / Tanstack Query / fetch wrapper).',
+      '10. **Frontend component(s)** — `frontend/components/<feature-slug>/<ComponentName>.tsx` for each UI primitive the page needs.',
+      '11. **Backend test** — `tests/backend/services/<feature-slug>.service.spec.ts` (Vitest / pytest unit). Cover happy path + each `@throws` from the service docstring.',
+      '12. **Frontend test** — `tests/frontend/components/<feature-slug>/<ComponentName>.test.tsx` (Vitest + React Testing Library).',
+      '',
+      '### Mandatory rules',
+      '',
+      '- Every pseudo-file MUST start with a class/file docstring carrying a Traceability block citing real IDs from the input: FRD: ' + featureId + ' / EPIC: <from RTM> / US: <comma-separated> / ST: <comma-separated>.',
+      '- Every public method MUST carry a method-level docstring with Traceability + Algorithm (3-8 steps) drawn from the subtask\'s `subtaskName` description.',
+      '- Method bodies are `// TODO:` comments only — no compilable logic.',
+      '- Use the architect-saved tech stack from `lldConfig.stacks` (input context) — for MOD-04 that is **NestJS + Postgres backend, Next.js + Tailwind frontend** unless the input says otherwise. Never substitute a different stack.',
+      '- Mermaid syntax rules in the original skill definition still apply (parens / slashes in graph labels need quoting; erDiagram types must be lowercase) — but you should NOT emit any Mermaid blocks here, only pseudo-files.',
+      '- Output is a single markdown document starting with `## Pseudo-Code Files` (no preamble). Each file is a code block opened with **THREE BACKTICKS** (not tildes) and an info-string in the format `<language> path=<relative-path>`. The closing fence is also three backticks. Example shape (replace BACKTICK-BACKTICK-BACKTICK with literal triple backticks; rendering shows tildes here only because this prompt itself is markdown):',
+      '',
+      '    ## Pseudo-Code Files',
+      '',
+      '    BACKTICK-BACKTICK-BACKTICKtypescript path=backend/controller/research-conversation.controller.ts',
+      '    /** ... Traceability: FRD: F-04-02 / EPIC: EPIC-04 / US: US-055,US-056,US-057 / ST: ST-US056-BE-01 */',
+      '    class ResearchConversationController { ... // TODO: ... }',
+      '    BACKTICK-BACKTICK-BACKTICK',
+      '',
+      '   In your actual output, replace `BACKTICK-BACKTICK-BACKTICK` with three literal backtick characters (the standard markdown code-fence delimiter). Do NOT use `~~~` (tildes) — the backend parser regex only matches triple backticks.',
+      '',
+      '### Hard constraints',
+      '',
+      '- Do NOT regenerate the 19 narrative sections.',
+      '- Do NOT emit pseudo-files for features other than ' + featureId + '.',
+      '- Do NOT duplicate any of the existing files listed above.',
+      '- DO produce 6-12 new pseudo-files (the canonical scaffold above) covering controller / service / DTOs / entity / SQL / stubs / frontend / tests.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (for context — apply the pseudo-file format rules from §3 + the Frontend pseudo-file quota section + the Hard rules section)',
+      '',
+      skillPrompt,
+    ].join('\n');
+
+    const runStartedAt = new Date();
+    const aiResponse = await this.callAiServiceWithRetry(
+      featureFocusedPrompt,
+      { ...contextPacket, currentFocusFeature: featureId },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for feature ${featureId}`);
+    }
+
+    // Persist the AI response to a BaSkillExecution row so the architect
+    // can inspect what the AI emitted (especially when no pseudo-files
+    // got added). Mirrors what executeSkill() does for the standard
+    // skill path.
+    const execRow = await this.prisma.baSkillExecution.create({
+      data: {
+        moduleDbId,
+        skillName: 'SKILL-06-LLD',
+        status: BaExecutionStatus.AWAITING_REVIEW,
+        humanDocument,
+        startedAt: runStartedAt,
+        completedAt: new Date(),
+      },
+    });
+    this.logger.log(
+      `SKILL-06-LLD per-feature ${featureId}: AI response stored in execution ${execRow.id} (${humanDocument.length} chars)`,
+    );
+
+    // Parser is idempotent: it splits the document on `## Pseudo-Code
+    // Files` and inserts new pseudo-files. Existing rows with the same
+    // path get a unique-constraint warning and are skipped (per the
+    // parser's per-row try/catch).
+    await this.lldParser.parseAndStore(humanDocument, lldArtifact.id);
+
+    // Count newly-added pseudo-files by createdAt window so we can
+    // report accurately even when the AI emits a file with the same
+    // path as an existing one (which the parser silently drops).
+    const newFiles = await this.prisma.baPseudoFile.findMany({
+      where: { artifactDbId: lldArtifact.id, createdAt: { gte: runStartedAt } },
+      select: { path: true },
+    });
+
+    // Extend RTM with the new pseudo-file refs so the trace runs
+    // FRD → EPIC → US → ST → Class.method → Pseudo-File. Reuse the same
+    // helper the SKILL-06 post-processing path uses.
+    if (mod.projectId) {
+      try {
+        await this.extendRtmWithLld(moduleDbId, mod.projectId, lldArtifact.id);
+      } catch (err) {
+        this.logger.warn(
+          `SKILL-06-LLD per-feature ${featureId}: RTM extend failed — ${err instanceof Error ? err.message : 'unknown'}; non-fatal`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `SKILL-06-LLD per-feature ${featureId}: appended ${newFiles.length} pseudo-file(s) to ${lldArtifact.id}`,
+    );
+    return {
+      featureId,
+      artifactId: lldArtifact.id,
+      pseudoFilesAdded: newFiles.length,
+      skipped: false,
+    };
+  }
+
   /**
    * Determine where this module's next US-NNN number should start so that
    * re-runs don't collide with existing stories in the project. Reads all

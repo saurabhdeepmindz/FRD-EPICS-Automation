@@ -17,8 +17,9 @@ import {
   type BaTestCase,
   type BaTestRun,
 } from '@/lib/ba-api';
+import { parseFrdContent } from '@/lib/frd-parser';
 import { cn } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, XCircle, Loader2, RefreshCw, Sparkles, User as UserIcon, Play, X } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, ChevronDown, ChevronRight, XCircle, Loader2, RefreshCw, Sparkles, User as UserIcon, Play, X } from 'lucide-react';
 import { pushToast } from '@/hooks/useToast';
 import { TestCaseBody, TestCaseAccordionHeader, usePseudoFileResolver } from './TestCaseBody';
 
@@ -31,8 +32,17 @@ interface Props {
    * `__test_case__:<testCaseDbId>`.
    */
   activeTcId?: string;
+  /**
+   * All artifacts visible in the tree — used to find the same-module FRD
+   * artifact so feature IDs in `linkedFeatureIds` can be displayed with
+   * their human-readable feature names. Optional: when omitted, feature
+   * sub-headings fall back to bare IDs (e.g. `F-04-01`).
+   */
+  artifacts?: BaArtifact[];
   onUpdated?: () => void;
 }
+
+const FEATURE_UNGROUPED_KEY = '__ungrouped__';
 
 /** Categories we surface as top-level buckets in the tree + artifact view. */
 const CATEGORY_ORDER: string[] = [
@@ -56,7 +66,7 @@ const CATEGORY_ORDER: string[] = [
  * are pulled into a synthetic "White-Box" group at the end. Categories
  * with zero TCs are hidden.
  */
-export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }: Props) {
+export function FtcArtifactView({ artifact, moduleDbId, activeTcId, artifacts, onUpdated }: Props) {
   const params = useParams<{ id: string }>();
   const projectId = params?.id ?? '';
   const [testCases, setTestCases] = useState<BaTestCase[]>([]);
@@ -66,6 +76,50 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }:
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [filterSprint, setFilterSprint] = useState(''); // sprintDbId | 'legacy:<code>' | ''
+  /**
+   * Per-feature-bucket expanded state. Keyed by `${categoryKey}:${featureId}`
+   * so the same featureId can be expanded/collapsed independently inside
+   * Functional / Integration / Security / etc. Default: expanded — the
+   * right panel is the reading area, so collapsing is opt-in (vs the
+   * left tree where it's opt-out).
+   */
+  const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
+
+  const toggleFeature = useCallback((featureKey: string) => {
+    setCollapsedFeatures((prev) => {
+      const next = new Set(prev);
+      if (next.has(featureKey)) next.delete(featureKey);
+      else next.add(featureKey);
+      return next;
+    });
+  }, []);
+
+  /**
+   * Build a feature ID → feature name map by parsing the same-module FRD
+   * artifact. The FTC TCs only carry feature IDs in linkedFeatureIds,
+   * so we look up the human label here for display. Memoised on the
+   * artifacts list so the FRD parse runs once per artifacts change.
+   * Falls back to bare IDs when no FRD is available.
+   */
+  const featureNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!artifacts || artifacts.length === 0) return map;
+    const moduleArtifactId = artifact.module?.id;
+    if (!moduleArtifactId) return map;
+    const frd = artifacts.find(
+      (a) => a.module?.id === moduleArtifactId && a.artifactType === 'FRD',
+    );
+    if (!frd) return map;
+    try {
+      const parsed = parseFrdContent(frd.sections);
+      for (const f of parsed.features) {
+        if (f.featureId) map.set(f.featureId, f.featureName ?? f.featureId);
+      }
+    } catch {
+      // ignore parse errors — fall back to bare IDs
+    }
+    return map;
+  }, [artifacts, artifact.module?.id]);
 
   const reload = useCallback(async () => {
     const tcs = await listTestCasesByArtifact(artifact.id);
@@ -328,57 +382,102 @@ export function FtcArtifactView({ artifact, moduleDbId, activeTcId, onUpdated }:
                   )}
                 </h4>
               </div>
-              <div className="space-y-1.5">
-                {group.tcs.map((tc) => {
-                  const isOpen = openTc === tc.id;
-                  const isSelected = selected.has(tc.id);
-                  return (
-                    <div
-                      key={tc.id}
-                      id={`tc-${tc.id}`}
-                      className={cn(
-                        'rounded-md border transition-all scroll-mt-4',
-                        isSelected ? 'border-primary/60 bg-primary/5' : 'border-border',
-                      )}
-                    >
-                      <div className="flex items-center gap-2 p-2 hover:bg-muted/30">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleTc(tc.id)}
-                          className="cursor-pointer shrink-0"
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={`Select ${tc.testCaseId}`}
-                        />
+              <div className="space-y-2">
+                {/* Sub-group TCs by their first linkedFeatureIds entry. TCs
+                    without a feature link land in a synthetic "Ungrouped"
+                    bucket at the end. Sort by feature ID with locale +
+                    numeric so F-04-09 < F-04-10. */}
+                {(() => {
+                  const featBuckets = new Map<string, BaTestCase[]>();
+                  for (const tc of group.tcs) {
+                    const fid = (tc.linkedFeatureIds ?? [])[0] ?? FEATURE_UNGROUPED_KEY;
+                    if (!featBuckets.has(fid)) featBuckets.set(fid, []);
+                    featBuckets.get(fid)!.push(tc);
+                  }
+                  const sortedFeatureKeys = Array.from(featBuckets.keys()).sort((a, b) => {
+                    if (a === FEATURE_UNGROUPED_KEY) return 1;
+                    if (b === FEATURE_UNGROUPED_KEY) return -1;
+                    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+                  });
+                  return sortedFeatureKeys.map((fid) => {
+                    const tcs = featBuckets.get(fid) ?? [];
+                    const featureKey = `${group.key}:${fid}`;
+                    const isCollapsed = collapsedFeatures.has(featureKey);
+                    const featureLabel = fid === FEATURE_UNGROUPED_KEY
+                      ? '(Ungrouped — no feature link)'
+                      : `${fid}${featureNameById.has(fid) ? ' — ' + featureNameById.get(fid) : ''}`;
+                    return (
+                      <div key={featureKey} className="space-y-1.5">
                         <button
-                          className="flex-1 flex items-center justify-between gap-2 text-left min-w-0"
-                          onClick={() => setOpenTc(isOpen ? null : tc.id)}
+                          type="button"
+                          onClick={() => toggleFeature(featureKey)}
+                          className="w-full flex items-center gap-1.5 text-left text-[11px] font-medium text-muted-foreground hover:text-foreground py-1"
+                          title={featureLabel}
                         >
-                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                            <TestCaseAccordionHeader tc={tc} />
-                            {tc.isHumanModified ? (
-                              <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
-                                <UserIcon className="h-2.5 w-2.5" /> Edited
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
-                                <Sparkles className="h-2.5 w-2.5" /> AI
-                              </span>
-                            )}
-                          </div>
-                          <span className={cn('text-[10px] text-muted-foreground shrink-0')}>
-                            {isOpen ? '▼' : '▶'}
-                          </span>
+                          {isCollapsed
+                            ? <ChevronRight className="h-3 w-3 shrink-0" />
+                            : <ChevronDown className="h-3 w-3 shrink-0" />}
+                          <span className="truncate">{featureLabel}</span>
+                          <span className="text-[9px] text-muted-foreground/60 shrink-0">({tcs.length})</span>
                         </button>
+                        {!isCollapsed && (
+                          <div className="space-y-1.5 pl-4 border-l border-border/40">
+                            {tcs.map((tc) => {
+                              const isOpen = openTc === tc.id;
+                              const isSelected = selected.has(tc.id);
+                              return (
+                                <div
+                                  key={tc.id}
+                                  id={`tc-${tc.id}`}
+                                  className={cn(
+                                    'rounded-md border transition-all scroll-mt-4',
+                                    isSelected ? 'border-primary/60 bg-primary/5' : 'border-border',
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 p-2 hover:bg-muted/30">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleTc(tc.id)}
+                                      className="cursor-pointer shrink-0"
+                                      onClick={(e) => e.stopPropagation()}
+                                      aria-label={`Select ${tc.testCaseId}`}
+                                    />
+                                    <button
+                                      className="flex-1 flex items-center justify-between gap-2 text-left min-w-0"
+                                      onClick={() => setOpenTc(isOpen ? null : tc.id)}
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                                        <TestCaseAccordionHeader tc={tc} />
+                                        {tc.isHumanModified ? (
+                                          <span className="flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
+                                            <UserIcon className="h-2.5 w-2.5" /> Edited
+                                          </span>
+                                        ) : (
+                                          <span className="flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
+                                            <Sparkles className="h-2.5 w-2.5" /> AI
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className={cn('text-[10px] text-muted-foreground shrink-0')}>
+                                        {isOpen ? '▼' : '▶'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                  {isOpen && (
+                                    <div className="border-t border-border bg-muted/10">
+                                      <TestCaseBody tc={tc} resolveFiles={resolveFiles} />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                      {isOpen && (
-                        <div className="border-t border-border bg-muted/10">
-                          <TestCaseBody tc={tc} resolveFiles={resolveFiles} />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             </section>
           );

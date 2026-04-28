@@ -1085,6 +1085,42 @@ export async function regenerateLldSection(
   return data;
 }
 
+/**
+ * Result of POST /ba/modules/:id/execute/SKILL-06-LLD/feature/:featureId —
+ * per-feature pseudo-file regeneration. Reports how many new pseudo-files
+ * the AI added (or `skipped` when the feature already has comprehensive
+ * coverage).
+ */
+export interface LldFeatureRegenResult {
+  featureId: string;
+  artifactId: string;
+  pseudoFilesAdded: number;
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Generate the missing pseudo-files for ONE feature on the existing LLD
+ * artifact. Driven by the structured `BaSubTask` rows for the feature so
+ * the AI knows which classes/methods to scaffold (controller / service /
+ * DTOs / entity / SQL migration / TBD stubs / frontend / tests).
+ * Idempotent — skips when the feature already has ≥4 pseudo-files
+ * including a backend service AND controller. ~$0.10 per call,
+ * ~60-90 s wall time.
+ */
+export async function regenerateLldForFeature(
+  moduleDbId: string,
+  featureId: string,
+): Promise<LldFeatureRegenResult> {
+  const { data } = await api.post<LldFeatureRegenResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-06-LLD/feature/${featureId}`,
+    {},
+    // 3 min — per-feature regen emits 6-12 pseudo-files; ~60-90 s typical
+    { timeout: 3 * 60 * 1000 },
+  );
+  return data;
+}
+
 // ─── Narrative attachments + gap-check ─────────────────────────────────────
 
 export async function listLldAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {
