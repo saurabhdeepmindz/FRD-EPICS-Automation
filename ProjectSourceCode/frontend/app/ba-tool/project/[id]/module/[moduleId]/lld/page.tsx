@@ -38,6 +38,7 @@ import { pushToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 import { MarkdownRenderer } from '@/components/ba-tool/MarkdownRenderer';
 import { LldNarrativeCard } from '@/components/ba-tool/LldNarrativeCard';
+import { LldValidationCard } from '@/components/ba-tool/LldValidationCard';
 
 const TECH_STACK_ROWS: Array<{ key: keyof BaLldConfig & string; category: BaMasterDataCategory; label: string }> = [
   { key: 'frontendStackId', category: 'FRONTEND_STACK',  label: CATEGORY_LABELS.FRONTEND_STACK },
@@ -321,6 +322,11 @@ export default function LldConfiguratorPage() {
             </p>
           </CardContent>
         </Card>
+
+        {/* LLD Completeness Validator — deterministic check + per-section regen.
+            Always visible so the architect can spot-check an existing LLD at any
+            time; disabled with a hint when no LLD artifact exists yet. */}
+        <LldValidationCard moduleDbId={moduleDbId} hasLldArtifact={!!lldArtifactId} />
 
         {/* Architect narrative — optional free-form input with mic/AI/attachments/gap-check */}
         <LldNarrativeCard

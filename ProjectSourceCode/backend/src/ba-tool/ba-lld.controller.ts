@@ -15,6 +15,7 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { BaLldService, LldConfigPayload } from './ba-lld.service';
 import { BaLldNarrativeService, MAX_TOTAL_ATTACHMENT_BYTES } from './ba-lld-narrative.service';
+import { BaLldParserService } from './ba-lld-parser.service';
 import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
 import { BaUnitTestExportService } from './ba-unit-test-export.service';
 import { BaContractTestExportService } from './ba-contract-test-export.service';
@@ -26,6 +27,7 @@ export class BaLldController {
     private readonly lld: BaLldService,
     private readonly orchestrator: BaSkillOrchestratorService,
     private readonly narrative: BaLldNarrativeService,
+    private readonly lldParser: BaLldParserService,
     private readonly unitTestExport: BaUnitTestExportService,
     private readonly contractTestExport: BaContractTestExportService,
     private readonly openapiExport: BaOpenApiExportService,
@@ -113,6 +115,37 @@ export class BaLldController {
   async generate(@Param('id') moduleDbId: string) {
     const executionId = await this.orchestrator.executeSkill(moduleDbId, 'SKILL-06-LLD');
     return { executionId, skill: 'SKILL-06-LLD', status: 'RUNNING' };
+  }
+
+  /**
+   * GET /api/ba/modules/:id/lld/validate — deterministic completeness check.
+   * No AI call — scans the stored artifact and reports missing/thin sections,
+   * pseudo-file shortfall, and features without pseudo-file coverage. The UI
+   * uses this to surface gaps after a generation run and offer per-section
+   * regeneration buttons.
+   */
+  @Get('modules/:id/lld/validate')
+  async validateLld(@Param('id') moduleDbId: string) {
+    const artifact = await this.lld.getLldArtifact(moduleDbId);
+    if (!artifact) {
+      throw new BadRequestException(`No LLD artifact for module ${moduleDbId}. Click "Generate LLD" first.`);
+    }
+    return this.lldParser.validateCompleteness(artifact.id);
+  }
+
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-06-LLD/section/:sectionKey — focused
+   * AI call to regenerate ONE LLD section without re-running the entire 19-
+   * section document. Use this to fill gaps reported by /lld/validate.
+   * Idempotent: if the section is human-modified, the call short-circuits.
+   * Cost: ~$0.05 per call vs ~$0.50 for a full Generate LLD re-run.
+   */
+  @Post('modules/:id/execute/SKILL-06-LLD/section/:sectionKey')
+  async executeSkill06ForSection(
+    @Param('id') moduleDbId: string,
+    @Param('sectionKey') sectionKey: string,
+  ) {
+    return this.orchestrator.executeSkill06ForSection(moduleDbId, sectionKey);
   }
 
   // ─── Narrative + attachments + gap-check ──────────────────────────────

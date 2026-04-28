@@ -995,6 +995,96 @@ export async function generateLld(moduleDbId: string): Promise<{ executionId: st
   return data;
 }
 
+/**
+ * Per-section completeness verdict for the LLD validator. Mirrors the
+ * `BaLldParserService.validateCompleteness` return shape.
+ */
+export interface LldSectionValidation {
+  sectionKey: string;
+  sectionLabel: string;
+  present: boolean;
+  contentLen: number;
+  thin: boolean;
+  isHumanModified: boolean;
+}
+
+/**
+ * Frontend coverage breakdown — present only when the architect picked a
+ * frontend stack in BaLldConfig. Backend-only modules return null.
+ */
+export interface LldFrontendCoverage {
+  stackName: string | null;
+  pagesCount: number;
+  pagesExpected: number;
+  routeHandlersCount: number;
+  routeHandlersExpected: number;
+  componentsCount: number;
+  componentsExpected: number;
+  frontendTestsCount: number;
+  frontendTestsExpected: number;
+  featuresWithoutPage: string[];
+  isComplete: boolean;
+}
+
+/**
+ * Result of GET /api/ba/modules/:id/lld/validate. Deterministic — the
+ * backend reads BaArtifactSection + BaPseudoFile rows and returns gaps;
+ * no AI call is made.
+ */
+export interface LldValidationReport {
+  artifactId: string;
+  sections: LldSectionValidation[];
+  sectionsPresent: number;
+  sectionsExpected: number;
+  pseudoFilesCount: number;
+  pseudoFilesExpected: number;
+  featuresWithoutPseudoFiles: string[];
+  frontendCoverage: LldFrontendCoverage | null;
+  gaps: string[];
+  isComplete: boolean;
+}
+
+/** Result of per-section regeneration. */
+export interface LldSectionRegenResult {
+  sectionKey: string;
+  sectionLabel: string;
+  artifactId: string;
+  sectionWritten: boolean;
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Run the deterministic LLD completeness check. Throws when no LLD
+ * artifact exists for the module (the architect hasn't clicked Generate
+ * LLD yet). Cheap and fast — DB-only, no AI.
+ */
+export async function validateLld(moduleDbId: string): Promise<LldValidationReport> {
+  const { data } = await api.get<LldValidationReport>(
+    `/ba/modules/${moduleDbId}/lld/validate`,
+    { timeout: 30_000 },
+  );
+  return data;
+}
+
+/**
+ * Re-generate ONE canonical LLD section via a focused AI call. Used to
+ * fill gaps surfaced by `validateLld`. Idempotent — skips when the
+ * target section is human-modified. ~30-60s per call, ~$0.05 in tokens.
+ */
+export async function regenerateLldSection(
+  moduleDbId: string,
+  sectionKey: string,
+): Promise<LldSectionRegenResult> {
+  const { data } = await api.post<LldSectionRegenResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-06-LLD/section/${sectionKey}`,
+    {},
+    // 2 min — focused single-section AI call typically returns in 30-60 s
+    { timeout: 2 * 60 * 1000 },
+  );
+  return data;
+}
+
 // ─── Narrative attachments + gap-check ─────────────────────────────────────
 
 export async function listLldAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {
@@ -1203,6 +1293,134 @@ export async function generateFtc(moduleDbId: string): Promise<{ executionId: st
     `/ba/modules/${moduleDbId}/generate-ftc`,
     {},
     { timeout: 10_000 },
+  );
+  return data;
+}
+
+/**
+ * Result shape from POST /ba/modules/:id/execute/SKILL-07-FTC/complete —
+ * the one-button pipeline that runs per-feature black-box loop → per-
+ * category passes for selected `testTypes` → per-feature white-box loop
+ * (only when an LLD exists for the module) → narrative + structural
+ * sections. Each step is idempotent so re-running fills only the missing
+ * pieces.
+ */
+export interface FtcCompleteResult {
+  artifactId: string;
+  perFeature: Array<{ featureId: string; tcsAdded: number; skipped: boolean }>;
+  perCategory: Array<{ category: string; tcsAdded: number; skipped: boolean }>;
+  /**
+   * Per-feature white-box pass results. Empty array when no LLD artifact
+   * exists for the module (white-box requires the LLD as its surface).
+   */
+  perFeatureWhiteBox: Array<{ featureId: string; tcsAdded: number; skipped: boolean }>;
+  narrative: { sectionsAdded: number; skipped: boolean };
+  totalTcs: number;
+}
+
+/**
+ * Result of POST /ba/modules/:id/execute/SKILL-07-FTC/white-box/:featureId
+ * — single-feature white-box generation. Mirrors the per-feature mode 2
+ * result shape.
+ */
+export interface FtcWhiteBoxResult {
+  featureId: string;
+  artifactId: string;
+  tcsAdded: number;
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Run the complete SKILL-07-FTC pipeline (per-feature black-box → per-
+ * category → per-feature white-box → narrative + structural sections) in
+ * one call. Long-running — the backend may run for several minutes
+ * (~30-60 s per AI call × features + categories + white-box features + 1
+ * narrative). Use with a generous timeout.
+ */
+export async function generateFtcComplete(moduleDbId: string): Promise<FtcCompleteResult> {
+  const { data } = await api.post<FtcCompleteResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-07-FTC/complete`,
+    {},
+    // Allow up to 25 min for the full pipeline (was 15 min before
+    // white-box loop was added). ~9 features × 60 s × 2 (black + white)
+    // + ~5 categories × 90 s + 60 s narrative ≈ 24 min worst case.
+    { timeout: 25 * 60 * 1000 },
+  );
+  return data;
+}
+
+/**
+ * Run a single-feature WHITE-BOX pass without re-running the entire
+ * pipeline. Useful when adding white-box coverage to a feature retro-
+ * actively (e.g. after the LLD was generated). Idempotent — skips when
+ * the feature already has white-box TCs. Cost: ~$0.05, ~30-60 s.
+ */
+export async function generateFtcWhiteBoxForFeature(
+  moduleDbId: string,
+  featureId: string,
+): Promise<FtcWhiteBoxResult> {
+  const { data } = await api.post<FtcWhiteBoxResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-07-FTC/white-box/${featureId}`,
+    {},
+    { timeout: 3 * 60 * 1000 },
+  );
+  return data;
+}
+
+/**
+ * Feature row returned by GET /ba/modules/:id/ftc-features. The
+ * orchestrator filters RTM rows to clean F-NN-NN ids and returns one row
+ * per unique feature.
+ */
+export interface FtcFeatureRow {
+  featureId: string;
+  featureName: string;
+  featureStatus: string;
+}
+
+/**
+ * List all features for a module, used by the per-feature white-box loop
+ * driver. Returns the same shape the per-feature mode-2 endpoint loops
+ * over.
+ */
+export async function listFtcFeaturesForModule(moduleDbId: string): Promise<FtcFeatureRow[]> {
+  const { data } = await api.get<FtcFeatureRow[]>(
+    `/ba/modules/${moduleDbId}/ftc-features`,
+  );
+  return data;
+}
+
+/**
+ * Result of POST /ba/modules/:id/execute/SKILL-07-FTC/narrative —
+ * narrative-only mode (mode 3). Always runs the deterministic structural-
+ * sections render at the start, then either generates the canonical
+ * narrative sections (Summary / Test Strategy / OWASP Coverage / etc.)
+ * via AI or short-circuits if those already exist on the artifact. Used
+ * after per-feature / per-category / white-box loops to refresh §6 / §7 /
+ * §8 body sections that re-render the latest TC catalogue.
+ */
+export interface FtcNarrativeResult {
+  artifactId: string;
+  sectionsAdded: number;
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Trigger the narrative + structural-sections refresh on the module's
+ * FTC artifact. Idempotent: when the canonical narrative already exists,
+ * only the structural sections (§5 Test Cases Index / §6 Functional /
+ * §7 Integration / §8 White-Box) are re-rendered to reflect the latest
+ * BaTestCase rows. Cheap: structural-sections refresh is deterministic
+ * (no AI). Narrative AI call only fires when narrative is genuinely
+ * missing.
+ */
+export async function refreshFtcNarrative(moduleDbId: string): Promise<FtcNarrativeResult> {
+  const { data } = await api.post<FtcNarrativeResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-07-FTC/narrative`,
+    {},
+    { timeout: 3 * 60 * 1000 },
   );
   return data;
 }

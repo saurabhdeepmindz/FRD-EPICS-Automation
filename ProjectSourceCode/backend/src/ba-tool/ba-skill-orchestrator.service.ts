@@ -170,9 +170,21 @@ export class BaSkillOrchestratorService {
       // ZERO ```tc id=...``` fenced blocks — so the BaFtcParser finds
       // 0 test cases. Wrap the skill prompt in a focus override that
       // re-states the parser-shape contract + full-coverage requirement.
-      const wrappedPrompt = skillName === 'SKILL-07-FTC'
-        ? this.wrapSkill07Prompt(skillPrompt, contextPacket)
-        : skillPrompt;
+      //
+      // SKILL-06-LLD: same regression class. On modules with 9+ features
+      // the AI pattern-matches to a per-user-story LLD scope (e.g.
+      // "# LLD: <story title> (US-NNN, MOD-NN, F-NN-NN)") instead of the
+      // module-wide 19-section structure defined in
+      // FINAL-SKILL-06-create-lld.md §3. The parser then stores 17 of 19
+      // canonical sections as empty (the AI used non-canonical headings
+      // like `## 1. Identification` / `## 4. Public Contract`). Wrapper
+      // re-states the canonical 19-heading order + forbids per-story scope.
+      let wrappedPrompt = skillPrompt;
+      if (skillName === 'SKILL-07-FTC') {
+        wrappedPrompt = this.wrapSkill07Prompt(skillPrompt, contextPacket);
+      } else if (skillName === 'SKILL-06-LLD') {
+        wrappedPrompt = this.wrapSkill06Prompt(skillPrompt, contextPacket);
+      }
 
       const aiResponse = skillName === 'SKILL-04'
         ? await this.callAiServiceSkill04PerFeature(skillPrompt, contextPacket)
@@ -912,42 +924,311 @@ export class BaSkillOrchestratorService {
     return [
       '## 🎯 SKILL-07-FTC FOCUS — ORCHESTRATOR OVERRIDE',
       '',
-      `Generate test cases that cover **ALL ${storyList}** in this module — NOT a single story. The Coverage Summary, OWASP Map, AC Coverage, and especially the Test Case Appendix MUST span every user story present in the input. Do not produce a Coverage Analysis essay focused on one story.`,
+      `Generate test cases that cover **ALL ${storyList}** in this module — NOT a single story. The Coverage Summary, OWASP Map, AC Coverage, and especially the §17 Test Case Appendix MUST span every user story present in the input. Do not produce a Coverage Analysis essay focused on one story.`,
       '',
       '### Parser contract (CRITICAL — non-negotiable)',
       '',
-      'The backend parser ONLY reads test cases from \\`\\`\\`tc id=...\\`\\`\\` fenced blocks. A markdown table listing TC-IDs will be IGNORED entirely — the parser counts tc-fences and emits zero `BaTestCase` rows when there are none. EVERY test case must be a fenced block in this exact shape, and EVERY test case must also appear in the §8 Test Case Appendix verbatim:',
+      'The backend parser ONLY reads test cases from ```tc id=...``` fenced blocks. A markdown table listing TC-IDs is IGNORED — zero `BaTestCase` rows are written when there are no fences. The parser is also strict about heading names: `### Expected Result`, `### Steps`, `### Traceability`, or an inline `preconditions:` key:value line WILL DROP the corresponding field on every TC. The reference reading is §5 of the skill file below — match it exactly.',
+      '',
+      'Every test case MUST be a fenced block in this exact shape (all header `key: value` lines + all 10 `### ` sub-section blocks present), and every TC MUST also appear in the §17 Test Case Appendix verbatim:',
       '',
       '```text',
-      '```tc id=TC-001 parent= scope=black_box testKind=positive category=Functional priority=P1 owasp= isIntegrationTest=false sprintId= executionStatus=NOT_RUN scenarioGroup=US-052 Search',
-      'title: <one-line title>',
-      'preconditions: <state required before steps>',
-      '### Steps',
-      '1. <step 1>',
-      '2. <step 2>',
-      '### Expected Result',
-      '- <expected outcome>',
-      '### Traceability',
-      '- ac: <AC-ID(s) covered>',
-      '- subtask: ST-USNNN-XX-NN',
+      '```tc id=TC-001 parent= scope=black_box testKind=positive category=Functional priority=P1 owasp= isIntegrationTest=false sprintId= executionStatus=NOT_RUN scenarioGroup=Login',
+      'title: User logs in with valid credentials',
+      'linkedFeatureIds: F-01-02',
+      'linkedEpicIds: EPIC-01',
+      'linkedStoryIds: US-001',
+      'linkedSubtaskIds: ST-US001-BE-03',
+      'linkedPseudoFileIds:',
+      'linkedLldArtifactId:',
+      'tags: auth, smoke',
+      'supportingDocs: Login Flow Screenshot, Auth API trace',
+      'defectIds:',
+      '',
+      '### Test Data',
+      'Email: alice@acme.com',
+      'Password: P@ssw0rd!',
+      '',
+      '### Pre Condition',
+      '- Tenant `acme` exists',
+      '- User `alice@acme.com` registered with the password above',
+      '- Application URL is accessible',
+      '',
+      '### E2E Flow',
+      'Launch URL → Login → Enter credentials → Submit → Dashboard loaded',
+      '',
+      '### Test Steps',
+      '1. Launch the application URL.',
+      '2. Click **Login**.',
+      '3. Enter email `alice@acme.com`.',
+      '4. Enter password `P@ssw0rd!`.',
+      '5. Click **Sign in**.',
+      '',
+      '### Expected',
+      '- Browser redirects to `/dashboard`.',
+      '- Session cookie `sid` is set with `HttpOnly; Secure; SameSite=Lax`.',
+      '- User greeting shows "Welcome, Alice".',
+      '',
+      '### Post Validation',
+      '- Audit row `action=LOGIN_SUCCESS, actor=alice@acme.com` written within 10 s.',
+      '- No `LOGIN_FAILURE` row.',
+      '- `/api/auth/login` returned 200 with a JWT expiring in 24 h.',
+      '',
+      '### SQL Setup',
+      "INSERT INTO tenants (id, name) VALUES ('acme', 'Acme Corp');",
+      "INSERT INTO users (id, email, password_hash, tenant_id) VALUES ('u1', 'alice@acme.com', '$argon2id$...', 'acme');",
+      '',
+      '### SQL Verify',
+      'SELECT COUNT(*) = 1 AS ok FROM audit_events',
+      "WHERE actor = 'alice@acme.com' AND action = 'LOGIN_SUCCESS' AND created_at > NOW() - INTERVAL \'1 minute\';",
+      '',
+      '### Playwright Hint',
+      "await page.goto('/login');",
+      "await page.getByLabel('Email').fill('alice@acme.com');",
+      "await page.getByLabel('Password').fill('P@ssw0rd!');",
+      "await page.getByRole('button', { name: 'Sign in' }).click();",
+      'await expect(page).toHaveURL(/\\/dashboard/);',
+      '',
+      '### Developer Hints',
+      'AuthService.login(email, password) returns { userId, tenantId, sessionId } on success.',
+      'Unit test: mocked user repo; verify password_hash check and audit row emission.',
       '```',
       '```',
       '',
-      'Header attrs (case-sensitive): `id` (TC-001 / Neg_TC-002 etc.), `scope` (black_box / white_box), `testKind` (positive / negative / edge), `category`, `priority` (P1/P2/P3), `owasp` (e.g. A01, A05; blank for non-security), `isIntegrationTest` (true/false), `scenarioGroup` (free-text bucket label, used to group related TCs in the UI).',
+      'Mandatory header attrs (case-sensitive): `id`, `parent`, `scope` (black_box / white_box), `testKind` (positive / negative / edge), `category` (Functional / Integration / Security / Data / UI / Performance / Accessibility / Regression / Smoke), `priority` (P0 / P1 / P2), `owasp` (A01–A10 or LLM01–LLM10 or blank), `isIntegrationTest` (true / false), `sprintId` (blank), `executionStatus=NOT_RUN`, `scenarioGroup` (a SHORT human label like "Login" / "Forgot Password" / "SLA Breach Banner — Happy Path" — NOT a feature ID like F-04-01).',
+      '',
+      'Mandatory header `key: value` lines (one per line, before the first `###`): `title`, `linkedFeatureIds`, `linkedEpicIds`, `linkedStoryIds`, `linkedSubtaskIds`, `linkedPseudoFileIds`, `linkedLldArtifactId`, `tags`, `supportingDocs`, `defectIds`. Use comma-separated values; leave blank when nothing applies but DO NOT skip the line.',
+      '',
+      'Mandatory `### ` sub-section blocks (in this order, each populated unless the rule below allows blank): `### Test Data`, `### Pre Condition`, `### E2E Flow`, `### Test Steps`, `### Expected`, `### Post Validation`, `### SQL Setup`, `### SQL Verify`, `### Playwright Hint`, `### Developer Hints`.',
+      '',
+      '- `### Pre Condition` — H3 block (NOT an inline `preconditions:` key:value line).',
+      '- `### Test Steps` — H3 heading exactly (not `### Steps`).',
+      '- `### Expected` — H3 heading exactly (not `### Expected Result` — the parser drops anything else).',
+      '- `### SQL Setup` / `### SQL Verify` — only skip when the TC is pure UI with no DB surface; if so leave the heading + `-- N/A` body so the structure is preserved.',
+      '- `### Playwright Hint` — only skip when ftcConfig.testingFrameworks excludes Playwright (use `### pytest Hint` / `### k6 Script` etc. per §5 framework routing); never replace with a `### Traceability` block.',
+      '- `### Developer Hints` — 1–3 sentences for white-box / TDD followup; leave blank only for pure end-to-end UI cases.',
+      '- DO NOT add a `### Traceability` block — traceability lives in the `linkedFeatureIds / linkedEpicIds / linkedStoryIds / linkedSubtaskIds` header lines instead. The parser ignores `### Traceability`.',
+      '',
+      'TC ID convention: sequential `TC-001`, `TC-002`, … for positive cases and `Neg_TC-005`, `Neg_TC-006`, … for negative cases — a single shared numeric sequence across the artifact. DO NOT use story-coded IDs like `TC-US074-BE-003`; sequential is the canonical convention. `parent` stays blank unless `isIntegrationTest=true`, in which case it is the parent TC ID (e.g. `parent=TC-005`) — never set parent to a feature ID.',
       '',
       'Coverage requirements:',
       '- At least 1 happy-path TC per user story',
-      '- At least 1 negative TC per user story (Neg_TC-NNN id prefix)',
+      '- At least 1 negative TC per user story (`Neg_TC-NNN` id prefix, `testKind=negative`)',
       '- Boundary / edge TCs where the AC mentions limits, ranges, or quotas',
-      '- For CONFIRMED-PARTIAL stories with TBD-Future stubs: include stub-integration TCs marked `category=Integration` and explicitly note the stub in `preconditions`',
+      '- For CONFIRMED-PARTIAL stories with TBD-Future stubs: include stub-integration TCs marked `category=Integration` and explicitly note the stub in `### Pre Condition`',
       '',
       '### What MUST appear at the bottom of the document',
       '',
-      'A `## Test Case Appendix` heading followed by every `\\`\\`\\`tc id=...\\`\\`\\`` block from the body, repeated verbatim. The parser reads from the appendix as the authoritative source. Skip the appendix → parser finds zero test cases.',
+      'A `## Test Case Appendix` heading followed by every ```tc id=...``` block from the body, repeated verbatim. The parser reads from the appendix as the authoritative source. Skip the appendix → parser finds zero test cases.',
       '',
       '---',
       '',
-      '## Original Skill Definition (follow all rules below — especially §5 Test Case Block Format and §8 Test Case Appendix)',
+      '## Original Skill Definition (follow all rules below — especially §5 Test Case Block Format and §17 Test Case Appendix)',
+      '',
+      skillPrompt,
+    ].join('\n');
+  }
+
+  /**
+   * Wrap the SKILL-06-LLD prompt with a focus override that re-states the
+   * 19-section canonical contract and the parser-shape requirement. Without
+   * this wrapper, on large modules (10+ features) the AI consistently
+   * pattern-matches to a per-user-story LLD format (one document scoped to
+   * a single US-NNN / F-NN-NN) instead of producing the module-wide LLD
+   * with 19 canonical `## ` headings. Same regression class as the
+   * SKILL-07-FTC single-story drift the FTC wrapper fixed.
+   *
+   * The override is short and explicit:
+   *  - Produce ONE module-wide LLD covering ALL features in the input
+   *  - Use the EXACT 19 `## ` headings from FINAL-SKILL-06-create-lld.md §3
+   *  - Append `## Pseudo-Code Files` at the end with at least 8-15 files
+   *  - Do NOT scope the document to a single user story / feature
+   *  - Do NOT use a `# LLD: <story title>` H1 — the parser splits on H2 only
+   */
+  private wrapSkill06Prompt(
+    skillPrompt: string,
+    contextPacket: Record<string, unknown>,
+  ): string {
+    // Pull feature IDs from RTM rows so we can name them in the override.
+    const rtmRows = Array.isArray(contextPacket.rtmRows) ? (contextPacket.rtmRows as Array<Record<string, unknown>>) : [];
+    const featureIds = Array.from(new Set(
+      rtmRows
+        .map((r) => String(r.featureId ?? '').trim())
+        .filter((fid) => /^F-\d+-\d+$/.test(fid)),
+    )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const featureList = featureIds.length > 0
+      ? `${featureIds.length} features: ${featureIds.slice(0, 4).join(', ')}${featureIds.length > 4 ? `, …, ${featureIds[featureIds.length - 1]}` : ''}`
+      : 'all features present in the input';
+
+    return [
+      '## 🎯 SKILL-06-LLD FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      `Produce a SINGLE module-wide LLD document covering **ALL ${featureList}** in this module — NOT a per-user-story or per-feature LLD. The output must follow the canonical 19-section contract in the skill file (§3 "Output Contract") with EXACTLY the heading labels listed below, in EXACTLY this order, each as a level-2 \`## \` heading.`,
+      '',
+      '### Parser contract (CRITICAL — non-negotiable)',
+      '',
+      'The backend `BaLldParserService` reads sections by walking `## ` (H2) headings ONLY. A document scoped to a single user story (e.g. `# LLD: <Feature Title> (US-NNN, MOD-NN, F-NN-NN)` followed by per-story `## 1. Identification` / `## 2. RTM Traceability` / `## 3. @frdContext` / `## 4. Public Contract` / etc.) **DOES NOT MATCH** the parser contract — those headings will be stored under non-canonical keys like `custom_identification` and the canonical 19-section slots will stay empty. The validator will then report 17/19 sections missing.',
+      '',
+      'Required H2 heading order (exact text match, parser is case-insensitive but order-sensitive):',
+      '',
+      '```text',
+      '## 1. Summary',
+      '## 2. Technology Stack',
+      '## 3. Architecture Overview',
+      '## 4. Module Dependency Graph',
+      '## 5. Class Diagram',
+      '## 6. Sequence Diagrams',
+      '## 7. Non-Functional Requirements',
+      '## 8. API Contract Manifest',
+      '## 9. Data Model Definitions',
+      '## 10. Schema Diagram',
+      '## 11. Integration Points',
+      '## 12. Cross-Cutting Concerns',
+      '## 13. Env Var / Secret Catalog',
+      '## 14. Test Scaffold Hints',
+      '## 15. Build / CI Hooks',
+      '## 16. Project Structure',
+      '## 17. Traceability Summary',
+      '## 18. Open Questions / TBD-Future References',
+      '## 19. Applied Best-Practice Defaults',
+      '## Pseudo-Code Files',
+      '```',
+      '',
+      'Each section MUST be emitted exactly once. Sub-topics inside a section (e.g. `Endpoint:` items under §8 API Contract Manifest, or `### 4.1 DTOs` style sub-topics) MUST use `### ` (H3), never `## ` (H2). The parser splits on H2 only — any `## ` heading that does not match a canonical label gets stored as a non-canonical row, leaving the matching canonical slot empty.',
+      '',
+      '### Forbidden patterns (will cause 17/19 missing in the validator)',
+      '',
+      '- ❌ A top-level `# LLD: <title>` heading scoped to a single user story / feature (e.g. `# LLD: Verification Quota Check and Decrement (US-074, MOD-04, F-04-08)`). Do NOT scope the document to one story — produce a module-wide LLD that covers EVERY feature listed above.',
+      '- ❌ Per-story sub-document headings: `## 1. Identification`, `## 2. RTM Traceability`, `## 3. @frdContext`, `## 4. Public Contract`. These are NOT canonical sections. The canonical §3 is "Architecture Overview", not "@frdContext".',
+      '- ❌ Multiple LLD documents in one response (one per story). Produce ONE document, not N.',
+      '- ❌ Using `## ` for sub-topics inside a section (use `### ` or deeper).',
+      '- ❌ Wrapping the entire response in a code fence.',
+      '',
+      '### Module-wide scope (all features, not just one)',
+      '',
+      'Every section MUST cover the full module:',
+      `- §5 Class Diagram → every domain class across all ${featureIds.length} features (group by feature/EPIC if helpful)`,
+      `- §6 Sequence Diagrams → 3-5 critical flows spanning multiple features (one per major flow, NOT one per feature)`,
+      `- §8 API Contract Manifest → every REST endpoint exposed by the module across all features`,
+      `- §9 Data Model Definitions → every entity / DTO across all features`,
+      `- §17 Traceability Summary → table mapping every Feature → EPIC → User Story → SubTask → Class/Method → Pseudo-File. ALL features must appear.`,
+      '- §19 Applied Best-Practice Defaults → list every choice the AI made because input was ambiguous or missing.',
+      '',
+      '### Pseudo-Code Files (mandatory section, after §19)',
+      '',
+      'Append `## Pseudo-Code Files` then list pseudo-code files as fenced code blocks. Format (info string carries language + path):',
+      '',
+      '~~~text',
+      '```typescript path=backend/controllers/SearchController.ts',
+      'import ...',
+      '/** ... Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-052 / ST: ST-US052-BE-01 */',
+      'class SearchController { ... // TODO: ... }',
+      '```',
+      '~~~',
+      '',
+      `For a module with ${featureIds.length} features, produce at minimum **${Math.max(featureIds.length * 4, 20)} pseudo-files** spanning backend / frontend / database / tests. Every feature must be referenced by at least one pseudo-file's Traceability block.`,
+      '',
+      '#### Frontend pseudo-file quota (CRITICAL when frontend stack is selected)',
+      '',
+      'Backend-only LLDs ship with backend controllers + services + DTOs. That is necessary but NOT sufficient for a frontend-bearing project. When the architect picked a frontend stack (currently: see `lldConfig.stacks.frontend`) — and especially **Next.js + Tailwind** — the LLD MUST also produce the App Router skeleton, route handlers, and frontend tests. A "components-only" output (a flat `components/` folder with `.tsx` stubs and no pages) is INCOMPLETE: it leaves the developer to invent the routing, layouts, and data-fetching shape from scratch.',
+      '',
+      'For Next.js + Tailwind specifically, produce ALL of the following file types:',
+      '',
+      '1. **App Router pages** — at minimum ONE `frontend/app/<feature-slug>/page.tsx` per user-facing feature (≥ ' + featureIds.length + ' pages for this module). Each page is a React Server Component by default; mark `\'use client\'` only when interactivity (forms, hooks, event handlers) requires it. Pages compose components from `frontend/components/...` and fetch data via the route handlers below.',
+      '',
+      '   ~~~text',
+      '   ```typescript path=frontend/app/research-chats/page.tsx',
+      '   import { ResearchChatList } from \'@/components/research-chats/ResearchChatList\';',
+      '   /** App Router page for the Research Chats feature.',
+      '    * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-052 / ST: ST-US052-FE-01',
+      '    */',
+      '   export default async function ResearchChatsPage() {',
+      '     // TODO: fetch list via /api/research-chats',
+      '     return <main className="container mx-auto p-6"><ResearchChatList chats={[]} /></main>;',
+      '   }',
+      '   ```',
+      '   ~~~',
+      '',
+      '2. **Route handlers** — at minimum ONE `frontend/app/api/<resource>/route.ts` per backend resource the frontend reads or writes. These are server-side request handlers that proxy to the backend (or implement the endpoint directly when the frontend is the source of truth). Without these, the frontend cannot call the backend through Next.js conventions.',
+      '',
+      '   ~~~text',
+      '   ```typescript path=frontend/app/api/research-chats/route.ts',
+      '   /** GET /api/research-chats — list previous research conversations.',
+      '    * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-052',
+      '    */',
+      '   export async function GET(req: Request): Promise<Response> {',
+      '     // TODO: forward to backend ResearchChatController.list',
+      '     return Response.json({ chats: [] });',
+      '   }',
+      '   ```',
+      '   ~~~',
+      '',
+      '3. **Layouts** — at least ONE `frontend/app/layout.tsx` (root layout) and one `frontend/app/<feature-slug>/layout.tsx` if the feature has nested routes / shared chrome. Layouts wrap pages with HTML shell, fonts, providers (theme, query client), and Tailwind imports.',
+      '',
+      '4. **Components** under `frontend/components/<feature-slug>/<ComponentName>.tsx`. Mark `\'use client\'` for interactive components (forms, buttons with handlers, hook-using components). Pure presentational components stay server components.',
+      '',
+      '5. **Frontend tests** — at minimum ONE `*.test.tsx` per non-trivial component, under `tests/frontend/components/<feature-slug>/<ComponentName>.test.tsx`. Use the testing framework matching the architect\'s testTypes selection (Playwright for e2e, Vitest / React Testing Library for unit). Include traceability docstrings.',
+      '',
+      '6. **Tailwind utility classes** — every JSX element in pseudo-code that has visual styling should include realistic Tailwind utility classes (`className="container mx-auto p-6"`, `flex items-center gap-2`, etc.). Do NOT inline `<style>` tags or import CSS modules — the architect picked Tailwind.',
+      '',
+      'For NestJS / Spring / FastAPI / etc. backends paired with Next.js: backend HTTP endpoints live under `backend/...` (e.g. NestJS `controllers/`), and the frontend calls them via the route handlers in step 2 (which forward upstream).',
+      '',
+      'Minimum frontend file counts for THIS module (with ' + featureIds.length + ' features):',
+      '- App Router pages : ≥ ' + featureIds.length + ' (one per feature)',
+      '- Route handlers   : ≥ ' + Math.max(Math.ceil(featureIds.length * 0.7), 5) + ' (one per resource the frontend talks to)',
+      '- Components       : ≥ ' + (featureIds.length * 2) + ' (≥ 2 per feature on average)',
+      '- Frontend tests   : ≥ ' + featureIds.length + ' (≥ 1 per feature\'s primary component)',
+      '- Layouts          : ≥ 1 root layout, plus per-feature layouts where needed',
+      '',
+      '#### Backend pseudo-file quota',
+      '',
+      'For NestJS + Postgres (current backend stack), produce per-feature: at least one `backend/<feature>/controller.ts`, `backend/<feature>/service.ts`, and DTOs / exceptions where the EPIC mentions them. SQL DDL files for new tables go under `database/migrations/*.sql`.',
+      '',
+      '#### Test pseudo-file quota',
+      '',
+      'Tests sit under `tests/`. At minimum: one backend test per service (`tests/backend/services/*.spec.ts`), one frontend component test per primary user flow (`tests/frontend/components/**/*.test.tsx`), and one integration / e2e test per critical scenario.',
+      '',
+      '### Mermaid syntax rules (CRITICAL — render failures are user-visible)',
+      '',
+      'Sections §4 Module Dependency Graph, §5 Class Diagram, §6 Sequence Diagrams, and §10 Schema Diagram contain ```mermaid fenced code blocks. The frontend uses Mermaid 11+ which is strict about node-label syntax. Two specific failure modes to avoid:',
+      '',
+      '1. **`graph` / `flowchart` blocks** — node labels containing parens, slashes, ampersands, colons, hashes, pipes, or curly braces MUST be wrapped in double-quotes:',
+      '',
+      '   ❌ `A[ResearchChatController/Service]`             (slash crashes Mermaid 11)',
+      '   ❌ `F[PaymentServiceClient (TBD)]`                 (parens crash Mermaid)',
+      '   ✅ `A["ResearchChatController/Service"]`',
+      '   ✅ `F["PaymentServiceClient (TBD)"]`',
+      '',
+      '   Rule: if the bracket contents have any of `( )  /  &  #  :  |  { }`, quote them.',
+      '',
+      '2. **`erDiagram` blocks** — column types MUST be lowercase Mermaid primitives. Do NOT use SQL-style capitalised type names — Mermaid 11 fails to parse them.',
+      '',
+      '   ❌ `UUID userId PK`        ✅ `uuid userId PK`',
+      '   ❌ `String title`          ✅ `string title`',
+      '   ❌ `DateTime createdAt`    ✅ `datetime createdAt`',
+      '   ❌ `Enum status`           ✅ `string status`   (Mermaid has no enum primitive)',
+      '   ❌ `Decimal price`         ✅ `decimal price`',
+      '',
+      '   Allowed primitives: `int`, `string`, `text`, `boolean`, `float`, `double`, `decimal`, `date`, `datetime`, `time`, `timestamp`, `uuid`, `binary`, `blob`. Anything else: lowercase it.',
+      '',
+      '3. **Arrow targets must reference node identifiers (A, B, …), never label text**:',
+      '',
+      '   ❌ `B -- writes/reads --> AIResponse`              (`AIResponse` is a label, not an id)',
+      '   ✅ `B -- writes/reads --> S`                       (`S` is the node id defined as `S[AIResponse]`)',
+      '',
+      'Failing to follow these rules causes "Syntax error in text" overlays in the preview UI. The backend has a deterministic fallback sanitizer, but emitting clean Mermaid the first time is preferred.',
+      '',
+      '### Hard rules',
+      '',
+      '- All 19 LLD sections must be present even if the body is "N/A — not applicable in this module".',
+      '- Every pseudo-file class + method has a Traceability docstring citing real FRD / EPIC / US / ST IDs from the input context — never invent IDs.',
+      '- Method bodies are TODO comments only — no compilable logic.',
+      '- Single markdown document — no JSON sidecar, no preamble before `## 1. Summary`, no commentary after the final pseudo-code fence.',
+      '- Use the architect-saved tech stack from `lldConfig.stacks` (input context) — never substitute a different stack.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (follow all rules below — especially §3 Output Contract and the Hard Rules section)',
       '',
       skillPrompt,
     ].join('\n');
@@ -1606,6 +1887,15 @@ export class BaSkillOrchestratorService {
           status: BaArtifactStatus.DRAFT,
         },
       });
+      // Refresh BaModule.ftcArtifactId so frontend reads (which key off the
+      // pointer) see the new artifact immediately. Without this, the
+      // pointer can stay stale (pointing at a deleted artifact from a
+      // previous wipe) and getFtcArtifact returns null even though the
+      // artifact exists.
+      await this.prisma.baModule.update({
+        where: { id: moduleDbId },
+        data: { ftcArtifactId: artifact.id, ftcCompletedAt: new Date() },
+      });
     }
 
     // 2. Idempotency — skip when this feature already has TCs on the
@@ -1640,6 +1930,15 @@ export class BaSkillOrchestratorService {
     // 4. Compose the per-feature focus override on top of the existing
     //    parser-shape wrapper. The wrapper enforces the ```tc id=...```
     //    format; we add the single-feature scope on top.
+    // Per-feature TC ID prefix — this guarantees uniqueness across the per-
+    // feature loop. Without it, every call would start at TC-001 and silently
+    // collide on the (artifactDbId, testCaseId) unique constraint, so only
+    // the first feature's TCs would actually land in the DB.
+    // Format: F-04-01 → 04-01 → TC-04-01-001 / Neg_TC-04-01-002 / …
+    const featureSuffix = featureId.replace(/^F-/, '');
+    const featureTcPrefix = `TC-${featureSuffix}-`;
+    const featureNegTcPrefix = `Neg_TC-${featureSuffix}-`;
+
     const featureFocusedPrompt = [
       '## 🎯 SKILL-07-FTC FEATURE FOCUS — ORCHESTRATOR OVERRIDE',
       '',
@@ -1651,10 +1950,32 @@ export class BaSkillOrchestratorService {
       'not produce TCs for any other feature — those are processed in their own',
       'sub-calls.',
       '',
-      'Every TC you emit MUST tag this feature in `linkedFeatureIds` (the parser',
-      `reads this list to attribute the TC to the right feature). Set scenarioGroup`,
-      `to a short label that mentions ${featureId} so the UI groups your TCs`,
-      'cleanly within the FTC artifact.',
+      '### TC ID convention (CRITICAL — non-negotiable)',
+      '',
+      'In per-feature mode, plain `TC-001` numbering causes silent collisions',
+      'across feature calls (every call would start at 001 and the DB unique-',
+      'constraint drops the second through ninth occurrences). USE FEATURE-',
+      'PREFIXED IDS instead:',
+      '',
+      `- Positive cases: \`${featureTcPrefix}001\`, \`${featureTcPrefix}002\`, \`${featureTcPrefix}003\`, …`,
+      `- Negative cases: \`${featureNegTcPrefix}004\`, \`${featureNegTcPrefix}005\`, … (single shared sequence; \`Neg_\` prefix is formatting only — the authoritative signal is \`testKind=negative\` in the fenced-block header)`,
+      '',
+      `Number sequentially within THIS feature only, starting at 001. Every TC ID you emit MUST start with \`${featureTcPrefix}\` (positive) or \`${featureNegTcPrefix}\` (negative). Do NOT use plain \`TC-001\` / \`Neg_TC-002\` — those collide across the loop. Do NOT use story-coded IDs like \`TC-US074-BE-003\` — feature-prefixed is the convention here.`,
+      '',
+      '### Linking rules',
+      '',
+      'Every TC you emit MUST set `linkedFeatureIds` to ONLY this feature',
+      `(\`linkedFeatureIds: ${featureId}\`) — do not fan out to other features in`,
+      'this list, otherwise the UI cannot attribute the TC correctly. Populate',
+      '`linkedEpicIds`, `linkedStoryIds`, and `linkedSubtaskIds` from the actual',
+      'EPIC / story / subtask IDs in the input context — leaving them blank',
+      'breaks RTM traceability.',
+      '',
+      'Set `scenarioGroup` to a short HUMAN LABEL describing the scenario',
+      '(e.g. "Search — Happy Path", "Search — Validation", "Login Flow"). DO',
+      `NOT use the feature ID itself as the scenarioGroup — \`${featureId}\` is`,
+      'already captured in `linkedFeatureIds`. Several TCs may share the same',
+      'scenarioGroup; the UI groups them in a single bucket.',
       '',
       'Coverage requirements per story under this feature:',
       '- ≥1 happy-path TC',
@@ -1662,13 +1983,20 @@ export class BaSkillOrchestratorService {
       '- Boundary / edge TCs where the AC mentions limits, ranges, or quotas',
       '- For CONFIRMED-PARTIAL stories with TBD-Future stubs: include a',
       '  stub-integration TC marked `category=Integration` and explicitly',
-      '  reference the stub in `preconditions`',
+      '  reference the stub in the `### Pre Condition` H3 block',
       '',
-      'Do NOT emit a module-wide Coverage Summary, OWASP Map, or AC Coverage',
-      'spanning all features — those are stitched at the end after all per-',
+      'Do NOT emit module-wide narrative sections (§1–§5, §9–§12, §14–§16) —',
+      'those are produced by the narrative-only pass (mode 3) AFTER all per-',
       'feature calls complete. Just emit the §6 / §7 / §8 content (TC bodies +',
-      'OWASP entries that apply + AC coverage rows) for this feature, with',
-      'every TC also repeated verbatim in the §8 Test Case Appendix.',
+      'OWASP entries that apply + AC coverage rows) for THIS feature, with',
+      'every TC also repeated verbatim in the §17 Test Case Appendix.',
+      '',
+      'Each TC body MUST contain ALL 10 canonical `### ` sub-section blocks in',
+      'order — `### Test Data`, `### Pre Condition`, `### E2E Flow`, `### Test',
+      'Steps`, `### Expected`, `### Post Validation`, `### SQL Setup`, `### SQL',
+      'Verify`, `### Playwright Hint`, `### Developer Hints`. Missing blocks =',
+      'NULL columns in the database and broken CSV exports. See the wrapped',
+      'parser-contract example below for the exact shape.',
       '',
       '---',
       '',
@@ -1678,6 +2006,7 @@ export class BaSkillOrchestratorService {
     ].join('\n');
 
     // 5. Call the AI with retry-on-429.
+    const runStartedAt = new Date();
     const aiResponse = await this.callAiServiceWithRetry(
       featureFocusedPrompt,
       { ...contextPacket, currentFocusFeature: featureId },
@@ -1689,9 +2018,10 @@ export class BaSkillOrchestratorService {
 
     // 6. Run the FTC parser. parseAndStore is idempotent at the section
     //    level (warns and continues on duplicate sectionKey conflicts) and
-    //    creates new BaTestCase rows for any TC IDs it sees — which are
-    //    naturally unique across features since the AI tags them with the
-    //    feature/story prefix (TC-USNNN-XX-NNN).
+    //    creates new BaTestCase rows for any TC IDs it sees. With the
+    //    feature-prefixed TC ID convention (TC-04-01-NNN), IDs are
+    //    naturally unique across the per-feature loop so duplicate-key
+    //    drops no longer occur.
     const before = await this.prisma.baTestCase.count({
       where: { artifactDbId: artifact.id },
     });
@@ -1701,16 +2031,17 @@ export class BaSkillOrchestratorService {
     });
     const tcsAdded = after - before;
 
-    // 7. Backfill linkedFeatureIds — the AI may forget to set it explicitly;
-    //    we know which feature this call was for, so ensure every TC created
-    //    in this call has the featureId in linkedFeatureIds.
+    // 7. Backfill linkedFeatureIds on TCs created in THIS run only — the
+    //    AI may forget to set it explicitly, and we know which feature
+    //    this call was for. Critical: scope the update to TCs created
+    //    after `runStartedAt` so we don't pollute earlier features' TCs
+    //    with this feature's ID (the previous OR-based query was the
+    //    source of every TC accumulating all 9 features in its list).
     const newTcs = await this.prisma.baTestCase.findMany({
       where: {
         artifactDbId: artifact.id,
-        OR: [
-          { linkedFeatureIds: { isEmpty: true } },
-          { NOT: { linkedFeatureIds: { has: featureId } } },
-        ],
+        createdAt: { gte: runStartedAt },
+        NOT: { linkedFeatureIds: { has: featureId } },
       },
       select: { id: true, linkedFeatureIds: true },
     });
@@ -1733,6 +2064,626 @@ export class BaSkillOrchestratorService {
       sectionsAdded: parsed.sectionsCreated,
       skipped: false,
     };
+  }
+
+  // ─── SKILL-07-FTC per-category coverage pass (mode 2b) ────────────────
+  //
+  // Per-feature mode 2 budgets each AI call for ~10–15 TCs and the AI
+  // spends them on happy-path + negative + boundary + integration cases.
+  // It rarely emits Security / UI / Performance / Accessibility TCs even
+  // when those test types are selected in `ftcConfig.testTypes`. Result:
+  // the FTC tree shows only "Functional" and "Integration" category
+  // groups for per-feature modules, while single-shot modules show all
+  // selected categories.
+  //
+  // This per-category pass closes the gap. It runs ONE AI call per
+  // missing category (not per feature × category — too expensive). The
+  // call asks the AI to produce TCs of the given category spanning every
+  // feature in the module. TC IDs are prefixed with the category code
+  // (TC-SEC-001, TC-UI-001, TC-PERF-001, …) so they don't collide with
+  // per-feature IDs (TC-04-01-NNN).
+  //
+  // Categories supported here are the synthetic tree groups beyond
+  // Functional / Integration that the per-feature pass already covers:
+  //   - Security (with optional OWASP A01–A10 / LLM01–LLM10 tagging)
+  //   - UI       (visual / interaction TCs for user-facing screens)
+  //   - Performance (latency / throughput / load TCs)
+  //   - Accessibility (WCAG, screen-reader, keyboard nav)
+  //   - Data     (boundary / format / serialization TCs)
+  //   - Smoke    (happy-path-only quick-run TCs)
+  //   - Regression (whole-feature regression suite TCs)
+
+  private readonly CATEGORY_PREFIXES: Record<string, string> = {
+    Security: 'SEC',
+    UI: 'UI',
+    Performance: 'PERF',
+    Accessibility: 'A11Y',
+    Data: 'DATA',
+    Smoke: 'SMK',
+    Regression: 'REG',
+  };
+
+  /**
+   * Generate TCs for ONE category across all features in the module and
+   * append them to the existing FTC artifact. Idempotent: skips when the
+   * artifact already has TCs tagged with this category.
+   */
+  async executeSkill07ForCategory(
+    moduleDbId: string,
+    category: string,
+  ): Promise<{
+    category: string;
+    artifactId: string;
+    tcsAdded: number;
+    skipped: boolean;
+    reason?: string;
+  }> {
+    const prefix = this.CATEGORY_PREFIXES[category];
+    if (!prefix) {
+      throw new Error(
+        `Unsupported category "${category}". Supported: ${Object.keys(this.CATEGORY_PREFIXES).join(', ')}`,
+      );
+    }
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    let artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.FTC },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!artifact) {
+      const suffix = await this.deriveFtcSuffix(moduleDbId);
+      artifact = await this.prisma.baArtifact.create({
+        data: {
+          moduleDbId,
+          artifactType: BaArtifactType.FTC,
+          artifactId: `FTC-${mod.moduleId}-${suffix}`,
+          status: BaArtifactStatus.DRAFT,
+        },
+      });
+      // Refresh BaModule.ftcArtifactId pointer (see executeSkill07ForFeature
+      // for rationale) — keeps frontend reads pointing at the live artifact.
+      await this.prisma.baModule.update({
+        where: { id: moduleDbId },
+        data: { ftcArtifactId: artifact.id, ftcCompletedAt: new Date() },
+      });
+    }
+
+    // Idempotency — skip when category-tagged TCs already exist on the
+    // artifact. Architects who want to regenerate must delete the
+    // category's TCs first.
+    const existingCategoryTcs = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId: artifact.id, category },
+      select: { id: true },
+    });
+    if (existingCategoryTcs.length > 0) {
+      this.logger.log(
+        `SKILL-07-FTC per-category: skipping ${category} — ${existingCategoryTcs.length} TC(s) already exist`,
+      );
+      return {
+        category,
+        artifactId: artifact.id,
+        tcsAdded: 0,
+        skipped: true,
+        reason: `${existingCategoryTcs.length} TC(s) tagged category=${category} already on the FTC artifact; delete them first to regenerate.`,
+      };
+    }
+
+    // Enumerate features for this module — the AI's TCs will reference
+    // `linkedFeatureIds` from this list.
+    const features = await this.listFeaturesForFtc(moduleDbId);
+    if (features.length === 0) {
+      throw new Error(`No features found for module ${mod.moduleId} — RTM is empty`);
+    }
+    const featureList = features.map((f) => `- ${f.featureId}: ${f.featureName}`).join('\n');
+
+    const skillPrompt = this.loadSkillFile('SKILL-07-FTC');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-07-FTC');
+
+    // Category-specific guidance — what the AI should focus on per type.
+    const CATEGORY_FOCUS: Record<string, string> = {
+      Security: [
+        'Generate security-focused TCs with OWASP Web Top 10 (A01–A10) or LLM Top 10 (LLM01–LLM10) tagging.',
+        'Cover injection, broken access control, sensitive data exposure, XSS, CSRF, authn/authz failures, SSRF, and (for AI-assisted features) prompt injection.',
+        'Tag every TC with `category=Security` and the most appropriate `owasp` code.',
+        'Use `testKind=negative` for every TC unless it is a security control validation (which is positive).',
+      ].join('\n'),
+      UI: [
+        'Generate UI/UX-focused TCs covering visual rendering, interaction states, responsive behaviour, error display, loading states, and form-field interactions.',
+        'Tag every TC with `category=UI`. These run in Playwright and assert against DOM / visible state, not API responses.',
+        'Mix positive (happy-path interaction) and negative (invalid input UX) TCs.',
+      ].join('\n'),
+      Performance: [
+        'Generate performance-focused TCs covering latency SLAs, throughput, concurrent-user load, and resource consumption.',
+        'Tag every TC with `category=Performance`. Use k6 or JMeter `### k6 Script` blocks instead of Playwright when applicable.',
+        'Cite specific SLA numbers (e.g. p95 < 500 ms, 100 concurrent users) in `### Expected`.',
+      ].join('\n'),
+      Accessibility: [
+        'Generate accessibility-focused TCs covering WCAG 2.1 AA, keyboard navigation, screen-reader landmarks, color contrast, focus management, and ARIA labelling.',
+        'Tag every TC with `category=Accessibility`. Use Playwright + axe-core in `### Playwright Hint` where applicable.',
+      ].join('\n'),
+      Data: [
+        'Generate data-focused TCs covering boundary values, format validation, serialization round-trips, encoding, and timezone handling.',
+        'Tag every TC with `category=Data`. Mix positive (valid boundary) and negative (just-over boundary) TCs.',
+      ].join('\n'),
+      Smoke: [
+        'Generate smoke TCs — fast happy-path-only TCs that cover the critical-path of each feature in under 30 s of execution time.',
+        'Tag every TC with `category=Smoke` and `testKind=positive`. One TC per feature is the right grain.',
+      ].join('\n'),
+      Regression: [
+        'Generate regression TCs — broad-coverage TCs that re-verify previously-fixed defect areas and high-risk integrations.',
+        'Tag every TC with `category=Regression`. Mix positive and negative; reference any defect IDs from input context if available.',
+      ].join('\n'),
+    };
+
+    const tcPrefix = `TC-${prefix}-`;
+    const negTcPrefix = `Neg_TC-${prefix}-`;
+
+    const categoryFocusedPrompt = [
+      '## 🎯 SKILL-07-FTC PER-CATEGORY FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      `You are running as part of a per-category coverage pass. Each call generates test cases for ONE category that spans ALL features of this module — the orchestrator runs you once per category, AFTER the per-feature loop (mode 2) has produced Functional / Integration coverage.`,
+      '',
+      `**CURRENT CATEGORY: ${category}**`,
+      '',
+      '### Category focus',
+      '',
+      CATEGORY_FOCUS[category] ?? `Generate TCs of category=${category} appropriate to this module.`,
+      '',
+      '### Features in this module (every TC must link to at least one)',
+      '',
+      featureList,
+      '',
+      '### TC ID convention (CRITICAL — non-negotiable)',
+      '',
+      `Use category-prefixed TC IDs to avoid colliding with per-feature mode-2 IDs (TC-04-01-NNN) and previous category-pass IDs:`,
+      '',
+      `- Positive cases: \`${tcPrefix}001\`, \`${tcPrefix}002\`, \`${tcPrefix}003\`, …`,
+      `- Negative cases: \`${negTcPrefix}004\`, \`${negTcPrefix}005\`, … (single shared sequence; \`Neg_\` prefix is formatting only — the authoritative signal is \`testKind=negative\` in the fenced-block header)`,
+      '',
+      `Number sequentially within THIS category only, starting at 001. Every TC ID you emit MUST start with \`${tcPrefix}\` (positive) or \`${negTcPrefix}\` (negative). Do NOT use plain \`TC-001\` or feature-prefixed IDs like \`TC-04-01-001\` — those collide with the per-feature loop.`,
+      '',
+      '### Linking + scenarioGroup rules',
+      '',
+      `Every TC MUST set \`category: ${category}\` in the fenced-block header. Every TC MUST tag at least one feature in \`linkedFeatureIds\` (use the feature list above). Set \`linkedEpicIds\`, \`linkedStoryIds\`, \`linkedSubtaskIds\` from the actual EPIC / story / subtask IDs in the input context wherever applicable.`,
+      '',
+      'Set `scenarioGroup` to a short HUMAN LABEL describing the scenario',
+      `(e.g. for ${category}: ${category === 'Security' ? '"Auth — Session Hijack", "API — SQL Injection"' : category === 'UI' ? '"Login Form — Visual States", "Dashboard — Loading"' : category === 'Performance' ? '"Search — p95 Latency", "Bulk Import — Throughput"' : '"<scenario name>"'}). DO NOT use a feature ID as the scenarioGroup.`,
+      '',
+      '### Coverage target',
+      '',
+      `Aim for ${category === 'Smoke' ? '1 TC per feature (≈ ' + features.length + ' total)' : '8–15 TCs total'} spanning the most relevant features. Skip features where this category does not apply (e.g. backend-only features for Accessibility) and note that in scenarioGroup.`,
+      '',
+      'Do NOT emit module-wide narrative sections (§1–§5, §9–§12, §14–§16) —',
+      'those are produced by the narrative-only pass (mode 3). Just emit the',
+      '§6 / §7 / §8 content (TC bodies + OWASP entries that apply + AC',
+      'coverage rows) for THIS category, with every TC also repeated verbatim',
+      'in the §17 Test Case Appendix.',
+      '',
+      'Each TC body MUST contain ALL 10 canonical `### ` sub-section blocks in',
+      'order — `### Test Data`, `### Pre Condition`, `### E2E Flow`, `### Test',
+      'Steps`, `### Expected`, `### Post Validation`, `### SQL Setup`, `### SQL',
+      'Verify`, `### Playwright Hint`, `### Developer Hints`. Missing blocks =',
+      'NULL columns in the database and broken CSV exports.',
+      '',
+      '---',
+      '',
+      this.wrapSkill07Prompt(skillPrompt, contextPacket),
+    ].join('\n');
+
+    const runStartedAt = new Date();
+    const aiResponse = await this.callAiServiceWithRetry(
+      categoryFocusedPrompt,
+      { ...contextPacket, currentFocusCategory: category },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for category ${category}`);
+    }
+
+    const before = await this.prisma.baTestCase.count({
+      where: { artifactDbId: artifact.id },
+    });
+    await this.ftcParser.parseAndStore(humanDocument, artifact.id);
+    const after = await this.prisma.baTestCase.count({
+      where: { artifactDbId: artifact.id },
+    });
+    const tcsAdded = after - before;
+
+    // Backfill: AI may forget to tag `category` on every TC. Enforce it
+    // on TCs created in this run.
+    const newTcs = await this.prisma.baTestCase.findMany({
+      where: {
+        artifactDbId: artifact.id,
+        createdAt: { gte: runStartedAt },
+      },
+      select: { id: true, category: true },
+    });
+    for (const tc of newTcs) {
+      if (tc.category !== category) {
+        await this.prisma.baTestCase.update({
+          where: { id: tc.id },
+          data: { category },
+        });
+      }
+    }
+
+    this.logger.log(
+      `SKILL-07-FTC per-category ${category}: appended ${tcsAdded} test case(s) to ${artifact.id}`,
+    );
+    return {
+      category,
+      artifactId: artifact.id,
+      tcsAdded,
+      skipped: false,
+    };
+  }
+
+  /**
+   * Read `ftcConfig.testTypes` and return the categories that need a
+   * per-category pass. Functional and Integration are excluded — they
+   * are produced by the per-feature loop (mode 2). Returns the subset
+   * of testTypes that map to a valid category prefix.
+   */
+  async listMissingCategoriesForCoverage(moduleDbId: string): Promise<string[]> {
+    const config = await this.prisma.baFtcConfig.findUnique({
+      where: { moduleDbId },
+    });
+    const testTypes = (config?.testTypes ?? []) as string[];
+    if (testTypes.length === 0) {
+      // No filter set → architect implicitly wants all supported categories
+      // beyond the per-feature loop's defaults.
+      return Object.keys(this.CATEGORY_PREFIXES);
+    }
+    return testTypes.filter(
+      (t) => t !== 'Functional' && t !== 'Integration' && this.CATEGORY_PREFIXES[t] !== undefined,
+    );
+  }
+
+  // ─── SKILL-07-FTC per-feature WHITE-BOX coverage pass (mode 2c) ───────
+  //
+  // After per-feature mode 2 (black-box Functional / Integration) and per-
+  // category mode 2b (Security / UI / Performance / etc.) have populated
+  // the FTC artifact, white-box test cases are still missing — by design.
+  // The skill file's §3 says §8 White-Box Test Cases is OMITTED when
+  // `lldContext` is absent. Once the LLD artifact exists for the module,
+  // this mode fills the gap: per-feature focused AI calls that emit white-
+  // box TCs scoped to the LLD's classes/methods.
+  //
+  // What "white-box" means here (versus the existing 98 black-box TCs):
+  //   - scope=white_box (not black_box)
+  //   - Asserts internal class invariants, algorithm-step coverage,
+  //     exception paths, mocked-collaborator behaviour
+  //   - linkedPseudoFileIds populated with the LLD's BaPseudoFile UUIDs
+  //   - linkedLldArtifactId populated with the module's LLD artifact id
+  //   - Tests run with a unit-test framework (Vitest / JUnit / pytest unit)
+  //     not Playwright / k6
+  //
+  // Idempotent: skips when this feature already has white-box TCs.
+  // Prerequisite: an LLD artifact must exist for the module (else throws).
+
+  /**
+   * Generate white-box TCs for ONE feature and append the parsed
+   * BaTestCase rows to the module's FTC artifact. Mirrors the per-feature
+   * mode-2 loop but scoped to white-box only.
+   */
+  async executeSkill07ForFeatureWhiteBox(
+    moduleDbId: string,
+    featureId: string,
+  ): Promise<{
+    featureId: string;
+    artifactId: string;
+    tcsAdded: number;
+    skipped: boolean;
+    reason?: string;
+  }> {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new Error(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // Prerequisite: LLD artifact must exist (white-box can't reference
+    // class/method names that aren't in any LLD pseudo-file).
+    const lldArtifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.LLD },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!lldArtifact) {
+      throw new Error(
+        `Cannot generate white-box TCs for ${mod.moduleId}: no LLD artifact exists. ` +
+        `Click "Generate LLD" on the AI LLD Workbench first.`,
+      );
+    }
+
+    // Prerequisite: FTC artifact must exist (white-box appends to the
+    // existing module FTC, doesn't create a new one).
+    let ftcArtifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.FTC },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!ftcArtifact) {
+      // Edge case — architect ran LLD before any FTC. Create the artifact
+      // so the white-box TCs land somewhere; mode 3 narrative will fill
+      // sections later.
+      const suffix = await this.deriveFtcSuffix(moduleDbId);
+      ftcArtifact = await this.prisma.baArtifact.create({
+        data: {
+          moduleDbId,
+          artifactType: BaArtifactType.FTC,
+          artifactId: `FTC-${mod.moduleId}-${suffix}`,
+          status: BaArtifactStatus.DRAFT,
+        },
+      });
+      // Refresh BaModule.ftcArtifactId pointer (see executeSkill07ForFeature
+      // for rationale) — keeps frontend reads pointing at the live artifact.
+      await this.prisma.baModule.update({
+        where: { id: moduleDbId },
+        data: { ftcArtifactId: ftcArtifact.id, ftcCompletedAt: new Date() },
+      });
+    }
+
+    // Idempotency — skip when this feature already has white-box TCs on
+    // the artifact.
+    const existingWhiteBox = await this.prisma.baTestCase.findMany({
+      where: {
+        artifactDbId: ftcArtifact.id,
+        scope: 'white_box',
+        linkedFeatureIds: { has: featureId },
+      },
+      select: { id: true },
+    });
+    if (existingWhiteBox.length > 0) {
+      this.logger.log(
+        `SKILL-07-FTC white-box: skipping ${featureId} — already has ${existingWhiteBox.length} white-box TC(s)`,
+      );
+      return {
+        featureId,
+        artifactId: ftcArtifact.id,
+        tcsAdded: 0,
+        skipped: true,
+        reason: `${existingWhiteBox.length} white-box TC(s) for ${featureId} already on the FTC artifact; delete them first to regenerate.`,
+      };
+    }
+
+    // Filter LLD pseudo-files to those that mention this feature's ID in
+    // their content (Traceability docstring). These are the classes/files
+    // the white-box TCs will target.
+    const allPseudoFiles = await this.prisma.baPseudoFile.findMany({
+      where: { artifactDbId: lldArtifact.id },
+      select: { id: true, path: true, language: true, aiContent: true, editedContent: true },
+    });
+    const featurePseudoFiles = allPseudoFiles.filter((f) => {
+      const text = `${f.path}\n${f.editedContent ?? f.aiContent ?? ''}`;
+      return text.includes(featureId);
+    });
+    if (featurePseudoFiles.length === 0) {
+      this.logger.log(
+        `SKILL-07-FTC white-box: skipping ${featureId} — no LLD pseudo-files reference this feature`,
+      );
+      return {
+        featureId,
+        artifactId: ftcArtifact.id,
+        tcsAdded: 0,
+        skipped: true,
+        reason: `No LLD pseudo-files reference ${featureId}. Edit one or more LLD pseudo-files in the editor to add ${featureId} to the Traceability docstring, then re-run.`,
+      };
+    }
+
+    // Build the FTC context.
+    const skillPrompt = this.loadSkillFile('SKILL-07-FTC');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-07-FTC');
+
+    // Compose the file list as a compact summary for the AI: path +
+    // 5-line opening of the content (class signature + first method).
+    const featureFileSummary = featurePseudoFiles
+      .map((f) => {
+        const body = (f.editedContent ?? f.aiContent ?? '').split(/\r?\n/).slice(0, 12).join('\n');
+        return `**${f.path}** (${f.language})\n\`\`\`${f.language}\n${body}\n\`\`\``;
+      })
+      .join('\n\n');
+
+    // White-box TC ID convention: feature-prefixed with "WB" prefix, e.g.
+    // WB-04-01-001 (positive) and Neg_WB-04-01-002 (negative). Avoids
+    // collision with TC-04-01-NNN (mode 2 black-box) and TC-SEC-NNN etc.
+    const featureSuffix = featureId.replace(/^F-/, '');
+    const tcPrefix = `WB-${featureSuffix}-`;
+    const negTcPrefix = `Neg_WB-${featureSuffix}-`;
+
+    const whiteBoxFocusedPrompt = [
+      '## 🎯 SKILL-07-FTC WHITE-BOX FOCUS — ORCHESTRATOR OVERRIDE (mode 2c)',
+      '',
+      `You are running as part of a per-feature WHITE-BOX coverage pass. The module's LLD artifact is complete. The FTC artifact already has black-box (Functional / Integration / Security / UI / Performance) TCs. Your job is to add WHITE-BOX TCs for ONE feature that target the LLD's classes / methods directly.`,
+      '',
+      `**CURRENT FEATURE: ${featureId}**`,
+      '',
+      `**LLD ARTIFACT ID: ${lldArtifact.artifactId}** (lldArtifactDbId: ${lldArtifact.id})`,
+      '',
+      '### What "white-box" means here',
+      '',
+      'White-box TCs differ from the existing black-box ones in three ways:',
+      '',
+      '1. **Set `scope=white_box`** in the fenced-block header (NOT `scope=black_box`).',
+      '2. **Assertions target internal class/method contracts**, not user-visible behaviour:',
+      '   - Class invariants (state of private fields after operations)',
+      '   - Each Algorithm step from the LLD JavaDoc/JSDoc — one TC per step where applicable',
+      '   - Exception paths (each `@throws` in the docstring)',
+      '   - Mocked-collaborator behaviour (verify the right method was called with the right args)',
+      '   - Edge cases at the algorithmic level (off-by-one, null/empty inputs at internal boundaries)',
+      '3. **Test framework is unit-level**: Vitest / JUnit / pytest-unit / Mocha — NOT Playwright / k6 / Cypress. Use `### Vitest Hint` (or `### JUnit Hint` / `### pytest Hint`) heading instead of `### Playwright Hint`.',
+      '',
+      '### Mandatory header attrs for every TC',
+      '',
+      '- `scope=white_box` (NOT `black_box`)',
+      '- `category=Functional` is the default; use `Integration` only when the white-box test verifies a class-to-class boundary that crosses module/service lines',
+      '- `testKind=positive` or `testKind=negative` — both are needed; aim for ≥ 1 positive happy-path + ≥ 2 negative (exception/edge) per significant class',
+      '- `priority=P1` for happy-path white-box; `P2` for edge cases',
+      '- `owasp` blank (white-box rarely maps to OWASP categories — those live in the per-category Security pass)',
+      '',
+      '### TC ID convention (CRITICAL — avoid collision with existing IDs)',
+      '',
+      `Use feature-prefixed white-box IDs:`,
+      '',
+      `- Positive cases: \`${tcPrefix}001\`, \`${tcPrefix}002\`, …`,
+      `- Negative cases: \`${negTcPrefix}003\`, \`${negTcPrefix}004\`, … (single shared sequence; \`Neg_\` prefix is formatting only)`,
+      '',
+      `Do NOT use plain \`TC-001\` (collides with single-shot mode 1) or \`TC-04-01-001\` (collides with mode 2 black-box) or \`TC-SEC-001\` etc. (collides with mode 2b per-category). Every white-box TC ID MUST start with \`${tcPrefix}\` or \`${negTcPrefix}\`.`,
+      '',
+      '### Mandatory linkage',
+      '',
+      `- \`linkedFeatureIds: ${featureId}\` (this feature only — do NOT fan out)`,
+      `- \`linkedLldArtifactId: ${lldArtifact.artifactId}\` (the module's LLD artifact id)`,
+      `- \`linkedPseudoFileIds: <comma-separated paths from the file list below>\` — emit the PATHS verbatim (e.g. \`backend/service/research-chat.service.ts\`); the orchestrator backfills these to BaPseudoFile UUIDs after parsing.`,
+      `- \`linkedEpicIds\` / \`linkedStoryIds\` / \`linkedSubtaskIds\` — populate from the input context where applicable`,
+      '',
+      '### Pseudo-files in scope (white-box assertions go here)',
+      '',
+      'These are the LLD pseudo-files that reference ' + featureId + ' in their Traceability docstring. Every white-box TC you emit MUST cite at least one of these paths in `linkedPseudoFileIds` and mention the class/method by name in the test body.',
+      '',
+      featureFileSummary,
+      '',
+      '### Coverage target',
+      '',
+      `Aim for **5–10 white-box TCs** total spanning the classes above. One TC per public method + one per exception path is a reasonable floor. Skip getters/setters and trivial DTOs.`,
+      '',
+      '### What NOT to emit',
+      '',
+      '- Do NOT emit module-wide narrative sections (§1–§5, §9–§12, §14–§16) — those exist already.',
+      '- Do NOT emit `## Functional Test Cases` / `## Integration Test Cases` headings — your TCs go under §8 White-Box Test Cases (the structural-sections renderer auto-routes by `scope=white_box`).',
+      '- Do NOT regenerate the per-feature black-box TCs — they already exist.',
+      '- Do NOT invent class/method names that are not in the file list above.',
+      '',
+      'Each TC body MUST contain ALL 10 canonical `### ` sub-section blocks — `### Test Data`, `### Pre Condition`, `### E2E Flow` (use "N/A — unit test" for white-box), `### Test Steps`, `### Expected`, `### Post Validation`, `### SQL Setup` (often "-- N/A"), `### SQL Verify` (often "-- N/A"), `### Vitest Hint` (or framework-appropriate name) replacing Playwright Hint, `### Developer Hints` — same rules as the existing black-box TCs.',
+      '',
+      'Every TC MUST appear in the §17 Test Case Appendix verbatim. The parser reads from the appendix.',
+      '',
+      '---',
+      '',
+      this.wrapSkill07Prompt(skillPrompt, contextPacket),
+    ].join('\n');
+
+    // Call the AI.
+    const runStartedAt = new Date();
+    const aiResponse = await this.callAiServiceWithRetry(
+      whiteBoxFocusedPrompt,
+      {
+        ...contextPacket,
+        currentFocusFeature: featureId,
+        whiteBoxMode: true,
+        lldArtifactId: lldArtifact.artifactId,
+        lldArtifactDbId: lldArtifact.id,
+      },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for white-box ${featureId}`);
+    }
+
+    // Parse and store. Parser is idempotent at the section level.
+    const before = await this.prisma.baTestCase.count({
+      where: { artifactDbId: ftcArtifact.id },
+    });
+    await this.ftcParser.parseAndStore(humanDocument, ftcArtifact.id);
+    const after = await this.prisma.baTestCase.count({
+      where: { artifactDbId: ftcArtifact.id },
+    });
+    const tcsAdded = after - before;
+
+    // Backfill the white-box-specific fields on TCs created in this run.
+    // The AI may forget any of: scope=white_box, linkedLldArtifactId,
+    // linkedFeatureIds, linkedPseudoFileIds. Enforce them deterministically.
+    const newTcs = await this.prisma.baTestCase.findMany({
+      where: {
+        artifactDbId: ftcArtifact.id,
+        createdAt: { gte: runStartedAt },
+      },
+      select: {
+        id: true,
+        scope: true,
+        linkedFeatureIds: true,
+        linkedLldArtifactId: true,
+        linkedPseudoFileIds: true,
+        aiContent: true,
+      },
+    });
+    const pathToId = new Map(allPseudoFiles.map((f) => [f.path, f.id]));
+    for (const tc of newTcs) {
+      const data: Record<string, unknown> = {};
+      if (tc.scope !== 'white_box') data.scope = 'white_box';
+      if (tc.linkedLldArtifactId !== lldArtifact.artifactId) {
+        data.linkedLldArtifactId = lldArtifact.artifactId;
+      }
+      if (!(tc.linkedFeatureIds ?? []).includes(featureId)) {
+        data.linkedFeatureIds = Array.from(new Set([...(tc.linkedFeatureIds ?? []), featureId]));
+      }
+      // Resolve pseudo-file paths (mentioned in TC content or in
+      // linkedPseudoFileIds as path strings) to BaPseudoFile UUIDs.
+      const tcText = `${tc.aiContent ?? ''}\n${(tc.linkedPseudoFileIds ?? []).join('\n')}`;
+      const referencedIds = new Set<string>();
+      for (const [path, id] of pathToId) {
+        if (tcText.includes(path)) referencedIds.add(id);
+      }
+      // Also keep any UUIDs already on the TC that match real pseudo-files.
+      const validIdSet = new Set(allPseudoFiles.map((f) => f.id));
+      for (const existing of tc.linkedPseudoFileIds ?? []) {
+        if (validIdSet.has(existing)) referencedIds.add(existing);
+      }
+      const resolvedIds = Array.from(referencedIds);
+      const currentIds = (tc.linkedPseudoFileIds ?? []).slice().sort();
+      const newIds = resolvedIds.slice().sort();
+      if (resolvedIds.length > 0 && currentIds.join(',') !== newIds.join(',')) {
+        data.linkedPseudoFileIds = resolvedIds;
+      }
+      if (Object.keys(data).length > 0) {
+        await this.prisma.baTestCase.update({
+          where: { id: tc.id },
+          data,
+        });
+      }
+    }
+
+    this.logger.log(
+      `SKILL-07-FTC white-box ${featureId}: appended ${tcsAdded} white-box TC(s) to ${ftcArtifact.id}`,
+    );
+    return {
+      featureId,
+      artifactId: ftcArtifact.id,
+      tcsAdded,
+      skipped: false,
+    };
+  }
+
+  /**
+   * Return the list of features that have NO white-box TCs yet on the
+   * module's FTC artifact. Used by the complete-pipeline gate.
+   */
+  async listFeaturesMissingWhiteBox(moduleDbId: string): Promise<string[]> {
+    const features = await this.listFeaturesForFtc(moduleDbId);
+    if (features.length === 0) return [];
+    const ftcArtifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.FTC },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!ftcArtifact) {
+      // No FTC yet — every feature is "missing" white-box TCs.
+      return features.map((f) => f.featureId);
+    }
+    const whiteBox = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId: ftcArtifact.id, scope: 'white_box' },
+      select: { linkedFeatureIds: true },
+    });
+    const covered = new Set<string>();
+    for (const tc of whiteBox) for (const fid of tc.linkedFeatureIds ?? []) covered.add(fid);
+    return features.map((f) => f.featureId).filter((fid) => !covered.has(fid));
   }
 
   /**
@@ -1778,16 +2729,46 @@ export class BaSkillOrchestratorService {
       throw new Error(`No FTC artifact for module ${mod.moduleId}. Run mode 1 (single-shot) or mode 2 (per-feature) first.`);
     }
 
+    // Skip-check looks for canonical narrative section keys, not raw count.
+    // Each per-feature mode-2 call writes a `test_case_appendix` section, so
+    // the previous "> 4 sections" threshold falsely triggered after just 5
+    // features even though no narrative had run yet. The narrative-only pass
+    // emits these specific keys (mapped from the §1–§5 + §9–§16 headings in
+    // FINAL-SKILL-07-create-ftc.md) — checking for any of them is the right
+    // signal that narrative content already exists on the artifact.
+    const NARRATIVE_KEYS = [
+      'summary',
+      'test_strategy',
+      'test_environment',
+      'master_data_setup',
+      'owasp_web_coverage',
+      'owasp_llm_coverage',
+      'data_cleanup',
+      'playwright_readiness',
+      'traceability_summary',
+      'open_questions_tbd',
+      'applied_defaults',
+    ];
     const existingSections = await this.prisma.baArtifactSection.findMany({
       where: { artifactId: artifact.id },
       select: { id: true, sectionKey: true },
     });
-    if (existingSections.length > 4) {
+    const existingNarrativeKeys = existingSections
+      .map((s) => s.sectionKey)
+      .filter((k) => NARRATIVE_KEYS.includes(k));
+    // Always render structural sections (Test Cases Index, Functional /
+    // Integration / White-Box Test Cases) deterministically from the TC
+    // catalogue. No AI cost. Runs before the narrative skip-check so a
+    // module whose narrative was already produced still gets its
+    // structural sections refreshed (e.g. after TC edits).
+    const structuralSectionsAdded = await this.ftcParser.renderStructuralSections(artifact.id);
+
+    if (existingNarrativeKeys.length >= 3) {
       return {
         artifactId: artifact.id,
-        sectionsAdded: 0,
+        sectionsAdded: structuralSectionsAdded,
         skipped: true,
-        reason: `Artifact already has ${existingSections.length} sections — narrative pass appears to have run already. Delete sections first to regenerate.`,
+        reason: `Artifact already has ${existingNarrativeKeys.length} canonical narrative section(s) (${existingNarrativeKeys.join(', ')}) — narrative pass skipped. Structural sections refreshed (${structuralSectionsAdded}). Delete narrative section rows first to regenerate AI narrative.`,
       };
     }
 
@@ -1906,6 +2887,381 @@ export class BaSkillOrchestratorService {
     return {
       artifactId: artifact.id,
       sectionsAdded,
+      skipped: false,
+    };
+  }
+
+  // ─── SKILL-07-FTC complete pipeline (one-shot for the stepper) ────────
+  //
+  // Runs every SKILL-07-FTC mode in the right order so the FTC stepper
+  // button on the BA tool can produce a complete, well-categorized FTC
+  // artifact in one click — no need for the architect to know about
+  // mode 2 / mode 2b / mode 2c / mode 3 separately.
+  //
+  // Pipeline:
+  //   1. Per-feature loop (mode 2) — happy / negative / boundary /
+  //      integration TCs grouped by feature (BLACK-BOX).
+  //   2. Per-category passes (mode 2b) — Security, UI, Performance, etc.
+  //      for any testType in `ftcConfig.testTypes` not already covered
+  //      by mode 2 (Functional + Integration). Still BLACK-BOX.
+  //   2c. Per-feature WHITE-BOX loop — only runs when an LLD artifact
+  //      exists for the module. Adds class/method-level white-box TCs
+  //      that link to LLD pseudo-files. Skipped silently when no LLD.
+  //   3. Narrative pass (mode 3) — Summary, Test Strategy, OWASP
+  //      Coverage Maps, Traceability Summary, Applied Best-Practice
+  //      Defaults, plus the structural sections (Test Cases Index, §6
+  //      Functional / §7 Integration / §8 White-Box body sections).
+  //
+  // Each step is idempotent. Re-running the pipeline only fills the
+  // missing pieces (e.g. if an architect adds a new feature later, the
+  // per-feature loop picks up just that feature; if they enable a new
+  // test type, the per-category pass picks up just that category; if
+  // they generate the LLD AFTER the FTC pipeline ran, re-running adds
+  // white-box TCs without touching the existing black-box ones).
+
+  /**
+   * Run the complete FTC pipeline (mode 2 + mode 2b + mode 2c + mode 3)
+   * for a module. Returns a per-step summary so the UI can show progress.
+   */
+  async executeSkill07Complete(
+    moduleDbId: string,
+  ): Promise<{
+    artifactId: string;
+    perFeature: Array<{ featureId: string; tcsAdded: number; skipped: boolean }>;
+    perCategory: Array<{ category: string; tcsAdded: number; skipped: boolean }>;
+    perFeatureWhiteBox: Array<{ featureId: string; tcsAdded: number; skipped: boolean }>;
+    narrative: { sectionsAdded: number; skipped: boolean };
+    totalTcs: number;
+  }> {
+    const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // Step 1: per-feature loop (black-box).
+    const features = await this.listFeaturesForFtc(moduleDbId);
+    const perFeature: Array<{ featureId: string; tcsAdded: number; skipped: boolean }> = [];
+    for (const f of features) {
+      try {
+        const r = await this.executeSkill07ForFeature(moduleDbId, f.featureId);
+        perFeature.push({ featureId: f.featureId, tcsAdded: r.tcsAdded, skipped: r.skipped });
+      } catch (err) {
+        this.logger.warn(
+          `SKILL-07-FTC complete: per-feature ${f.featureId} failed — ${err instanceof Error ? err.message : 'unknown'}; continuing`,
+        );
+        perFeature.push({ featureId: f.featureId, tcsAdded: 0, skipped: true });
+      }
+    }
+
+    // Step 2: per-category passes for missing categories (still black-box).
+    const missingCategories = await this.listMissingCategoriesForCoverage(moduleDbId);
+    const perCategory: Array<{ category: string; tcsAdded: number; skipped: boolean }> = [];
+    for (const cat of missingCategories) {
+      try {
+        const r = await this.executeSkill07ForCategory(moduleDbId, cat);
+        perCategory.push({ category: cat, tcsAdded: r.tcsAdded, skipped: r.skipped });
+      } catch (err) {
+        this.logger.warn(
+          `SKILL-07-FTC complete: per-category ${cat} failed — ${err instanceof Error ? err.message : 'unknown'}; continuing`,
+        );
+        perCategory.push({ category: cat, tcsAdded: 0, skipped: true });
+      }
+    }
+
+    // Step 2c: per-feature WHITE-BOX loop — only when an LLD artifact
+    // exists for the module. Each call cites LLD pseudo-files and emits
+    // class/method-level assertions with scope=white_box. Silently skips
+    // when there is no LLD (modules without an LLD have no class/method
+    // surface to cite, so white-box would be hallucinated).
+    const perFeatureWhiteBox: Array<{ featureId: string; tcsAdded: number; skipped: boolean }> = [];
+    const lldArtifactExists = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.LLD },
+      select: { id: true },
+    });
+    if (lldArtifactExists) {
+      for (const f of features) {
+        try {
+          const r = await this.executeSkill07ForFeatureWhiteBox(moduleDbId, f.featureId);
+          perFeatureWhiteBox.push({ featureId: f.featureId, tcsAdded: r.tcsAdded, skipped: r.skipped });
+        } catch (err) {
+          this.logger.warn(
+            `SKILL-07-FTC complete: white-box ${f.featureId} failed — ${err instanceof Error ? err.message : 'unknown'}; continuing`,
+          );
+          perFeatureWhiteBox.push({ featureId: f.featureId, tcsAdded: 0, skipped: true });
+        }
+      }
+    } else {
+      this.logger.log(
+        `SKILL-07-FTC complete: skipping white-box loop — no LLD artifact exists for ${mod.moduleId}`,
+      );
+    }
+
+    // Step 3: narrative + structural sections.
+    let narrative: { sectionsAdded: number; skipped: boolean } = { sectionsAdded: 0, skipped: true };
+    try {
+      const r = await this.executeSkill07Narrative(moduleDbId);
+      narrative = { sectionsAdded: r.sectionsAdded, skipped: r.skipped };
+    } catch (err) {
+      this.logger.warn(
+        `SKILL-07-FTC complete: narrative pass failed — ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+
+    const artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.FTC },
+      orderBy: { createdAt: 'desc' },
+    });
+    const totalTcs = artifact
+      ? await this.prisma.baTestCase.count({ where: { artifactDbId: artifact.id } })
+      : 0;
+
+    this.logger.log(
+      `SKILL-07-FTC complete pipeline finished for ${mod.moduleId}: ` +
+      `features=${perFeature.length}, categories=${perCategory.length}, ` +
+      `whiteBox=${perFeatureWhiteBox.length}, ` +
+      `narrative=${narrative.sectionsAdded}, totalTCs=${totalTcs}`,
+    );
+
+    return {
+      artifactId: artifact?.id ?? '',
+      perFeature,
+      perCategory,
+      perFeatureWhiteBox,
+      narrative,
+      totalTcs,
+    };
+  }
+
+  // ─── SKILL-06-LLD per-section regeneration (mode 06b) ─────────────────
+  //
+  // Single-shot LLD generation can truncate later sections or under-emit
+  // pseudo-files when a module is large (10+ features). This per-section
+  // mode does ONE focused AI call to regenerate exactly one canonical
+  // section without touching any other section. Used to fill gaps
+  // surfaced by `BaLldParserService.validateCompleteness`.
+  //
+  // Cost: ~$0.05/call (small focused prompt) vs ~$0.50 for a full re-run.
+  // Idempotent: skips when the target section is human-modified.
+
+  /**
+   * Map of canonical LLD sectionKey → human label + per-section AI focus.
+   * The focus blurb is woven into the override prompt so the AI knows
+   * exactly what content to emit for that single section. Keys mirror
+   * BaLldParserService.CANONICAL_SECTIONS.
+   */
+  private readonly LLD_SECTION_FOCUS: Record<string, { label: string; focus: string }> = {
+    summary: {
+      label: 'Summary',
+      focus: 'A 2-3 paragraph executive summary of the LLD: what this module is, who it serves, the high-level architecture choice, and the major risks / open questions. Cite the module ID + name.',
+    },
+    technology_stack: {
+      label: 'Technology Stack',
+      focus: 'Table of every layer (frontend / backend / database / streaming / caching / storage / cloud / architecture / DevOps) with: chosen tech, version, rationale (1-2 sentences each), and a "why-not alternatives" line. Use the exact stack from `lldConfig.stacks` in the input context — do not invent.',
+    },
+    architecture_overview: {
+      label: 'Architecture Overview',
+      focus: 'Architecture style (monolith / micro-service / event-driven / hexagonal / clean) with rationale. Include a Mermaid `architecture-beta` or `flowchart LR` diagram showing the top-level components and their data flow. Reference EPICs by ID where relevant.',
+    },
+    module_dependency_graph: {
+      label: 'Module Dependency Graph',
+      focus: 'Mermaid `flowchart TD` showing every internal module / package this LLD module depends on (or is depended on by), at the package level. List external dependencies (npm / maven / pip packages) separately as a markdown table. Annotate cycles if any.',
+    },
+    class_diagram: {
+      label: 'Class Diagram',
+      focus: 'Mermaid `classDiagram` for every domain class this module owns. Include: properties with types, public methods with signatures, inheritance arrows, association arrows. Cite the EPIC / User Story / SubTask each class implements in JavaDoc-style comments.',
+    },
+    sequence_diagrams: {
+      label: 'Sequence Diagrams',
+      focus: 'Mermaid `sequenceDiagram` for the 3-5 most critical flows in this module (one per section). Show actors → controllers → services → repositories → external integrations. Cite the User Story ID each flow implements.',
+    },
+    non_functional_requirements: {
+      label: 'Non-Functional Requirements',
+      focus: 'Table mapping each NFR (Scalability, Security, Performance, Responsive, Availability, Maintainability, etc.) → target value → mitigation pattern → which class/component owns it. Use NFR values from the input context (`nfr` field) as the source of truth — do not invent.',
+    },
+    api_contract_manifest: {
+      label: 'API Contract Manifest',
+      focus: 'Table of every REST endpoint this module exposes: `METHOD /path` | request schema (link to §9 Data Models) | response schema | error codes | auth required (Y/N) | rate limit. Group by feature. Cite EPIC/US IDs per endpoint.',
+    },
+    data_model_definitions: {
+      label: 'Data Model Definitions',
+      focus: 'For every entity / DTO / value object: TypeScript-style interface with field name, type, constraint (required, unique, fk to X), and a 1-line description. Group by aggregate root.',
+    },
+    schema_diagram: {
+      label: 'Schema Diagram',
+      focus: 'Mermaid `erDiagram` showing every database table / collection this module owns, with columns, primary/foreign keys, and relationships (1:1, 1:N, N:N). Include indices that matter for hot queries.',
+    },
+    integration_points: {
+      label: 'Integration Points',
+      focus: 'Class-level integration map: every external system this module calls (HTTP API, Kafka topic, gRPC service, S3 bucket, …) and the class/method that owns each one. Include retry / circuit-breaker policy per integration. Cross-reference the TBD-Future Integration Registry from input context.',
+    },
+    cross_cutting_concerns: {
+      label: 'Cross-Cutting Concerns',
+      focus: 'Table covering logging, error handling, transactions, audit trails, feature flags, i18n / l10n, request tracing, and metrics: which class / decorator / interceptor implements each, and where the configuration lives.',
+    },
+    env_var_secret_catalog: {
+      label: 'Env Var / Secret Catalog',
+      focus: 'Table of every env var / secret this module reads: name | type | example value | required (Y/N) | source (Vault, AWS Secrets Manager, .env, config map) | which class / config-loader consumes it.',
+    },
+    test_scaffold_hints: {
+      label: 'Test Scaffold Hints',
+      focus: 'Per-class test scaffold: list each public class → recommended test types (unit / integration / contract / e2e) → mocking strategy → coverage target. Mention the test framework that matches the chosen backend / frontend stack.',
+    },
+    build_ci_hooks: {
+      label: 'Build / CI Hooks',
+      focus: 'Build pipeline overview: build tool, test command, lint command, type-check command, container build, image tag scheme, deployment hook (Helm chart / Terraform / serverless deploy). One paragraph + a flow diagram if helpful.',
+    },
+    project_structure: {
+      label: 'Project Structure',
+      focus: 'Tree (text-based, like `tree -L 3` output) showing the source folder layout for this module: src/, tests/, configs/, etc. Use the architect-uploaded `projectStructureId` template (from input context) as the canonical reference — do not deviate from it.',
+    },
+    traceability_summary: {
+      label: 'Traceability Summary',
+      focus: 'Table mapping every FRD Feature → EPIC → User Story → SubTask → Class / Method (from the §5 Class Diagram) → Pseudo-File path (from `## Pseudo-Code Files`). Use real IDs from the input context (`rtmRows`).',
+    },
+    open_questions_tbd: {
+      label: 'Open Questions / TBD-Future References',
+      focus: 'Bulleted list of: (1) every TBD-Future integration from the registry that surfaced in this LLD, (2) open architectural questions the architect needs to resolve, (3) decisions that were made by AI default and need human review.',
+    },
+    applied_defaults: {
+      label: 'Applied Best-Practice Defaults',
+      focus: 'Bulleted list of every choice the AI made because input was missing or ambiguous: tech-stack defaults (when an `lldConfig.stacks.*` slot was null), architecture defaults, NFR target defaults, integration retry defaults. Each bullet: "Default applied: X | Reason: Y | Override by: filling in `lldConfig.<field>` and re-running."',
+    },
+  };
+
+  /**
+   * Generate ONE canonical LLD section and append/update it in place on
+   * the existing artifact. Idempotent: skips when the section is human-
+   * modified (preserves manual edits). Returns a summary the UI can
+   * surface.
+   */
+  async executeSkill06ForSection(
+    moduleDbId: string,
+    sectionKey: string,
+  ): Promise<{
+    sectionKey: string;
+    sectionLabel: string;
+    artifactId: string;
+    sectionWritten: boolean;
+    skipped: boolean;
+    reason?: string;
+  }> {
+    const focus = this.LLD_SECTION_FOCUS[sectionKey];
+    if (!focus) {
+      throw new Error(
+        `Unknown LLD section key "${sectionKey}". Supported: ${Object.keys(this.LLD_SECTION_FOCUS).join(', ')}`,
+      );
+    }
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    const artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.LLD },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!artifact) {
+      throw new Error(
+        `No LLD artifact for module ${mod.moduleId}. Run "Generate LLD" (single-shot) first; per-section regeneration only fills gaps in an existing artifact.`,
+      );
+    }
+
+    // Idempotency — preserve human edits.
+    const existing = await this.prisma.baArtifactSection.findFirst({
+      where: { artifactId: artifact.id, sectionKey },
+      select: { id: true, isHumanModified: true },
+    });
+    if (existing?.isHumanModified) {
+      return {
+        sectionKey,
+        sectionLabel: focus.label,
+        artifactId: artifact.id,
+        sectionWritten: false,
+        skipped: true,
+        reason: `Section ${focus.label} is human-modified; per-section regeneration skipped to preserve edits. Manually clear the row in the editor first if you want to overwrite.`,
+      };
+    }
+
+    const skillPrompt = this.loadSkillFile('SKILL-06-LLD');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-06-LLD');
+
+    // Pull existing section keys so the AI knows what's already populated
+    // (so it doesn't repeat earlier sections in cross-references). Also
+    // pull the existing summary + tech-stack content if any, so the AI's
+    // section stays consistent with what came before.
+    const existingSections = await this.prisma.baArtifactSection.findMany({
+      where: { artifactId: artifact.id },
+      select: { sectionKey: true, sectionLabel: true, content: true },
+    });
+    const populatedKeys = existingSections
+      .filter((s) => (s.content?.length ?? 0) >= 80)
+      .map((s) => s.sectionKey);
+
+    const sectionFocusedPrompt = [
+      '## 🎯 SKILL-06-LLD PER-SECTION FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      'You are running in per-section regeneration mode. The LLD artifact already exists; your job is to produce ONLY the single canonical section listed below, suitable for in-place replacement of the existing row.',
+      '',
+      `**TARGET SECTION: § ${focus.label}** (sectionKey: \`${sectionKey}\`)`,
+      '',
+      '### What to emit',
+      '',
+      `Emit a single \`## ${focus.label}\` heading followed by the section body. Do NOT emit any other section. Do NOT emit pseudo-code files. Do NOT emit a Test Case Appendix.`,
+      '',
+      '### Section-specific focus',
+      '',
+      focus.focus,
+      '',
+      '### Sections that ALREADY EXIST on this artifact (do not repeat)',
+      '',
+      populatedKeys.length > 0
+        ? populatedKeys.map((k) => `- \`${k}\``).join('\n')
+        : '- (none — this is the first section being populated)',
+      '',
+      '### Hard rules',
+      '',
+      '- One `## ` heading exactly, with the canonical label above. The parser matches case-insensitively.',
+      '- Body content ≥ 200 characters (the validator flags shorter sections as truncated).',
+      '- Cite EPIC / User Story / SubTask / Feature IDs from the input context wherever applicable — never invent IDs.',
+      '- Use the architect-saved tech stack from `lldConfig.stacks` (input context) — never substitute a different stack.',
+      '- Stay consistent with the existing populated sections listed above.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (for context — focus on the target section above; do not emit other sections)',
+      '',
+      skillPrompt,
+    ].join('\n');
+
+    const aiResponse = await this.callAiServiceWithRetry(
+      sectionFocusedPrompt,
+      { ...contextPacket, currentFocusSection: sectionKey },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for section ${sectionKey}`);
+    }
+
+    // The parser is idempotent — first-wins for human-modified rows, in-
+    // place update for AI-generated ones. The AI may have emitted other
+    // sections inadvertently; the parser will store all of them but the
+    // target sectionKey is the one we report on.
+    await this.lldParser.parseAndStore(humanDocument, artifact.id);
+
+    const after = await this.prisma.baArtifactSection.findFirst({
+      where: { artifactId: artifact.id, sectionKey },
+      select: { content: true },
+    });
+    const sectionWritten = !!after && (after.content?.length ?? 0) >= 80;
+
+    this.logger.log(
+      `SKILL-06-LLD per-section ${sectionKey}: ${sectionWritten ? 'wrote' : 'failed to write'} on ${artifact.id}`,
+    );
+    return {
+      sectionKey,
+      sectionLabel: focus.label,
+      artifactId: artifact.id,
+      sectionWritten,
       skipped: false,
     };
   }
@@ -2053,18 +3409,36 @@ export class BaSkillOrchestratorService {
     });
     if (!config) return 'default';
 
-    const pickId = config.backendStackId ?? config.frontendStackId ?? config.architectureId;
-    let base: string;
-    if (!pickId) {
-      base = 'default';
-    } else {
+    // Combine backend + frontend stacks (when both selected) into a hyphenated
+    // suffix that reflects the full stack at a glance, e.g. `nestjs-tailwind`.
+    // Falls back to architecture or `default` if neither stack is selected.
+    // Resolves each id → master-data entry → its `value` (preferred) or `name`.
+    const slugFor = async (id: string | null): Promise<string | null> => {
+      if (!id) return null;
       const entry = await this.prisma.baMasterDataEntry.findUnique({
-        where: { id: pickId },
+        where: { id },
         select: { value: true, name: true },
       });
-      const raw = (entry?.value ?? entry?.name ?? 'default').toLowerCase();
+      const raw = (entry?.value ?? entry?.name ?? '').toLowerCase();
       const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '');
-      base = cleaned || 'default';
+      return cleaned || null;
+    };
+
+    const backendSlug = await slugFor(config.backendStackId);
+    const frontendSlug = await slugFor(config.frontendStackId);
+    const archSlug = await slugFor(config.architectureId);
+
+    let base: string;
+    if (backendSlug && frontendSlug) {
+      base = `${backendSlug}-${frontendSlug}`;
+    } else if (backendSlug) {
+      base = backendSlug;
+    } else if (frontendSlug) {
+      base = frontendSlug;
+    } else if (archSlug) {
+      base = archSlug;
+    } else {
+      base = 'default';
     }
 
     if (config.narrative && config.narrative.trim()) {

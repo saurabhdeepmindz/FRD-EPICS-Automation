@@ -319,6 +319,41 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         'test_case_appendix',
       ]);
 
+      // Canonical ordering for FTC sections — matches FINAL-SKILL-07-create-ftc.md
+      // §3 / BaFtcParserService.CANONICAL_SECTIONS. Without this, the tree
+      // shows sections in DB insertion order, so per-feature mode 2's
+      // appendix rows appear before mode 3's Summary / Test Strategy /
+      // OWASP Coverage — which doesn't match the canonical document order
+      // a single-shot module produces.
+      const FTC_SECTION_ORDER = [
+        'summary',
+        'test_strategy',
+        'test_environment',
+        'master_data_setup',
+        'test_cases_index',
+        'functional_test_cases',
+        'integration_test_cases',
+        'white_box_test_cases',
+        'owasp_web_coverage',
+        'owasp_llm_coverage',
+        'data_cleanup',
+        'playwright_readiness',
+        'ac_coverage_verification',
+        'traceability_summary',
+        'open_questions_tbd',
+        'applied_defaults',
+        'test_case_appendix',
+      ];
+      const ftcOrderIndex = (key: string): number => {
+        const i = FTC_SECTION_ORDER.indexOf(key);
+        return i === -1 ? FTC_SECTION_ORDER.length : i;
+      };
+
+      const rawSections = mergedSubtaskSections ?? artifact.sections;
+      const orderedSections = artifact.artifactType === 'FTC'
+        ? [...rawSections].sort((a, b) => ftcOrderIndex(a.sectionKey) - ftcOrderIndex(b.sectionKey))
+        : rawSections;
+
       return {
         artifact,
         label: formatArtifactLabel(artifact),
@@ -332,7 +367,7 @@ function buildTree(executions: BaSkillExecution[], artifacts: BaArtifact[]): Ski
         userStoryExtras,
         subtaskGroups,
         children: showRawChildren
-          ? (mergedSubtaskSections ?? artifact.sections)
+          ? orderedSections
               .filter((s) =>
                 artifact.artifactType !== 'FTC' || !FTC_HIDDEN_SECTION_KEYS.has(s.sectionKey),
               )
@@ -1255,11 +1290,40 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                               Test cases live in a separate table — loaded
                               asynchronously into testCasesByArtifact and
                               grouped into 8 canonical categories + a
-                              White-Box bucket. Empty buckets are hidden. */}
+                              White-Box bucket. Inside each category bucket,
+                              TCs are sub-grouped by their first
+                              linkedFeatureIds entry so the architect can
+                              navigate "Functional Test Cases → F-04-01 →
+                              individual TCs". Empty buckets are hidden. */}
                           {artifactNode.artifact.artifactType === 'FTC' && (() => {
                             const artifactDbId = artifactNode.artifact.id;
                             const tcs = testCasesByArtifact[artifactDbId] ?? [];
                             if (tcs.length === 0) return null;
+
+                            // Build a featureId → featureName map from the
+                            // FRD artifact in the same module (when present).
+                            // The FRD's parsed features carry both ID and
+                            // human label; the FTC TCs only have IDs in
+                            // linkedFeatureIds, so we look up the names here
+                            // for display. Falls back to the bare ID when
+                            // no FRD is found (defensive).
+                            const moduleDbId = artifactNode.artifact.module?.id;
+                            const frdArtifact = moduleDbId
+                              ? artifacts.find(
+                                  (a) => a.module?.id === moduleDbId && a.artifactType === 'FRD',
+                                )
+                              : undefined;
+                            const featureNameById = new Map<string, string>();
+                            if (frdArtifact) {
+                              try {
+                                const parsedFrd = parseFrdContent(frdArtifact.sections);
+                                for (const f of parsedFrd.features) {
+                                  if (f.featureId) featureNameById.set(f.featureId, f.featureName ?? f.featureId);
+                                }
+                              } catch {
+                                // ignore parse errors — fall back to bare IDs
+                              }
+                            }
 
                             const CATEGORY_ORDER = [
                               'Functional', 'Integration', 'Security',
@@ -1287,6 +1351,36 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                               orderedGroups.push({ key: 'white_box', label: 'White-Box', tcs: whiteBox });
                             }
 
+                            // Bucket TCs by their first linkedFeatureIds
+                            // entry. TCs without a feature link land in a
+                            // synthetic "(Ungrouped)" bucket so they remain
+                            // visible (defensive — the AI nearly always
+                            // populates linkedFeatureIds).
+                            const UNGROUPED = '__ungrouped__';
+                            const groupTcsByFeature = (tcsInGroup: BaTestCase[]) => {
+                              const featBuckets = new Map<string, BaTestCase[]>();
+                              for (const tc of tcsInGroup) {
+                                const fid = (tc.linkedFeatureIds ?? [])[0] ?? UNGROUPED;
+                                if (!featBuckets.has(fid)) featBuckets.set(fid, []);
+                                featBuckets.get(fid)!.push(tc);
+                              }
+                              // Sort feature buckets by feature ID (locale +
+                              // numeric so F-04-09 < F-04-10). UNGROUPED at
+                              // the end.
+                              const sortedKeys = Array.from(featBuckets.keys()).sort((a, b) => {
+                                if (a === UNGROUPED) return 1;
+                                if (b === UNGROUPED) return -1;
+                                return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+                              });
+                              return sortedKeys.map((fid) => ({
+                                featureId: fid,
+                                featureLabel: fid === UNGROUPED
+                                  ? '(Ungrouped — no feature link)'
+                                  : `${fid}${featureNameById.has(fid) ? ' — ' + featureNameById.get(fid) : ''}`,
+                                tcs: featBuckets.get(fid) ?? [],
+                              }));
+                            };
+
                             return orderedGroups.map((group, gIdx) => {
                               const groupNum = `${artifactNum}.${artifactNode.children.length + gIdx + 1}`;
                               const categoryKey = `${artifactDbId}:${group.key}`;
@@ -1295,6 +1389,7 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                 && activeNode.sectionId?.startsWith('__test_case__')
                                 && group.tcs.some((t) => activeNode.sectionId === `__test_case__:${t.id}`);
                               const isExpanded = expandedCategory[categoryKey] ?? isAnyTcInGroupActive;
+                              const featureBuckets = groupTcsByFeature(group.tcs);
                               return (
                                 <div key={categoryKey}>
                                   <div className="flex items-center">
@@ -1315,40 +1410,70 @@ export function ArtifactTree({ executions, artifacts, activeNode, onNodeSelect }
                                   </div>
                                   {isExpanded && (
                                     <div className="ml-5 border-l border-border/30">
-                                      {group.tcs.map((tc, tcIdx) => {
-                                        const tcNum = `${groupNum}.${tcIdx + 1}`;
-                                        const isTcActive = activeNode?.type === 'section'
+                                      {featureBuckets.map((featBucket, fIdx) => {
+                                        const featureNum = `${groupNum}.${fIdx + 1}`;
+                                        const featureKey = `${categoryKey}:${featBucket.featureId}`;
+                                        const isAnyTcInFeatureActive = activeNode?.type === 'section'
                                           && activeNode.artifactId === artifactDbId
-                                          && activeNode.sectionId === `__test_case__:${tc.id}`;
+                                          && activeNode.sectionId?.startsWith('__test_case__')
+                                          && featBucket.tcs.some((t) => activeNode.sectionId === `__test_case__:${t.id}`);
+                                        const isFeatureExpanded = expandedCategory[featureKey] ?? isAnyTcInFeatureActive;
                                         return (
-                                          <button
-                                            key={tc.id}
-                                            onClick={() => onNodeSelect({ type: 'section', artifactId: artifactDbId, sectionId: `__test_case__:${tc.id}` })}
-                                            className={cn(
-                                              'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
-                                              isTcActive
-                                                ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
-                                                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                          <div key={featureKey}>
+                                            <div className="flex items-center">
+                                              <button
+                                                onClick={() => setExpandedCategory((p) => ({ ...p, [featureKey]: !(p[featureKey] ?? isAnyTcInFeatureActive) }))}
+                                                className="pl-2 pr-0 py-1 text-muted-foreground hover:text-foreground"
+                                              >
+                                                {isFeatureExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                              </button>
+                                              <div className="flex-1 flex items-center gap-1.5 pl-1 pr-2 py-1 text-left text-[11px] text-muted-foreground/90">
+                                                <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{featureNum}</span>
+                                                <span className="truncate" title={featBucket.featureLabel}>{featBucket.featureLabel}</span>
+                                                <span className="ml-auto text-[9px] text-muted-foreground/50 shrink-0">{featBucket.tcs.length}</span>
+                                              </div>
+                                            </div>
+                                            {isFeatureExpanded && (
+                                              <div className="ml-5 border-l border-border/30">
+                                                {featBucket.tcs.map((tc, tcIdx) => {
+                                                  const tcNum = `${featureNum}.${tcIdx + 1}`;
+                                                  const isTcActive = activeNode?.type === 'section'
+                                                    && activeNode.artifactId === artifactDbId
+                                                    && activeNode.sectionId === `__test_case__:${tc.id}`;
+                                                  return (
+                                                    <button
+                                                      key={tc.id}
+                                                      onClick={() => onNodeSelect({ type: 'section', artifactId: artifactDbId, sectionId: `__test_case__:${tc.id}` })}
+                                                      className={cn(
+                                                        'w-full flex items-center gap-1.5 pl-3 pr-2 py-1 text-left text-[11px] transition-colors',
+                                                        isTcActive
+                                                          ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary -ml-px'
+                                                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                                                      )}
+                                                      title={tc.title}
+                                                    >
+                                                      <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{tcNum}</span>
+                                                      <span className="font-mono shrink-0 text-primary text-[10px]">{tc.testCaseId}</span>
+                                                      <span className="truncate">{tc.title}</span>
+                                                      {/* testKind micro-pill */}
+                                                      {tc.testKind === 'negative' && (
+                                                        <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-bold shrink-0">NEG</span>
+                                                      )}
+                                                      {tc.isIntegrationTest && (
+                                                        <span className="text-[8px] bg-orange-100 text-orange-700 px-1 rounded font-bold shrink-0">INT</span>
+                                                      )}
+                                                      {tc.owaspCategory && (
+                                                        <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-mono shrink-0">{tc.owaspCategory}</span>
+                                                      )}
+                                                      {tc.isHumanModified && (
+                                                        <User className="h-2.5 w-2.5 text-amber-500 shrink-0" />
+                                                      )}
+                                                    </button>
+                                                  );
+                                                })}
+                                              </div>
                                             )}
-                                            title={tc.title}
-                                          >
-                                            <span className="text-muted-foreground shrink-0 font-mono text-[9px]">{tcNum}</span>
-                                            <span className="font-mono shrink-0 text-primary text-[10px]">{tc.testCaseId}</span>
-                                            <span className="truncate">{tc.title}</span>
-                                            {/* testKind micro-pill */}
-                                            {tc.testKind === 'negative' && (
-                                              <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-bold shrink-0">NEG</span>
-                                            )}
-                                            {tc.isIntegrationTest && (
-                                              <span className="text-[8px] bg-orange-100 text-orange-700 px-1 rounded font-bold shrink-0">INT</span>
-                                            )}
-                                            {tc.owaspCategory && (
-                                              <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-mono shrink-0">{tc.owaspCategory}</span>
-                                            )}
-                                            {tc.isHumanModified && (
-                                              <User className="h-2.5 w-2.5 text-amber-500 shrink-0" />
-                                            )}
-                                          </button>
+                                          </div>
                                         );
                                       })}
                                     </div>

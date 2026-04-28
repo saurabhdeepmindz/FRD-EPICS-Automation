@@ -534,6 +534,49 @@ export default function BaPreviewPage() {
       }
     }
 
+    // ── FTC: sort by canonical section order (matches FINAL-SKILL-07
+    //    §3 / BaFtcParserService.CANONICAL_SECTIONS). Without this the
+    //    TOC shows sections in DB insertion order — per-feature mode 2
+    //    inserts test_case_appendix first, narrative pass inserts
+    //    Summary/Strategy/etc. later, so the appendix appears at the
+    //    top and Summary in the middle. Sorting by canonical order
+    //    matches the structure of single-shot mode 1 modules.
+    if (doc.artifactType === 'FTC') {
+      const FTC_SECTION_ORDER = [
+        'summary',
+        'test_strategy',
+        'test_environment',
+        'master_data_setup',
+        'test_cases_index',
+        'functional_test_cases',
+        'integration_test_cases',
+        'white_box_test_cases',
+        'owasp_web_coverage',
+        'owasp_llm_coverage',
+        'data_cleanup',
+        'playwright_readiness',
+        'ac_coverage_verification',
+        'traceability_summary',
+        'open_questions_tbd',
+        'applied_defaults',
+        'test_case_appendix',
+      ];
+      const orderIndex = (key: string): number => {
+        const i = FTC_SECTION_ORDER.indexOf(key);
+        return i === -1 ? FTC_SECTION_ORDER.length : i;
+      };
+      return [...raw]
+        .sort((a, b) => orderIndex(a.sectionKey) - orderIndex(b.sectionKey))
+        .map((s) => ({
+          id: s.id,
+          label: s.sectionLabel,
+          sectionKey: s.sectionKey,
+          content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+          isAi: s.aiGenerated && !s.isHumanModified,
+          isEdited: s.isHumanModified,
+        }));
+    }
+
     // ── SubTask / Screen Analysis / LLD / other: raw sections 1:1 ─────
     return raw.map((s) => ({
       id: s.id,

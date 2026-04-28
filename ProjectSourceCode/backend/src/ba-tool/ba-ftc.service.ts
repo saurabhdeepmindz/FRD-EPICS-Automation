@@ -67,9 +67,23 @@ export class BaFtcService {
   async getFtcArtifact(moduleDbId: string) {
     const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
     if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
-    if (!mod.ftcArtifactId) return null;
-    return this.prisma.baArtifact.findUnique({
-      where: { id: mod.ftcArtifactId },
+    // Resolution order:
+    //   1. mod.ftcArtifactId (denormalised pointer) — fast, used when fresh
+    //   2. Latest FTC artifact for this module — fallback when the pointer
+    //      is null OR points to a deleted row (e.g. after a wipe + per-
+    //      feature recreation, where the orchestrator's per-feature
+    //      paths create the artifact directly without bumping the
+    //      pointer). This makes the lookup self-healing.
+    if (mod.ftcArtifactId) {
+      const byPointer = await this.prisma.baArtifact.findUnique({
+        where: { id: mod.ftcArtifactId },
+        include: { sections: { orderBy: { createdAt: 'asc' } } },
+      });
+      if (byPointer) return byPointer;
+    }
+    return this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: 'FTC' },
+      orderBy: { createdAt: 'desc' },
       include: { sections: { orderBy: { createdAt: 'asc' } } },
     });
   }

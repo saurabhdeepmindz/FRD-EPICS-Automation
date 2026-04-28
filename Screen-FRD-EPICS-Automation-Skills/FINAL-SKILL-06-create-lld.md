@@ -398,11 +398,67 @@ If the Architect selected every category, this section has a single "None" line.
 
 - **No hallucinated IDs.** Every `FRD: F-XX-XX` / `EPIC: …` / `US: …` / `ST: …` citation in docstrings and the Traceability Summary must appear in the provided `rtmRows` or handoff packets.
 - **Self-consistent pseudo tree.** A class referenced in another class's Collaborators must have its own pseudo-file.
-- **Preserve templates verbatim where the Architect uploaded them.** If `resolvedTemplates.lld` is set, follow its structure (add sections if needed; never drop the 15 required headings).
-- **All 15 LLD sections must be present** even if the body is "N/A" or "No entries".
+- **Preserve templates verbatim where the Architect uploaded them.** If `resolvedTemplates.lld` is set, follow its structure (add sections if needed; never drop the 19 required headings).
+- **All 19 LLD sections must be present** even if the body is "N/A" or "No entries".
 - **Every pseudo-file has class + method docstrings with Traceability blocks** — no empty docstrings.
 - **Method bodies are TODOs only.** No compilable logic. No partial implementations.
 - **Output is a single markdown document** — no JSON sidecar, no preamble, no trailing commentary, no repeated headings.
+- **Module-wide scope, NOT per-user-story.** The output is ONE LLD document covering ALL features in the module. Do NOT scope the document to a single user story (e.g. `# LLD: <Feature> (US-NNN, MOD-NN, F-NN-NN)` followed by per-story `## 1. Identification` / `## 2. RTM Traceability` / `## 4. Public Contract` etc.) — those headings are NOT canonical and the parser will store them under non-canonical keys, leaving the §1–§19 slots empty. On large modules the AI defaults to per-story scope without explicit guidance; this rule is the corrective.
+
+---
+
+## Mermaid syntax rules (CRITICAL — render failures are user-visible)
+
+Sections §4 Module Dependency Graph, §5 Class Diagram, §6 Sequence Diagrams, and §10 Schema Diagram contain ```` ```mermaid ```` fenced code blocks. The frontend uses Mermaid 11+ which is strict about syntax. Two specific failure modes the AI consistently produces:
+
+1. **`graph` / `flowchart` blocks** — node labels containing parens, slashes, ampersands, colons, hashes, pipes, or curly braces MUST be wrapped in double-quotes:
+
+   ```text
+   ❌ A[ResearchChatController/Service]             (slash crashes Mermaid 11)
+   ❌ F[PaymentServiceClient (TBD)]                 (parens crash Mermaid)
+   ✅ A["ResearchChatController/Service"]
+   ✅ F["PaymentServiceClient (TBD)"]
+   ```
+
+   Rule: if the bracket contents contain any of `( ) / & # : | { }`, quote them.
+
+2. **`erDiagram` blocks** — column types MUST be lowercase Mermaid primitives. Do NOT use SQL-style capitalised type names — Mermaid 11's parser rejects them.
+
+   ```text
+   ❌ UUID userId PK        ✅ uuid userId PK
+   ❌ String title          ✅ string title
+   ❌ DateTime createdAt    ✅ datetime createdAt
+   ❌ Enum status           ✅ string status   (Mermaid has no enum primitive)
+   ❌ Decimal price         ✅ decimal price
+   ```
+
+   Allowed primitives: `int`, `string`, `text`, `boolean`, `float`, `double`, `decimal`, `date`, `datetime`, `time`, `timestamp`, `uuid`, `binary`, `blob`. Anything else: lowercase it.
+
+3. **Arrow targets must reference node identifiers (A, B, …), never label text**:
+
+   ```text
+   ❌ B -- writes/reads --> AIResponse              (`AIResponse` is a label, not an id)
+   ✅ B -- writes/reads --> S                       (`S` is the node id defined as `S[AIResponse]`)
+   ```
+
+The backend parser has a deterministic Mermaid sanitizer as a safety net (`mermaid-sanitizer.ts`), but emitting clean Mermaid the first time is preferred — it avoids fallback transformations and produces shorter, more readable source.
+
+---
+
+## Frontend pseudo-file quota (when frontend stack is selected)
+
+Backend-only LLDs ship with backend controllers + services + DTOs. That is necessary but NOT sufficient for a frontend-bearing project. When the architect picked a frontend stack — and especially **Next.js + Tailwind** — the LLD MUST also produce the App Router skeleton, route handlers, and frontend tests. A "components-only" output (a flat `components/` folder with `.tsx` stubs and no pages) is INCOMPLETE: it leaves the developer to invent the routing, layouts, and data-fetching shape from scratch.
+
+For Next.js + Tailwind specifically, produce ALL of the following file types (replace counts with `featureCount`):
+
+1. **App Router pages** — at minimum ONE `frontend/app/<feature-slug>/page.tsx` per user-facing feature (≥ `featureCount` pages). Each page is a React Server Component by default; mark `'use client'` only when interactivity (forms, hooks, event handlers) requires it. Pages compose components from `frontend/components/...` and fetch data via the route handlers below.
+2. **Route handlers** — at minimum ONE `frontend/app/api/<resource>/route.ts` per backend resource the frontend reads or writes. These are server-side request handlers that proxy to the backend (or implement the endpoint directly when the frontend is the source of truth). When backend stack is NestJS / Spring / FastAPI / Django, route handlers can be sparser (~20% of feature count) since the frontend can call the backend service directly via api-client hooks under `frontend/features/<x>/<x>api.ts`.
+3. **Layouts** — at least ONE `frontend/app/layout.tsx` (root layout) and one `frontend/app/<feature-slug>/layout.tsx` if the feature has nested routes / shared chrome. Layouts wrap pages with HTML shell, fonts, providers (theme, query client), and Tailwind imports.
+4. **Components** under `frontend/components/<feature-slug>/<ComponentName>.tsx`. Mark `'use client'` for interactive components. Pure presentational components stay server components. Aim for ~1.5× feature count.
+5. **Frontend tests** — at minimum ONE `*.test.tsx` per non-trivial component, under `tests/frontend/components/<feature-slug>/<ComponentName>.test.tsx`. Use the testing framework matching the architect's testTypes selection (Playwright for e2e, Vitest / React Testing Library for unit). Include traceability docstrings.
+6. **Tailwind utility classes** — every JSX element in pseudo-code that has visual styling should include realistic Tailwind utility classes (`className="container mx-auto p-6"`, `flex items-center gap-2`, etc.). Do NOT inline `<style>` tags or import CSS modules — the architect picked Tailwind.
+
+The backend's deterministic LLD validator (`BaLldParserService.validateCompleteness`) flags shortfalls against these quotas and surfaces them as gaps in the AI LLD Workbench's validator card.
 
 ---
 

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { sanitizeMermaidInMarkdown } from './mermaid-sanitizer';
 
 interface ParsedLldSection {
   sectionNumber: number;
@@ -73,13 +74,49 @@ export class BaLldParserService {
     sectionsCreated: number;
     pseudoFilesCreated: number;
   }> {
-    const { lldDocument, pseudoBlock } = this.splitDocumentAndFiles(rawMarkdown);
+    // Pre-sanitize Mermaid blocks before parsing so that ```mermaid fences
+    // with broken AI syntax (unquoted labels with parens/slashes,
+    // capitalised erDiagram type names, …) are corrected before we store
+    // them. Deterministic, idempotent — see mermaid-sanitizer.ts.
+    // The wrapSkill06Prompt prompt also instructs the AI to emit clean
+    // Mermaid; this sanitizer is the safety net for when the AI slips up.
+    const cleanedMarkdown = sanitizeMermaidInMarkdown(rawMarkdown);
+    const { lldDocument, pseudoBlock } = this.splitDocumentAndFiles(cleanedMarkdown);
 
     const sections = this.parseLldSections(lldDocument);
     const pseudoFiles = this.parsePseudoFiles(pseudoBlock);
 
-    // Write sections
+    // Write sections — idempotent per (artifactId, sectionKey). Per-section
+    // re-runs (mode 06b) and re-clicks of "Generate LLD" must not duplicate
+    // rows. Strategy:
+    //   - If no existing row → insert.
+    //   - If existing row + isHumanModified=true → SKIP (preserve human edits).
+    //   - If existing row + isHumanModified=false → UPDATE in place (re-runs
+    //     are intentional; the parser owns AI-generated content).
     for (const s of sections) {
+      const existing = await this.prisma.baArtifactSection.findFirst({
+        where: { artifactId: lldArtifactDbId, sectionKey: s.sectionKey },
+        select: { id: true, isHumanModified: true },
+      });
+      if (existing) {
+        if (existing.isHumanModified) {
+          this.logger.warn(
+            `LLD parser: skipped overwrite of ${s.sectionKey} — section was edited by a human`,
+          );
+          continue;
+        }
+        try {
+          await this.prisma.baArtifactSection.update({
+            where: { id: existing.id },
+            data: { content: s.content, sectionLabel: s.sectionLabel },
+          });
+        } catch (err) {
+          this.logger.warn(
+            `LLD parser: failed to update ${s.sectionKey}: ${err instanceof Error ? err.message : 'unknown'}`,
+          );
+        }
+        continue;
+      }
       try {
         await this.prisma.baArtifactSection.create({
           data: {
@@ -122,6 +159,311 @@ export class BaLldParserService {
       `LLD parser: created ${sections.length} sections + ${pseudoFiles.length} pseudo files for artifact ${lldArtifactDbId}`,
     );
     return { sectionsCreated: sections.length, pseudoFilesCreated: pseudoFiles.length };
+  }
+
+  // ─── Completeness validator (deterministic, no AI) ────────────────────
+  //
+  // After SKILL-06-LLD runs (or after a per-section regen), the architect
+  // needs to know whether the artifact is "done" or has gaps. Single-shot
+  // LLD on a large module (e.g. 9+ features) can truncate later sections
+  // or under-emit pseudo-files. This method scans the stored artifact and
+  // returns a structured report so the UI can highlight what to fix.
+  //
+  // No AI cost: just DB reads + heuristics.
+
+  /**
+   * Per-section completeness verdict. `present=true` only when the row
+   * exists and content length ≥ MIN_SECTION_CHARS (catches truncated /
+   * placeholder content like "TODO" or "See Section 9").
+   */
+  private readonly MIN_SECTION_CHARS = 80;
+
+  /**
+   * Heuristic: a "good" LLD has at least 1.5 pseudo-files per feature.
+   * MOD-1's reference (6 features → 16 files) is ~2.7×; we set the floor
+   * conservatively so small modules aren't flagged as incomplete.
+   */
+  private readonly PSEUDO_FILES_PER_FEATURE = 1.5;
+
+  async validateCompleteness(lldArtifactDbId: string): Promise<{
+    artifactId: string;
+    sections: Array<{
+      sectionKey: string;
+      sectionLabel: string;
+      present: boolean;
+      contentLen: number;
+      thin: boolean;
+      isHumanModified: boolean;
+    }>;
+    sectionsPresent: number;
+    sectionsExpected: number;
+    pseudoFilesCount: number;
+    pseudoFilesExpected: number;
+    featuresWithoutPseudoFiles: string[];
+    /**
+     * Frontend coverage breakdown — populated only when the architect
+     * picked a frontend stack (lldConfig.frontendStackId is non-null).
+     * `null` when frontend isn't applicable (backend-only modules).
+     */
+    frontendCoverage: {
+      stackName: string | null;
+      pagesCount: number;
+      pagesExpected: number;
+      routeHandlersCount: number;
+      routeHandlersExpected: number;
+      componentsCount: number;
+      componentsExpected: number;
+      frontendTestsCount: number;
+      frontendTestsExpected: number;
+      featuresWithoutPage: string[];
+      isComplete: boolean;
+    } | null;
+    gaps: string[];
+    isComplete: boolean;
+  }> {
+    const artifact = await this.prisma.baArtifact.findUnique({
+      where: { id: lldArtifactDbId },
+    });
+    if (!artifact) {
+      throw new Error(`LLD artifact ${lldArtifactDbId} not found`);
+    }
+
+    // Per-section presence + thinness check
+    const existing = await this.prisma.baArtifactSection.findMany({
+      where: { artifactId: lldArtifactDbId },
+      select: { sectionKey: true, sectionLabel: true, content: true, isHumanModified: true },
+    });
+    const byKey = new Map(existing.map((s) => [s.sectionKey, s]));
+
+    const sections = this.CANONICAL_SECTIONS.map(({ key, label }) => {
+      const row = byKey.get(key);
+      const contentLen = row?.content?.length ?? 0;
+      const present = !!row && contentLen >= this.MIN_SECTION_CHARS;
+      const thin = !!row && contentLen > 0 && contentLen < this.MIN_SECTION_CHARS;
+      return {
+        sectionKey: key,
+        sectionLabel: label,
+        present,
+        contentLen,
+        thin,
+        isHumanModified: row?.isHumanModified ?? false,
+      };
+    });
+    const sectionsPresent = sections.filter((s) => s.present).length;
+    const sectionsExpected = sections.length;
+
+    // Pseudo-files coverage check. The schema has `aiContent` (parser-written)
+    // and `editedContent` (human-modified). Prefer the edited content where
+    // present so feature-ID references the architect added are picked up.
+    const pseudoFiles = await this.prisma.baPseudoFile.findMany({
+      where: { artifactDbId: lldArtifactDbId },
+      select: { path: true, aiContent: true, editedContent: true },
+    });
+    const pseudoFilesCount = pseudoFiles.length;
+
+    // Look up the module's RTM features so we can flag features with zero
+    // pseudo-file references. Pseudo-file content typically cites EPIC /
+    // US / ST IDs in JavaDoc comments; we substring-match against the
+    // feature ID list.
+    const moduleId = artifact.moduleDbId
+      ? (await this.prisma.baModule.findUnique({
+          where: { id: artifact.moduleDbId },
+          select: { moduleId: true, projectId: true },
+        }))
+      : null;
+    let featureIds: string[] = [];
+    let featuresWithoutPseudoFiles: string[] = [];
+    let pseudoFilesExpected = 0;
+    if (moduleId) {
+      const rtm = await this.prisma.baRtmRow.findMany({
+        where: { projectId: moduleId.projectId ?? '', moduleId: moduleId.moduleId },
+        select: { featureId: true },
+      });
+      featureIds = Array.from(
+        new Set(rtm.map((r) => r.featureId).filter((x): x is string => !!x && /^F-\d+-\d+$/.test(x))),
+      );
+      pseudoFilesExpected = Math.ceil(featureIds.length * this.PSEUDO_FILES_PER_FEATURE);
+      const allPseudoText = pseudoFiles
+        .map((f) => `${f.path}\n${f.editedContent ?? f.aiContent ?? ''}`)
+        .join('\n\n');
+      featuresWithoutPseudoFiles = featureIds.filter((fid) => !allPseudoText.includes(fid));
+    }
+
+    // Frontend coverage check — only runs when the architect picked a
+    // frontend stack. Backend-only modules skip this entirely.
+    let frontendCoverage: {
+      stackName: string | null;
+      pagesCount: number;
+      pagesExpected: number;
+      routeHandlersCount: number;
+      routeHandlersExpected: number;
+      componentsCount: number;
+      componentsExpected: number;
+      frontendTestsCount: number;
+      frontendTestsExpected: number;
+      featuresWithoutPage: string[];
+      isComplete: boolean;
+    } | null = null;
+    if (moduleId && artifact.moduleDbId) {
+      const cfg = await this.prisma.baLldConfig.findUnique({
+        where: { moduleDbId: artifact.moduleDbId },
+      });
+      const frontendStackId = cfg?.frontendStackId ?? null;
+      if (frontendStackId) {
+        const stackEntry = await this.prisma.baMasterDataEntry.findUnique({
+          where: { id: frontendStackId },
+          select: { name: true, value: true },
+        });
+        const stackName = stackEntry?.name ?? stackEntry?.value ?? null;
+
+        // Detect "full backend" stack — when present, Next.js route
+        // handlers are largely optional because the frontend calls the
+        // backend service directly via fetch / RTK Query / api-client
+        // hooks. Without a full backend stack (frontend-only Next.js or
+        // Remix), route handlers ARE the primary server-side entry
+        // point and the heuristic should require many.
+        const FULL_BACKEND_STACKS = new Set([
+          'nestjs', 'spring', 'springboot', 'spring-boot',
+          'fastapi', 'django', 'rails', 'ruby-on-rails',
+          'express', 'koa', 'hapi',
+          'asp.net', 'aspnet', 'aspnetcore', 'dotnet',
+          'laravel', 'flask', 'echo', 'gin',
+        ]);
+        let backendStackSlug: string | null = null;
+        if (cfg?.backendStackId) {
+          const backendEntry = await this.prisma.baMasterDataEntry.findUnique({
+            where: { id: cfg.backendStackId },
+            select: { value: true, name: true },
+          });
+          const raw = (backendEntry?.value ?? backendEntry?.name ?? '').toLowerCase();
+          backendStackSlug = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || null;
+        }
+        const hasFullBackendStack =
+          backendStackSlug !== null && FULL_BACKEND_STACKS.has(backendStackSlug);
+
+        // Path-based heuristics. The AI may write paths under any of:
+        // `LLD-PseudoCode/frontend/...`, `LLD-PseudoCode/app/...`,
+        // `LLD-PseudoCode/components/...`, etc. We classify by leaf file
+        // pattern, which is more robust than top-folder matching.
+        const pagePathRe = /\/app\/(?!api\/)[^/]+\/(?:[^/]+\/)*page\.(tsx|jsx|ts|js)$/;
+        const routeHandlerPathRe = /\/app\/api\/(?:[^/]+\/)+route\.(ts|js)$/;
+        // De-facto route-handler-equivalent in Next.js + NestJS / Spring /
+        // FastAPI architectures: per-feature API client hooks under
+        // `frontend/features/<x>/<x>api.ts` (RTK Query slices, Tanstack
+        // Query hooks, SWR hooks, plain fetch wrappers). These centralise
+        // the frontend's calls into the backend, exactly the role a route
+        // handler would play in a frontend-only stack. We count them.
+        const apiClientHookPathRe = /\/frontend\/features\/[^/]+\/[^/]*api\.(ts|js)$/i;
+        const componentPathRe = /\.(tsx|jsx)$/;
+        const frontendTestPathRe = /\.(test|spec)\.(tsx|jsx|ts|js)$/;
+
+        let pagesCount = 0;
+        let routeHandlersCount = 0;
+        let componentsCount = 0;
+        let frontendTestsCount = 0;
+        const allFrontendText: string[] = [];
+
+        for (const f of pseudoFiles) {
+          const isPage = pagePathRe.test(f.path);
+          const isRoute = routeHandlerPathRe.test(f.path) || apiClientHookPathRe.test(f.path);
+          const isComp = componentPathRe.test(f.path);
+          const isTest = frontendTestPathRe.test(f.path) && /\.(tsx|jsx)$/.test(f.path);
+          if (isPage) pagesCount++;
+          if (isRoute) routeHandlersCount++;
+          if (isComp && !isTest && !isPage) componentsCount++;
+          if (isTest) frontendTestsCount++;
+          if (isPage || isRoute || isComp || isTest) {
+            allFrontendText.push(`${f.path}\n${f.editedContent ?? f.aiContent ?? ''}`);
+          }
+        }
+
+        const featCount = featureIds.length;
+        const pagesExpected = Math.max(featCount, 1);
+        // Route-handler target is stack-aware: full backend = optional
+        // (1-3 is fine), frontend-only = primary entry point (~70% of features).
+        const routeHandlersExpected = hasFullBackendStack
+          ? Math.max(1, Math.ceil(featCount * 0.2))
+          : Math.max(Math.ceil(featCount * 0.7), 3);
+        // Components target: 1.5× feature count (was 2× — too aggressive
+        // for typical Next.js apps where one component covers multiple
+        // feature slots e.g. a shared list / detail / form trio).
+        const componentsExpected = Math.max(Math.ceil(featCount * 1.5), 6);
+        const frontendTestsExpected = Math.max(featCount, 4);
+
+        const frontendBlob = allFrontendText.join('\n\n');
+        const featuresWithoutPage = featureIds.filter((fid) => !frontendBlob.includes(fid));
+
+        const fcComplete =
+          pagesCount >= pagesExpected &&
+          routeHandlersCount >= routeHandlersExpected &&
+          componentsCount >= componentsExpected &&
+          frontendTestsCount >= frontendTestsExpected &&
+          featuresWithoutPage.length === 0;
+
+        frontendCoverage = {
+          stackName,
+          pagesCount,
+          pagesExpected,
+          routeHandlersCount,
+          routeHandlersExpected,
+          componentsCount,
+          componentsExpected,
+          frontendTestsCount,
+          frontendTestsExpected,
+          featuresWithoutPage,
+          isComplete: fcComplete,
+        };
+      }
+    }
+
+    const gaps: string[] = [];
+    for (const s of sections) {
+      if (!s.present) {
+        gaps.push(`§ ${s.sectionLabel}: ${s.thin ? 'thin (' + s.contentLen + ' chars)' : 'missing'}`);
+      }
+    }
+    if (pseudoFilesCount < pseudoFilesExpected) {
+      gaps.push(
+        `Pseudo-files: ${pseudoFilesCount}/${pseudoFilesExpected} (under target — expected ≥ ${pseudoFilesExpected} for ${featureIds.length} features)`,
+      );
+    }
+    if (featuresWithoutPseudoFiles.length > 0) {
+      gaps.push(
+        `Features without pseudo-file coverage: ${featuresWithoutPseudoFiles.join(', ')}`,
+      );
+    }
+    // Frontend-coverage gap reporting (only when frontend stack is selected)
+    if (frontendCoverage) {
+      const fc = frontendCoverage;
+      if (fc.pagesCount < fc.pagesExpected) {
+        gaps.push(`Frontend App Router pages: ${fc.pagesCount}/${fc.pagesExpected} (need a \`frontend/app/<feature>/page.tsx\` per feature)`);
+      }
+      if (fc.routeHandlersCount < fc.routeHandlersExpected) {
+        gaps.push(`Frontend route handlers: ${fc.routeHandlersCount}/${fc.routeHandlersExpected} (need \`frontend/app/api/<resource>/route.ts\` files)`);
+      }
+      if (fc.componentsCount < fc.componentsExpected) {
+        gaps.push(`Frontend components: ${fc.componentsCount}/${fc.componentsExpected} (need \`.tsx\` UI components per feature)`);
+      }
+      if (fc.frontendTestsCount < fc.frontendTestsExpected) {
+        gaps.push(`Frontend tests: ${fc.frontendTestsCount}/${fc.frontendTestsExpected} (need \`*.test.tsx\` files for components)`);
+      }
+      if (fc.featuresWithoutPage.length > 0) {
+        gaps.push(`Features without frontend page reference: ${fc.featuresWithoutPage.join(', ')}`);
+      }
+    }
+
+    return {
+      artifactId: lldArtifactDbId,
+      sections,
+      sectionsPresent,
+      sectionsExpected,
+      pseudoFilesCount,
+      pseudoFilesExpected,
+      featuresWithoutPseudoFiles,
+      frontendCoverage,
+      gaps,
+      isComplete: gaps.length === 0,
+    };
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────

@@ -17,38 +17,79 @@ description: Produce a Functional Test Case (FTC) artifact — canonical section
 
 ## 1b. Orchestrator Modes — choose the right invocation for the module size
 
-The same skill prompt drives THREE different orchestrator flows. The choice depends on how much content the module carries (number of features × stories × subtasks). All three modes write to the SAME `BaArtifact` of type `FTC` for the module — modes 2 and 3 append to whatever mode 1 (or the previous mode-2 calls) produced.
+The same skill prompt drives FIVE different orchestrator flows. The choice depends on how much content the module carries (number of features × stories × subtasks) and which test types the architect wants. All modes write to the SAME `BaArtifact` of type `FTC` for the module — modes 2, 2b, 2c, and 3 append to whatever mode 1 (or the previous mode-2/2b/2c calls) produced.
 
 | Mode | Endpoint | When to use | What the AI emits |
 | --- | --- | --- | --- |
 | **1. Single-shot** (legacy) | `POST /api/ba/modules/:id/generate-ftc` | Small / simple modules: ≤ 4 features OR ≤ 8 user stories. AI fits everything in one response within its output token budget (~16-32 K). | Full document — all 16 canonical sections + Test Case Appendix with every TC. |
-| **2. Per-feature append** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/feature/:featureId` (loop the features from `GET .../ftc-features`) | Large modules: > 4 features OR > 8 stories — single-shot caps at one feature group's worth of TCs and silently drops the rest. | TCs only, scoped to ONE feature: §6 / §7 / §8 content for that feature plus its slice of §13 AC Coverage. Suppresses §1–§5, §9–§12, §14–§16. Skip if the feature already has TCs (idempotent). |
-| **3. Narrative-only append** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative` | After mode 2 completes — fills in the §1–§5 + §9–§12 + §14–§16 narrative sections that mode 2 deliberately omitted. | Section bodies only: Summary, Test Strategy, Test Environment, Master Data Setup, OWASP Web/LLM Coverage Maps, Data Cleanup, Playwright Readiness, Traceability Summary, Open Questions, Applied Best-Practice Defaults. NO `tc` fenced blocks (TCs already exist from mode 2). |
+| **2. Per-feature append** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/feature/:featureId` (loop the features from `GET .../ftc-features`) | Large modules: > 4 features OR > 8 stories — single-shot caps at one feature group's worth of TCs and silently drops the rest. | Black-box TCs scoped to ONE feature: §6 / §7 content for that feature plus its slice of §13 AC Coverage. Suppresses §1–§5, §9–§12, §14–§16. Skip if the feature already has TCs (idempotent). TC IDs are feature-prefixed (`TC-04-01-NNN`, `Neg_TC-04-01-NNN`) to prevent collisions across the loop. |
+| **2b. Per-category append** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/category/:category` (categories: Security, UI, Performance, Accessibility, Data, Smoke, Regression) | After mode 2 completes — mode 2's per-feature loop emits Functional + Integration TCs but rarely OWASP / UI / Performance / Accessibility coverage. This mode adds TCs for ONE category spanning all features. | Black-box TCs scoped to ONE category: ~8-15 TCs spanning every relevant feature with `category=<category>` set on each. TC IDs are category-prefixed (`TC-SEC-NNN`, `TC-UI-NNN`, `TC-PERF-NNN`, …). Skip if TCs of that category already exist. |
+| **2c. Per-feature white-box append** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/white-box/:featureId` | After mode 2 completes AND an LLD artifact exists for the module — adds white-box TCs that cite class/method names from the LLD. | TCs scoped to ONE feature with `scope=white_box`, `linkedLldArtifactId`, `linkedPseudoFileIds` populated. Tests target class invariants, algorithm steps, exception paths, mocked collaborators (NOT user-visible behaviour). TC IDs are white-box-prefixed (`WB-04-01-NNN`, `Neg_WB-04-01-NNN`). Idempotent. Skipped silently when no LLD exists for the module. |
+| **3. Narrative-only append** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative` | After modes 2 / 2b / 2c complete — fills in the §1–§5 + §9–§12 + §14–§16 narrative sections that earlier modes deliberately omitted. Also (always) re-renders structural sections (§5 Test Cases Index / §6 Functional / §7 Integration / §8 White-Box) deterministically from current TC rows. | Section bodies only: Summary, Test Strategy, Test Environment, Master Data Setup, OWASP Web/LLM Coverage Maps, Data Cleanup, Playwright Readiness, Traceability Summary, Open Questions, Applied Best-Practice Defaults. NO `tc` fenced blocks (TCs already exist from modes 2/2b/2c). |
+| **Complete pipeline** | `POST /api/ba/modules/:id/execute/SKILL-07-FTC/complete` | One-button stepper UX — runs mode 2 → mode 2b for any selected `testTypes` not yet covered → mode 2c for every feature (when LLD exists) → mode 3. Each step idempotent so re-clicks fill only the missing pieces. | Per-step summary `{ perFeature, perCategory, perFeatureWhiteBox, narrative, totalTcs }`. |
 
 ### Recommended flow for a new module
 
 ```text
-1. GET  /api/ba/modules/:id/ftc-features         → list of F-NN-NN
-2. POST /api/ba/modules/:id/execute/SKILL-07-FTC/feature/:featureId   (×N, once per feature)
-3. POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative            (once, after step 2)
+1. GET  /api/ba/modules/:id/ftc-features                                → list of F-NN-NN
+2. POST /api/ba/modules/:id/execute/SKILL-07-FTC/feature/:featureId     (×N, once per feature)
+3. POST /api/ba/modules/:id/execute/SKILL-07-FTC/category/:category     (×M, once per missing category)
+4. POST /api/ba/modules/:id/execute/SKILL-07-FTC/white-box/:featureId   (×N, once per feature, only if LLD exists)
+5. POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative              (once, after steps 2-4)
 ```
 
-After step 3 the FTC artifact has both a complete TC catalogue (mode 2) and the canonical narrative sections (mode 3) — visually identical to a successful mode-1 run on a small module, but with full coverage on a large one.
+OR equivalently: `POST /api/ba/modules/:id/execute/SKILL-07-FTC/complete` runs all five steps in order.
+
+After step 5 the FTC artifact has a complete TC catalogue (modes 2 + 2b + 2c) plus the canonical narrative sections (mode 3) — visually identical to a successful mode-1 run on a small module, but with full breadth (all categories) and depth (white-box class/method coverage) on a large one.
 
 ### Mode-2 author rules (you, the AI, when called per-feature)
 
 - Generate TCs for **the feature passed in the override** only — do not produce TCs for other features (they get their own sub-call).
-- Tag every TC's `linkedFeatureIds` to include the focus feature so the orchestrator can query "show me TCs for F-04-08" without a re-parse. The orchestrator backfills this if you forget, but emitting it explicitly is preferred.
+- Tag every TC's `linkedFeatureIds` to include ONLY the focus feature — do not fan out across all features. The orchestrator backfills this if you forget, but emitting it explicitly is preferred.
+- Use **feature-prefixed TC IDs** (`TC-04-01-NNN` for positive, `Neg_TC-04-01-NNN` for negative). Plain `TC-001` numbering causes silent collisions across the loop because each call starts at 001.
+- Set `scenarioGroup` to a SHORT human label (e.g. `"Login"`, `"Search — Validation"`, `"SLA Breach Banner"`). Do NOT use the feature ID itself as the scenarioGroup — `linkedFeatureIds` already captures it.
 - Do NOT emit module-wide narrative sections (§1–§5, §9–§12, §14–§16) — mode 3 produces them.
-- DO still emit §6 / §7 / §8 (the TC body sections) for the current feature's TCs, plus the corresponding §13 AC Coverage rows for the ACs this feature covers.
+- DO still emit §6 / §7 (the TC body sections) for the current feature's TCs, plus the corresponding §13 AC Coverage rows for the ACs this feature covers.
 - DO still emit a §17 Test Case Appendix with every `tc id=...` block from §6–§8 repeated verbatim (the parser reads from there).
+
+### Mode-2b author rules (you, the AI, when called per-category)
+
+- Generate TCs for **the category passed in the override** only — do not emit TCs of other categories (they get their own sub-call or are produced by mode 2).
+- Set `category=<the-category>` on every TC. Tag every TC with at least one feature in `linkedFeatureIds` — pick the most relevant feature for the test scenario.
+- Use **category-prefixed TC IDs** (`TC-SEC-NNN`, `TC-UI-NNN`, `TC-PERF-NNN`, `TC-A11Y-NNN`, `TC-DATA-NNN`, `TC-SMK-NNN`, `TC-REG-NNN`). Avoids collision with mode-2 feature-prefixed IDs.
+- Cover 8–15 TCs total spanning the most relevant features for this category. Skip features where the category does not apply (e.g. backend-only features for Accessibility).
+- Same content rules as mode 2 — all 10 H3 sub-section blocks, full Test Case Appendix at the end.
+
+### Mode-2c author rules (you, the AI, when called per-feature white-box)
+
+- Set `scope=white_box` on every TC (NOT `black_box`).
+- Assertions target **internal class/method contracts**, not user-visible behaviour:
+  - Class invariants (state of private fields after operations)
+  - Each Algorithm step from the LLD JavaDoc/JSDoc — one TC per step where applicable
+  - Exception paths (each `@throws` in the docstring)
+  - Mocked-collaborator behaviour (verify the right method was called with the right args)
+- Test framework is **unit-level**: Vitest / JUnit / pytest-unit / Mocha — NOT Playwright / k6 / Cypress. Use `### Vitest Hint` (or framework-appropriate name) heading instead of `### Playwright Hint`.
+- Use **white-box-prefixed TC IDs** (`WB-04-01-NNN` for positive, `Neg_WB-04-01-NNN` for negative).
+- Set `linkedFeatureIds` to ONLY the focus feature, `linkedLldArtifactId` to the LLD artifact's ID, `linkedPseudoFileIds` to the comma-separated paths of the LLD pseudo-files this TC tests (the orchestrator resolves paths to BaPseudoFile UUIDs after parsing).
+- Aim for 5–10 white-box TCs per feature spanning the classes that implement it. Skip getters/setters and trivial DTOs.
+- Use `### E2E Flow: N/A — unit test` for white-box (there is no end-to-end flow at the unit level).
 
 ### Mode-3 author rules (you, the AI, when called narrative-only)
 
 - Emit all 11 narrative sections (§1–§5, §9–§12, §14–§16) using `##` (level-2) headings with the canonical labels listed in §3 below.
 - The orchestrator passes the existing TC IDs as input context — use them to populate OWASP coverage tables, the Traceability Summary, and AC Coverage references. Do NOT emit any `tc id=...` fenced block (TCs already live in the artifact).
 - §10 OWASP Web Coverage and §11 OWASP LLM Coverage — populate only with TC IDs from the input list. If the input has no TCs tagged for a given OWASP control, leave the row's "covered" cell as ❌ and add a one-line gap note in the row.
-- §17 Test Case Appendix is NOT regenerated by mode 3 — it's already populated by mode 2.
+- §17 Test Case Appendix is NOT regenerated by mode 3 — it's already populated by modes 2 / 2b / 2c.
+
+### Complete pipeline (mode 1+2+2b+2c+3)
+
+The `executeSkill07Complete` orchestrator method runs the full sequence in one HTTP call. Each step is idempotent:
+- Mode 2 skips features that already have black-box TCs
+- Mode 2b skips categories that already have TCs
+- Mode 2c skips features that already have white-box TCs (and skips the entire phase if no LLD exists)
+- Mode 3 skips narrative if it already exists; always refreshes structural sections
+
+Re-running the complete pipeline after adding a new feature, enabling a new test type, or generating an LLD only fills the new gaps.
 
 ## 2. Context Management — What This Skill Receives
 

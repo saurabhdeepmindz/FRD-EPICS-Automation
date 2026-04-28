@@ -11,7 +11,10 @@ import {
 import {
   getFtcConfig,
   saveFtcConfig,
-  generateFtc,
+  generateFtcComplete,
+  generateFtcWhiteBoxForFeature,
+  listFtcFeaturesForModule,
+  refreshFtcNarrative,
   getFtc,
   listFtcsForModule,
   getBaModule,
@@ -95,6 +98,8 @@ export default function FtcWorkbenchPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [generatingWhiteBox, setGeneratingWhiteBox] = useState(false);
+  const [whiteBoxProgress, setWhiteBoxProgress] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<AcCoverageBundle | null>(null);
   const [exportingSafe, setExportingSafe] = useState(false);
@@ -246,41 +251,197 @@ export default function FtcWorkbenchPage() {
         throw new Error(`Save config failed — ${extractErrorMessage(err)}`);
       }
 
-      // Kick off generation. Returns RUNNING immediately with an execution id.
-      let executionId: string;
+      // Run the complete pipeline: per-feature loop → per-category passes
+      // for any selected testTypes (Security / UI / Performance / etc.) →
+      // narrative + structural sections. Each step is idempotent on the
+      // backend; if the request is interrupted, re-clicking Generate
+      // resumes by filling only the missing pieces.
+      //
+      // Long-running: ~30-90 s per AI call × (features + categories + 1
+      // narrative). 9-feature module with 5 testTypes ≈ 10 min.
+      const ack = window.confirm(
+        'Generate the complete FTC artifact? This runs the full pipeline:\n\n' +
+        '  1. Per-feature loop (~1 AI call per feature)\n' +
+        '  2. Per-category passes for selected test types (Security, UI, Performance, …)\n' +
+        '  3. Narrative + structural sections\n\n' +
+        'Total time: 5-15 minutes. Keep this tab open. Each step is idempotent — ' +
+        'if interrupted, re-clicking Generate resumes from where it stopped.',
+      );
+      if (!ack) {
+        setGenerating(false);
+        return;
+      }
+
+      let result: Awaited<ReturnType<typeof generateFtcComplete>>;
       try {
-        const res = await generateFtc(moduleDbId);
-        executionId = res.executionId;
+        result = await generateFtcComplete(moduleDbId);
       } catch (err: unknown) {
-        throw new Error(`Kick-off failed — ${extractErrorMessage(err)}`);
+        throw new Error(`Pipeline failed — ${extractErrorMessage(err)}`);
       }
 
-      alert(`FTC generation started (execution ${executionId}). This can take 2-5 min — the page will refresh automatically.`);
-
-      // Poll every 10s up to 10 min. A new artifact id (different from what
-      // we currently have loaded) signals the run finished.
-      const priorArtifactId = ftc?.artifact?.id ?? null;
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 10_000));
-        try {
-          const latest = await getFtc(moduleDbId);
-          if (latest.artifact && latest.artifact.id !== priorArtifactId) {
-            setFtc(latest);
-            const all = await listFtcsForModule(moduleDbId);
-            setAllFtcs(all);
-            setSelectedFtcId(latest.artifact.id);
-            break;
-          }
-        } catch {
-          // transient poll errors — keep trying
-        }
+      // Refresh the workbench with the latest artifact + TC list.
+      try {
+        const latest = await getFtc(moduleDbId);
+        setFtc(latest);
+        const all = await listFtcsForModule(moduleDbId);
+        setAllFtcs(all);
+        if (latest.artifact) setSelectedFtcId(latest.artifact.id);
+      } catch {
+        // best-effort refresh; leave existing state if the read fails
       }
+
+      const featureSummary = `${result.perFeature.length} feature(s) — ${result.perFeature.reduce((sum, f) => sum + f.tcsAdded, 0)} TC(s) added (skipped: ${result.perFeature.filter((f) => f.skipped).length})`;
+      const categorySummary = result.perCategory.length > 0
+        ? `${result.perCategory.length} category pass(es) — ${result.perCategory.map((c) => `${c.category}: ${c.tcsAdded}`).join(', ')}`
+        : 'no per-category passes (testTypes covered by per-feature loop)';
+      const whiteBoxList = result.perFeatureWhiteBox ?? [];
+      const whiteBoxSummary = whiteBoxList.length > 0
+        ? `${whiteBoxList.length} feature(s) — ${whiteBoxList.reduce((sum, f) => sum + f.tcsAdded, 0)} white-box TC(s) added (skipped: ${whiteBoxList.filter((f) => f.skipped).length})`
+        : 'skipped (no LLD artifact for this module)';
+      const narrativeSummary = result.narrative.skipped
+        ? `narrative skipped (already generated); structural sections refreshed (${result.narrative.sectionsAdded})`
+        : `narrative + structural sections written (${result.narrative.sectionsAdded})`;
+      alert(
+        `FTC complete pipeline finished.\n\n` +
+        `• Per-feature: ${featureSummary}\n` +
+        `• Per-category: ${categorySummary}\n` +
+        `• White-box: ${whiteBoxSummary}\n` +
+        `• Narrative: ${narrativeSummary}\n\n` +
+        `Total test cases on artifact: ${result.totalTcs}`,
+      );
     } catch (err: unknown) {
       alert(`Generate failed: ${extractErrorMessage(err)}`);
     } finally {
       setGenerating(false);
     }
-  }, [moduleDbId, form, ftc]);
+  }, [moduleDbId, form]);
+
+  /**
+   * Generate WHITE-BOX TCs for every feature on the module — sequential
+   * per-feature loop using the focused mode-2c endpoint. Each call costs
+   * ~$0.05 / ~30-60 s and is idempotent (skips features that already
+   * have white-box TCs). Used as the post-LLD shortcut: generate the
+   * LLD, then click this button to add white-box coverage without
+   * re-running the entire FTC pipeline.
+   *
+   * Prerequisites checked client-side (button disabled when not met):
+   *   - LLD artifact exists (mod.lldArtifactId is set)
+   *   - FTC artifact exists (ftc.artifact is non-null)
+   *
+   * Backend will additionally short-circuit if the feature already has
+   * white-box TCs, so re-clicks are safe.
+   */
+  const handleGenerateWhiteBox = useCallback(async () => {
+    setGeneratingWhiteBox(true);
+    setWhiteBoxProgress('');
+    try {
+      // Pre-flight: must have both LLD and FTC artifacts. The button is
+      // already disabled when these are missing, but we double-check to
+      // give a clearer message when the page state is stale.
+      if (!mod?.lldArtifactId) {
+        throw new Error('No LLD artifact for this module. Generate the LLD on the AI LLD Workbench first — white-box TCs cite class/method names from the LLD.');
+      }
+      if (!ftc?.artifact) {
+        throw new Error('No FTC artifact yet. Click "Generate FTC" first to produce the base black-box test cases — white-box appends to the existing artifact.');
+      }
+
+      // Fetch feature list for the loop.
+      let features: Awaited<ReturnType<typeof listFtcFeaturesForModule>>;
+      try {
+        features = await listFtcFeaturesForModule(moduleDbId);
+      } catch (err: unknown) {
+        throw new Error(`Failed to load features — ${extractErrorMessage(err)}`);
+      }
+      if (features.length === 0) {
+        throw new Error('No features found for this module. RTM is empty — generate EPICs first.');
+      }
+
+      const ack = window.confirm(
+        `Generate white-box TCs for ${features.length} feature(s)?\n\n` +
+        `Each AI call is focused (one feature at a time, scoped to its LLD pseudo-files).\n` +
+        `Cost: ~$0.05 per feature (~$${(features.length * 0.05).toFixed(2)} total).\n` +
+        `Time: ~30-60 s per feature (~${features.length}-${features.length * 2} min total).\n\n` +
+        `Idempotent — features that already have white-box TCs are skipped.\n` +
+        `Keep this tab open. If interrupted, re-clicking resumes where it stopped.`,
+      );
+      if (!ack) {
+        setGeneratingWhiteBox(false);
+        return;
+      }
+
+      // Sequential loop — keeps token-budget pressure off the AI service
+      // and gives clear progress feedback. Parallelising would be faster
+      // but harder to reason about (rate limits, DB write contention).
+      const results: Array<{ featureId: string; tcsAdded: number; skipped: boolean; error?: string }> = [];
+      for (let i = 0; i < features.length; i++) {
+        const f = features[i];
+        setWhiteBoxProgress(`Generating white-box for ${f.featureId} (${i + 1} of ${features.length})…`);
+        try {
+          const r = await generateFtcWhiteBoxForFeature(moduleDbId, f.featureId);
+          results.push({ featureId: f.featureId, tcsAdded: r.tcsAdded, skipped: r.skipped });
+        } catch (err: unknown) {
+          // Don't abort the whole loop on a single feature failure —
+          // record it and continue so the architect gets partial coverage.
+          results.push({
+            featureId: f.featureId,
+            tcsAdded: 0,
+            skipped: false,
+            error: extractErrorMessage(err),
+          });
+        }
+      }
+
+      // Refresh structural sections (§5 Test Cases Index / §6 Functional /
+      // §7 Integration / §8 White-Box) so the preview / TOC reflect the
+      // new white-box TCs. The narrative endpoint always runs the
+      // deterministic structural-sections renderer at the start, even
+      // when the AI narrative pass itself short-circuits — which it will,
+      // because narrative was already produced earlier in the pipeline.
+      setWhiteBoxProgress('Refreshing structural sections (§8 White-Box)…');
+      try {
+        await refreshFtcNarrative(moduleDbId);
+      } catch (err: unknown) {
+        // Non-fatal: TCs landed; only the document section refresh failed.
+        // Architect can re-validate or re-click later.
+        // eslint-disable-next-line no-console
+        console.warn('Structural sections refresh failed:', extractErrorMessage(err));
+      }
+
+      // Refresh the workbench with the latest artifact + TC list.
+      try {
+        const latest = await getFtc(moduleDbId);
+        setFtc(latest);
+        const all = await listFtcsForModule(moduleDbId);
+        setAllFtcs(all);
+        if (latest.artifact) setSelectedFtcId(latest.artifact.id);
+      } catch {
+        // best-effort refresh; leave existing state if the read fails
+      }
+
+      const totalAdded = results.reduce((sum, r) => sum + r.tcsAdded, 0);
+      const skippedCount = results.filter((r) => r.skipped).length;
+      const erroredCount = results.filter((r) => r.error).length;
+      const erroredList = results.filter((r) => r.error).map((r) => `${r.featureId}: ${r.error}`);
+
+      const lines = [
+        `White-box generation finished.`,
+        ``,
+        `• ${features.length} feature(s) processed`,
+        `• ${totalAdded} white-box TC(s) added`,
+        `• ${skippedCount} feature(s) skipped (already had white-box)`,
+      ];
+      if (erroredCount > 0) {
+        lines.push(`• ${erroredCount} feature(s) errored:`);
+        for (const e of erroredList) lines.push(`    - ${e}`);
+      }
+      alert(lines.join('\n'));
+    } catch (err: unknown) {
+      alert(`Generate White-Box failed: ${extractErrorMessage(err)}`);
+    } finally {
+      setGeneratingWhiteBox(false);
+      setWhiteBoxProgress('');
+    }
+  }, [moduleDbId, mod?.lldArtifactId, ftc?.artifact]);
 
   const selectedFtc = useMemo(() => {
     if (!selectedFtcId) return ftc;
@@ -414,11 +575,51 @@ export default function FtcWorkbenchPage() {
             {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
             Save config
           </Button>
-          <Button size="sm" onClick={handleGenerate} disabled={generating}>
+          {/*
+            Generate White-Box button — focused subset of the full FTC
+            pipeline. Calls the per-feature white-box endpoint (mode 2c)
+            in a sequential loop. Disabled when there's no LLD artifact
+            (white-box has no class/method surface to cite) or no FTC
+            artifact (white-box appends, doesn't create). Idempotent on
+            the backend so re-clicks are safe.
+          */}
+          {(() => {
+            const hasLld = !!mod?.lldArtifactId;
+            const hasFtc = !!ftc?.artifact;
+            const disabled = generating || generatingWhiteBox || !hasLld || !hasFtc;
+            const tooltip = generating
+              ? 'Another generation is in progress'
+              : !hasFtc
+                ? 'Generate base FTC first — white-box appends to the existing artifact'
+                : !hasLld
+                  ? 'Generate the LLD first (AI LLD Workbench) — white-box TCs cite class/method names from the LLD'
+                  : 'Generate white-box TCs for every feature, scoped to the LLD\'s classes/methods. ~$0.05 per feature, ~30-60 s per feature. Idempotent.';
+            return (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleGenerateWhiteBox}
+                disabled={disabled}
+                title={tooltip}
+              >
+                {generatingWhiteBox
+                  ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  : <ShieldCheck className="h-3.5 w-3.5 mr-1" />}
+                {generatingWhiteBox ? 'Generating White-Box…' : 'Generate White-Box'}
+              </Button>
+            );
+          })()}
+          <Button size="sm" onClick={handleGenerate} disabled={generating || generatingWhiteBox}>
             {generating ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Rocket className="h-3.5 w-3.5 mr-1" />}
             {ftc?.artifact ? 'Regenerate FTC' : 'Generate FTC'}
           </Button>
         </div>
+        {generatingWhiteBox && whiteBoxProgress && (
+          <div className="px-6 pb-2 -mt-1 text-[11px] text-muted-foreground italic flex items-center gap-2">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {whiteBoxProgress}
+          </div>
+        )}
       </header>
 
       <main className="p-6 max-w-6xl mx-auto space-y-6">

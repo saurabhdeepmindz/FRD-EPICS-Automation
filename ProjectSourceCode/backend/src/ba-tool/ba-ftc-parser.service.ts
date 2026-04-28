@@ -100,7 +100,45 @@ export class BaFtcParserService {
     const testCases = this.parseTestCases(rawMarkdown);
     const acCoverage = this.parseAcCoverage(rawMarkdown);
 
+    // Section storage is idempotent per (artifactId, sectionKey):
+    //   - test_case_appendix: APPEND new content to existing row (per-feature
+    //     mode 2 calls each emit one appendix; we want a single consolidated
+    //     section, not 9 duplicates).
+    //   - All other keys (narrative + Test Cases Index + Functional /
+    //     Integration / White-Box test case body sections): first-wins.
+    //     Subsequent calls log a warning rather than overwrite or duplicate.
+    const APPEND_KEYS = new Set(['test_case_appendix']);
     for (const s of sections) {
+      const existing = await this.prisma.baArtifactSection.findFirst({
+        where: { artifactId: ftcArtifactDbId, sectionKey: s.sectionKey },
+        select: { id: true, content: true, isHumanModified: true },
+      });
+      if (existing) {
+        if (APPEND_KEYS.has(s.sectionKey)) {
+          if (existing.isHumanModified) {
+            this.logger.warn(
+              `FTC parser: skipped append to ${s.sectionKey} — section was edited by a human`,
+            );
+            continue;
+          }
+          const merged = `${existing.content ?? ''}\n\n${s.content}`.trim();
+          try {
+            await this.prisma.baArtifactSection.update({
+              where: { id: existing.id },
+              data: { content: merged },
+            });
+          } catch (err) {
+            this.logger.warn(
+              `FTC parser: failed to append to ${s.sectionKey}: ${err instanceof Error ? err.message : 'unknown'}`,
+            );
+          }
+        } else {
+          this.logger.warn(
+            `FTC parser: skipped duplicate section ${s.sectionKey} (first-wins)`,
+          );
+        }
+        continue;
+      }
       try {
         await this.prisma.baArtifactSection.create({
           data: {
@@ -210,6 +248,216 @@ export class BaFtcParserService {
       testCasesCreated: testCases.length,
       acCoverageCreated: acCoverage.length,
     };
+  }
+
+  // ─── Deterministic structural sections (no AI) ────────────────────────
+  //
+  // Per-feature mode 2 only emits a `## Test Case Appendix` section per
+  // call — it does not produce the canonical §5 Test Cases Index, §6
+  // Functional Test Cases, §7 Integration Test Cases, §8 White-Box Test
+  // Cases sections that single-shot mode 1 emits. Without those, the
+  // preview TOC for a per-feature module is missing structural context
+  // that mode-1 modules have.
+  //
+  // This method synthesizes those four sections deterministically from
+  // existing BaTestCase rows — no AI call, no token spend. It is safe
+  // to re-run: existing rows for these section keys are deleted first
+  // and re-created with current TC content.
+
+  /**
+   * Render §5 Test Cases Index, §6 Functional Test Cases, §7 Integration
+   * Test Cases, §8 White-Box Test Cases as fresh BaArtifactSection rows
+   * for the given FTC artifact. Returns a count of sections written.
+   *
+   * Existing rows for these four keys are deleted first so the output
+   * reflects current TCs (not stale post-edit content).
+   */
+  async renderStructuralSections(ftcArtifactDbId: string): Promise<number> {
+    const tcs = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId: ftcArtifactDbId },
+      orderBy: [
+        { linkedFeatureIds: 'asc' },
+        { scenarioGroup: 'asc' },
+        { testKind: 'asc' },
+        { testCaseId: 'asc' },
+      ],
+    });
+    if (tcs.length === 0) {
+      this.logger.warn(
+        `FTC structural-sections: no test cases for artifact ${ftcArtifactDbId} — skipping render`,
+      );
+      return 0;
+    }
+
+    // Wipe stale structural rows so the render is idempotent.
+    const STRUCTURAL_KEYS = [
+      'test_cases_index',
+      'functional_test_cases',
+      'integration_test_cases',
+      'white_box_test_cases',
+    ];
+    await this.prisma.baArtifactSection.deleteMany({
+      where: {
+        artifactId: ftcArtifactDbId,
+        sectionKey: { in: STRUCTURAL_KEYS },
+        isHumanModified: false,
+      },
+    });
+
+    const indexBody = this.renderTestCasesIndex(tcs);
+    const functionalTcs = tcs.filter(
+      (tc) => !tc.isIntegrationTest && tc.scope !== 'white_box',
+    );
+    const integrationTcs = tcs.filter((tc) => tc.isIntegrationTest);
+    const whiteBoxTcs = tcs.filter((tc) => tc.scope === 'white_box');
+
+    const sections: Array<{ key: string; label: string; content: string }> = [
+      { key: 'test_cases_index', label: 'Test Cases Index', content: indexBody },
+      {
+        key: 'functional_test_cases',
+        label: 'Functional Test Cases',
+        content: this.renderTcBodies(functionalTcs, 'No functional test cases were generated for this module.'),
+      },
+      {
+        key: 'integration_test_cases',
+        label: 'Integration Test Cases',
+        content: this.renderTcBodies(integrationTcs, 'No integration test cases were generated for this module.'),
+      },
+    ];
+    if (whiteBoxTcs.length > 0) {
+      // Only emit white-box section when LLD-linked TCs exist — matches
+      // SKILL-07 §3 which says "OMIT THIS SECTION when lldContext is
+      // absent" and avoids an empty section in the preview TOC.
+      sections.push({
+        key: 'white_box_test_cases',
+        label: 'White-Box Test Cases',
+        content: this.renderTcBodies(whiteBoxTcs, ''),
+      });
+    }
+
+    let written = 0;
+    for (const s of sections) {
+      try {
+        await this.prisma.baArtifactSection.create({
+          data: {
+            artifactId: ftcArtifactDbId,
+            sectionKey: s.key,
+            sectionLabel: s.label,
+            content: s.content,
+            aiGenerated: false,
+            isHumanModified: false,
+          },
+        });
+        written++;
+      } catch (err) {
+        this.logger.warn(
+          `FTC structural-sections: failed to write ${s.key}: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      }
+    }
+    this.logger.log(
+      `FTC structural-sections: rendered ${written} section(s) for artifact ${ftcArtifactDbId} from ${tcs.length} TCs`,
+    );
+    return written;
+  }
+
+  private renderTestCasesIndex(
+    tcs: Array<{
+      testCaseId: string;
+      title: string | null;
+      testKind: string;
+      scenarioGroup: string | null;
+      linkedFeatureIds: string[];
+      linkedEpicIds: string[];
+    }>,
+  ): string {
+    // Group by EPIC → feature → scenarioGroup, then split positive vs negative.
+    type GroupBucket = { positives: typeof tcs; negatives: typeof tcs };
+    type FeatureBucket = Map<string, GroupBucket>; // scenarioGroup → bucket
+    type EpicBucket = Map<string, FeatureBucket>; // featureId → featureBucket
+    const tree = new Map<string, EpicBucket>(); // epicId → epicBucket
+
+    for (const tc of tcs) {
+      const epic = tc.linkedEpicIds[0] ?? '(no EPIC)';
+      const feature = tc.linkedFeatureIds[0] ?? '(no feature)';
+      const group = tc.scenarioGroup?.trim() || 'Ungrouped';
+      if (!tree.has(epic)) tree.set(epic, new Map());
+      const epicBucket = tree.get(epic)!;
+      if (!epicBucket.has(feature)) epicBucket.set(feature, new Map());
+      const featureBucket = epicBucket.get(feature)!;
+      if (!featureBucket.has(group)) featureBucket.set(group, { positives: [], negatives: [] });
+      const slot = featureBucket.get(group)!;
+      if (tc.testKind === 'negative') slot.negatives.push(tc);
+      else slot.positives.push(tc);
+    }
+
+    const lines: string[] = [];
+    for (const [epic, epicBucket] of tree) {
+      lines.push(`### ${epic}`);
+      lines.push('');
+      for (const [feature, featureBucket] of epicBucket) {
+        lines.push(`#### ${feature}`);
+        lines.push('');
+        for (const [group, slot] of featureBucket) {
+          lines.push(`- **Scenario: ${group}**`);
+          if (slot.positives.length > 0) {
+            const ids = slot.positives.map((tc) => `\`${tc.testCaseId}\``).join(', ');
+            lines.push(`  - Positive: ${ids}`);
+          }
+          if (slot.negatives.length > 0) {
+            const ids = slot.negatives.map((tc) => `\`${tc.testCaseId}\``).join(', ');
+            lines.push(`  - Negative: ${ids}`);
+          }
+        }
+        lines.push('');
+      }
+    }
+    return lines.join('\n').trim();
+  }
+
+  private renderTcBodies(
+    tcs: Array<{
+      testCaseId: string;
+      title: string | null;
+      testKind: string;
+      category: string | null;
+      priority: string | null;
+      owaspCategory: string | null;
+      scope: string;
+      isIntegrationTest: boolean;
+      executionStatus: string;
+      parentTestCaseId: string | null;
+      sprintId: string | null;
+      scenarioGroup: string | null;
+      aiContent: string | null;
+      editedContent: string | null;
+    }>,
+    emptyMessage: string,
+  ): string {
+    if (tcs.length === 0) return emptyMessage;
+    const out: string[] = [];
+    for (const tc of tcs) {
+      const headerAttrs = [
+        `id=${tc.testCaseId}`,
+        `parent=${tc.parentTestCaseId ?? ''}`,
+        `scope=${tc.scope}`,
+        `testKind=${tc.testKind}`,
+        `category=${tc.category ?? ''}`,
+        `priority=${tc.priority ?? ''}`,
+        `owasp=${tc.owaspCategory ?? ''}`,
+        `isIntegrationTest=${tc.isIntegrationTest}`,
+        `sprintId=${tc.sprintId ?? ''}`,
+        `executionStatus=${tc.executionStatus}`,
+        `scenarioGroup=${tc.scenarioGroup ?? ''}`,
+      ].join(' ');
+      out.push(`### ${tc.testCaseId} — ${tc.title ?? '(untitled)'}`);
+      out.push('');
+      out.push('```tc ' + headerAttrs);
+      out.push(tc.editedContent ?? tc.aiContent ?? '');
+      out.push('```');
+      out.push('');
+    }
+    return out.join('\n').trim();
   }
 
   // ─── Section parsing ──────────────────────────────────────────────────

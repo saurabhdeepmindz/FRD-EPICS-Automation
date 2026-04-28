@@ -82,6 +82,62 @@ export class BaFtcController {
     return this.orchestrator.executeSkill07Narrative(moduleDbId);
   }
 
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-07-FTC/category/:category —
+   * generate TCs for ONE category (Security, UI, Performance, Accessibility,
+   * Data, Smoke, Regression) spanning all features. Per-feature mode 2 only
+   * emits Functional + Integration; this fills the remaining categories so
+   * the FTC tree shows all the synthetic per-category groups (not just
+   * Functional / Integration). Idempotent — skips when TCs of this category
+   * already exist on the artifact.
+   */
+  @Post('modules/:id/execute/SKILL-07-FTC/category/:category')
+  executeSkill07ForCategory(
+    @Param('id') moduleDbId: string,
+    @Param('category') category: string,
+  ) {
+    return this.orchestrator.executeSkill07ForCategory(moduleDbId, category);
+  }
+
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-07-FTC/white-box/:featureId —
+   * generate WHITE-BOX TCs for ONE feature, scoped to the LLD's classes /
+   * methods. Mirrors the per-feature mode 2 loop but emits scope=white_box
+   * and links to BaPseudoFile UUIDs. Prerequisite: the module must have an
+   * LLD artifact (white-box has no surface to test without it). Idempotent
+   * — skips when this feature already has white-box TCs on the artifact.
+   */
+  @Post('modules/:id/execute/SKILL-07-FTC/white-box/:featureId')
+  executeSkill07ForFeatureWhiteBox(
+    @Param('id') moduleDbId: string,
+    @Param('featureId') featureId: string,
+  ) {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new BadRequestException(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+    return this.orchestrator.executeSkill07ForFeatureWhiteBox(moduleDbId, featureId);
+  }
+
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-07-FTC/complete — run the full
+   * FTC pipeline in one call: per-feature loop (mode 2) → per-category
+   * passes (mode 2b) for any testType in `ftcConfig.testTypes` not yet
+   * covered (Security, UI, Performance, …) → per-feature white-box pass
+   * (mode 2c, only when an LLD artifact exists) → narrative pass + structural
+   * sections (mode 3). This is the recommended path for the FTC stepper
+   * button on the BA tool — produces a complete, well-categorized FTC
+   * artifact in one click.
+   *
+   * Each step is idempotent. Re-running the pipeline only fills missing
+   * pieces (new feature added → only that feature gets TCs; new test type
+   * enabled → only that category gets a pass; LLD generated AFTER the FTC
+   * → re-running adds white-box TCs without touching black-box).
+   */
+  @Post('modules/:id/execute/SKILL-07-FTC/complete')
+  executeSkill07Complete(@Param('id') moduleDbId: string) {
+    return this.orchestrator.executeSkill07Complete(moduleDbId);
+  }
+
   /** GET /api/ba/modules/:id/ftc — fetch the current FTC artifact (or null) */
   @Get('modules/:id/ftc')
   async getFtc(@Param('id') moduleDbId: string) {
