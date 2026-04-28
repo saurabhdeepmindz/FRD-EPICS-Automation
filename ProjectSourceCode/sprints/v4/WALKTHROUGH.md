@@ -523,4 +523,169 @@ DOCX export of the artifact: ~820 KB, 30+ tables, ~30 Mermaid PNGs, renders in ~
 
 ---
 
+## Round N+2 — White-box mode 2c, LLD validator, mermaid sanitizer, tree feature sub-grouping (2026-04-26 → 2026-04-28)
+
+> Commit `67e6cf2` — 19 files, 3,900 insertions / 236 deletions.
+
+### Summary
+
+After the per-story SKILL-05 round, the natural next gaps surfaced on **MOD-04** (a 9-feature module with 7+ stories): the FTC pipeline produced black-box test cases but no white-box, LLD generation drifted to a per-user-story document on large modules, the validator gave false positives on stack-aware quotas, and the FTC stepper's left tree was an unstructured flat list of 180 TCs. This round closes all four gaps.
+
+The shipped pipeline now runs **mode 2 (per-feature black-box) → mode 2b (per-category) → mode 2c (per-feature white-box) → mode 3 (narrative + structural)** as a single idempotent `executeSkill07Complete` orchestration. The LLD pipeline gains a deterministic completeness validator with per-section regen ($0.05/section vs $0.50 full-rerun) and a mermaid sanitizer that auto-fixes the two AI failure modes the renderer rejects.
+
+### Architecture (additions to the v4 picture)
+
+```text
+                         BA Tool — FTC pipeline (post-67e6cf2)
+                         ─────────────────────────────────────
+
+  POST /generate-ftc/complete (one-button stepper)
+       │
+       ├──▶ executeSkill07ForFeature  (mode 2)  ──── black-box per feature
+       │     • TC IDs: TC-04-01-NNN / Neg_TC-04-01-NNN
+       │     • Idempotent on linkedFeatureIds
+       │
+       ├──▶ executeSkill07ForCategory (mode 2b) ──── Security / UI / Performance / …
+       │     • TC IDs: TC-SEC-NNN / TC-UI-NNN / …
+       │     • Driven by ftcConfig.testTypes
+       │
+       ├──▶ executeSkill07ForFeatureWhiteBox (mode 2c — NEW)
+       │     • Only when LLD artifact exists for the module
+       │     • TC IDs: WB-04-01-NNN / Neg_WB-04-01-NNN
+       │     • scope=white_box, linkedPseudoFileIds → BaPseudoFile UUIDs
+       │     • Tests target class invariants / algorithm steps / exception paths
+       │
+       └──▶ executeSkill07Narrative (mode 3) ──── §1-§5 / §9-§16 + structural §5-§8
+
+
+  BA Tool — LLD pipeline (post-67e6cf2)
+  ─────────────────────────────────────
+
+  POST /generate-lld
+       │
+       └──▶ executeSkill('SKILL-06-LLD')
+              │
+              ├─▶ wrapSkill06Prompt   (NEW orchestrator override)
+              │     • Forbids per-user-story scope drift
+              │     • Hard-codes 19 canonical heading labels
+              │     • Mermaid syntax rules (parens / slashes / erDiagram types)
+              │     • Frontend pseudo-file quotas (Next.js + Tailwind specifics)
+              │
+              ├─▶ AI call (~3-5 min, ~$0.50)
+              │
+              ├─▶ mermaid-sanitizer (NEW post-process)
+              │     • Auto-quotes graph node labels with parens/slashes
+              │     • Lowercases erDiagram types (UUID → uuid, Enum → string)
+              │
+              ├─▶ BaLldParserService.parseAndStore
+              │     • Idempotent: first-wins on duplicate sectionKey,
+              │       update-existing for AI-generated rows
+              │
+              └─▶ extendRtmWithLld
+
+  GET  /lld/validate  (deterministic, $0)
+       └──▶ BaLldParserService.validateCompleteness
+              • Per-section presence + thinness check
+              • Pseudo-file shortfall vs feature count
+              • Stack-aware frontend coverage:
+                  - App Router pages
+                  - Route handlers (lower target when full backend stack present)
+                  - Components (1.5× feature count)
+                  - Frontend tests
+              • Recognises frontend/features/*api.ts as route-handler-equivalent
+
+  POST /execute/SKILL-06-LLD/section/:sectionKey  (mode 06b — NEW)
+       └──▶ executeSkill06ForSection
+              • Focused AI call to regenerate ONE canonical section
+              • Idempotent on isHumanModified
+              • ~$0.05/call vs ~$0.50 full re-run
+```
+
+### Files created/modified
+
+#### Backend (10 files)
+
+| File | Purpose |
+| --- | --- |
+| `ba-skill-orchestrator.service.ts` | New methods: `executeSkill07ForCategory` (mode 2b), `executeSkill07ForFeatureWhiteBox` (mode 2c), `listFeaturesMissingWhiteBox`, `listMissingCategoriesForCoverage`, `executeSkill06ForSection` (mode 06b), `wrapSkill06Prompt`. Existing: `executeSkill07Complete` extended with mode 2c step; `wrapSkill07Prompt` strengthened with explicit format rules; `deriveLldSuffix` combines backend + frontend stacks; per-feature/per-category/white-box paths refresh `mod.ftcArtifactId` when creating new artifact (root-cause fix for stale-pointer bug). |
+| `ba-ftc-parser.service.ts` | `parseAndStore` idempotent: append for `test_case_appendix`, first-wins for narrative; new deterministic `renderStructuralSections` builds §5/§6/§7/§8 from BaTestCase rows (no AI cost). |
+| `ba-ftc.controller.ts` | New endpoints: `POST /execute/SKILL-07-FTC/category/:category`, `POST /execute/SKILL-07-FTC/white-box/:featureId`, `POST /execute/SKILL-07-FTC/complete`. |
+| `ba-ftc.service.ts` | `getFtcArtifact` falls back to latest-by-moduleDbId when `mod.ftcArtifactId` is stale (self-healing). |
+| `ba-lld-parser.service.ts` | `parseAndStore` runs the mermaid sanitizer pre-parse, then idempotent section storage (first-wins for human-modified rows, update-existing for AI-generated). New `validateCompleteness` returns `{ sections[], pseudoFiles, frontendCoverage, gaps[], isComplete }` — deterministic, no AI call. Stack-aware route-handler target. |
+| `ba-lld.controller.ts` | New endpoints: `GET /lld/validate`, `POST /execute/SKILL-06-LLD/section/:sectionKey`. |
+| `mermaid-sanitizer.ts` (NEW) | Pure utility: `sanitizeMermaidInMarkdown(md)` walks every ` ```mermaid ` block, auto-quotes unsafe `[label]` brackets in `graph`/`flowchart`, lowercases erDiagram types. Idempotent. |
+| `scripts/compare-ftc-fields.ts` (NEW) | Side-by-side TC field-population audit (MOD-01 vs another module). |
+| `scripts/delete-lld-artifact.ts` (NEW) | Wipe LLD artifact + pseudo-files + sections + executions; clears `BaModule.lldArtifactId`. |
+| `scripts/merge-ftc-appendix-and-render.ts` (NEW) | One-time fixup: merge multiple `test_case_appendix` rows into one + trigger structural-sections render. |
+| `scripts/sanitize-lld-mermaid.ts` (NEW) | Bulk mermaid sanitize pass on existing LLD artifacts (dry-run by default, `--apply` to execute). |
+
+#### Frontend (5 files)
+
+| File | Purpose |
+| --- | --- |
+| `lib/ba-api.ts` | New API client functions: `validateLld`, `regenerateLldSection`, `generateFtcWhiteBoxForFeature`, `listFtcFeaturesForModule`, `refreshFtcNarrative`, `generateFtcComplete` (extended with `perFeatureWhiteBox`). New types: `LldValidationReport`, `LldFrontendCoverage`, `LldSectionRegenResult`, `FtcCompleteResult`, `FtcWhiteBoxResult`. |
+| `components/ba-tool/LldValidationCard.tsx` (NEW) | Validation card on AI LLD Workbench: top-row counters (sections / pseudo-files / feature coverage), gap list, per-section regen buttons (~$0.05 each), frontend-coverage panel (App Router pages / route handlers / components / tests / features without page reference). Always visible — yellow callout when no LLD artifact yet. |
+| `components/ba-tool/ArtifactTree.tsx` | Two-level grouping inside FTC category buckets: `Functional Test Cases (143) → F-04-01 — Search Previous Chats (14) → TC-04-01-001…`. Reads feature names from same-module FRD artifact via `parseFrdContent`. UNGROUPED bucket for TCs without `linkedFeatureIds`. White-Box Test Cases bucket gets the same feature sub-grouping. Backwards-compatible. Plus: canonical-order sort for FTC sections. |
+| `app/ba-tool/project/[id]/module/[moduleId]/lld/page.tsx` | Mounts `<LldValidationCard>` between Upstream Inputs and the Tech Stack form. |
+| `app/ba-tool/project/[id]/module/[moduleId]/ftc/page.tsx` | New `Generate White-Box` button in the header (outline, between Save config and Generate FTC). Disabled when LLD or FTC missing — tooltip explains which prerequisite is blocking. Sequential per-feature loop with progress strip ("Generating white-box for F-04-03 (3 of 9)…"), structural-sections refresh at the end, summary alert. `Generate FTC` button alert now reports `perFeatureWhiteBox` step too. Timeout bumped 16 min → 25 min for the longer pipeline. |
+| `app/ba-tool/preview/[kind]/[id]/page.tsx` | FTC sections sort by canonical `FTC_SECTION_ORDER` (Summary → Test Strategy → … → Test Case Appendix), so the preview TOC matches MOD-1's structure regardless of DB insertion order. |
+
+#### Skill files (2 files)
+
+| File | Change |
+| --- | --- |
+| `FINAL-SKILL-06-create-lld.md` | Added `Mermaid syntax rules` section (graph node label quoting, erDiagram type lowercase, arrow target IDs). Added `Frontend pseudo-file quota` section (Next.js + Tailwind App Router pages, route handlers, layouts, components, frontend tests, Tailwind utilities). Added `Module-wide scope, NOT per-user-story` rule to Hard Rules. Heading-count corrected from 15 → 19 throughout (long-standing inconsistency). |
+| `FINAL-SKILL-07-create-ftc.md` | §1b modes table extended from 3 modes to 6 (added 2b, 2c, complete pipeline). Author rules added for mode 2 (feature-prefixed TC IDs, scenarioGroup as label not feature ID), mode 2b (per-category), mode 2c (per-feature white-box). Recommended flow updated to 5 steps. |
+
+### How key pieces work
+
+**`wrapSkill06Prompt` — anti-per-story-drift wrapper.** The bug it fixes was real: on MOD-04 (9 features, 7 stories) the AI emitted a single-story LLD scoped to F-04-08 / US-074 with non-canonical headings (`## 1. Identification`, `## 2. RTM Traceability`, `## 3. @frdContext`, `## 4. Public Contract`). The parser stored those under non-canonical keys, leaving 17 of 19 canonical slots empty. The wrapper hard-codes the 19 heading labels in the prompt + explicitly forbids the per-story patterns we observed. Same regression class as the FTC mode-1 single-story drift fixed in v4 round 1.
+
+**`mermaid-sanitizer.ts` — deterministic AI output cleanup.** Mermaid 11+ rejects two AI tics: unquoted `[label]` brackets containing parens/slashes (`A[Foo (TBD)]`, `J[List/Details]`) and capitalised erDiagram column types (`UUID userId PK`, `Enum status`). The sanitizer walks every ` ```mermaid ` block in a markdown string, applies the right transformation per block type (`graph` / `flowchart` / `erDiagram`), and is idempotent. Wired into `BaLldParserService.parseAndStore` before splitting the document so corrected blocks land in the DB. Bulk-fixup script `sanitize-lld-mermaid.ts` runs it across an existing artifact's section content for retroactive cleanup.
+
+**`validateCompleteness` — stack-aware completeness check.** Reads the artifact's sections + pseudo-files, scans `linkedFeatureIds` references in pseudo-file content, and emits a structured report. The frontend-coverage block only runs when `lldConfig.frontendStackId` is non-null. It detects whether a "full backend stack" (NestJS / Spring / FastAPI / Django / Express / Rails / .NET / Flask / Echo / Gin / Koa / Hapi / Laravel) is selected; if so, route-handler target drops from `featureCount × 0.7` to `featureCount × 0.2` because the frontend can call the backend service directly via api-client hooks. Path heuristic recognises `frontend/features/*api.ts` as route-handler-equivalent. Components target softened from `2× feature count` to `1.5× feature count`.
+
+**Mode 2c per-feature white-box loop.** `executeSkill07ForFeatureWhiteBox(moduleDbId, featureId)`:
+
+1. Asserts an LLD artifact exists (else throws — white-box has no class/method surface to cite).
+2. Filters LLD pseudo-files to those whose content references `featureId` in their Traceability docstring.
+3. Builds a focused prompt with: file list (path + first 12 lines per file), white-box-specific TC ID convention (`WB-04-01-NNN` / `Neg_WB-04-01-NNN`), required `scope=white_box`, required `linkedLldArtifactId`, required `linkedPseudoFileIds`, framework hint (Vitest / JUnit / pytest unit, not Playwright).
+4. AI call → `parseAndStore` → backfill: enforce `scope=white_box`, `linkedLldArtifactId`, single `linkedFeatureIds` entry, resolve pseudo-file paths in TC body to BaPseudoFile UUIDs.
+5. Idempotent: re-runs skip features that already have white-box TCs on the artifact.
+
+Validated on MOD-04 F-04-08 as a de-risk pass: 10 white-box TCs in ~73 s, all 10 with `scope=white_box` ✓ + `linkedLldArtifactId` ✓ + 1-3 pseudo-file UUIDs each, real class/method coverage (`VerificationQuotaService.checkAndDecrementQuota — Quota Exceeded`, `QuotaManagementServiceStub.decrementQuota throws ServiceUnavailableException`, etc.). Then ran for the remaining 8 features via `executeSkill07Complete` — added 72 white-box TCs across F-04-01..07/09 (8-10 each). Final MOD-04 state: **180 TCs (98 black-box + 82 white-box) across 5 categories**, every feature 18-24 TCs.
+
+**Tree feature sub-grouping.** Inside the existing per-category synthetic groups in `ArtifactTree.tsx`, TCs are now bucketed by their first `linkedFeatureIds` entry (with an `(Ungrouped)` bucket for TCs without a feature link). Feature buckets sort by feature ID using locale + numeric (so `F-04-09` < `F-04-10`). Feature names come from `parseFrdContent` on the same-module FRD artifact — falls back to bare ID when no FRD found. Three levels deep: `<artifact>.<category>.<feature>.<tc>` e.g. `6.1.13.1.5`.
+
+**Self-healing `mod.ftcArtifactId` pointer.** Root cause: per-feature mode-2 created new FTC artifacts but didn't update `mod.ftcArtifactId`. After a wipe + per-feature regen, the pointer pointed at a deleted row, so `getFtcArtifact` returned null and the white-box button stayed disabled (its prerequisite check was `!!ftc?.artifact`). Two-part fix: (a) `getFtcArtifact` now falls back to latest-by-moduleDbId when the pointer doesn't resolve, (b) per-feature / per-category / per-feature-white-box paths now refresh the pointer when they create a new artifact. Either fix alone would solve the symptom; both together make the system self-healing AND prevent the same gap on future modules.
+
+### Test coverage delta
+
+| Layer | Before | After | New tests |
+| --- | --- | --- | --- |
+| Backend unit | (no Jest tests added in this round) | unchanged | — |
+| Integration | (no Supertest tests added) | unchanged | — |
+| Manual / smoke (curl + DB inspection) | per-feature mode 2 verified, narrative mode 3 verified | per-category mode 2b verified (Security/UI/Performance × MOD-04), per-feature white-box mode 2c verified (F-04-08 de-risk + remaining 8 via complete pipeline), validator endpoints verified, mermaid sanitizer verified (MOD-04 module dependency + schema diagrams render after sanitize) | New audit scripts under `scripts/` are de-facto regression checks for the data shape. |
+
+### Security
+
+No security surface change in this round. White-box TCs cite class/method names but never embed secrets, credentials, or environment values from the LLD pseudo-files (the LLD itself uses `// TODO:` bodies with no real logic). The validator endpoint reads existing artifact rows; no auth changes.
+
+### Known limitations
+
+- **No automated tests** for the new orchestrator methods. Manual verification via curl + DB audit scripts is the regression net. A future round should add Jest tests for `executeSkill07ForFeatureWhiteBox` and `validateCompleteness` since they have non-trivial path heuristics.
+- **Multi-stack support is still a workaround.** The single-select dropdowns for frontend / backend stacks force the architect to combine into one master-data entry (`Next.js + Tailwind`). Proper schema migration to `frontendStackIds String[]` is documented but deferred.
+- **Frontend tests heuristic is approximate** — the validator's "8/9" warning on MOD-04 is cosmetic; the AI emitted 8 component tests covering all major flows but the floor is `featureCount` which produces a 1-off mismatch.
+- **Per-feature mode-2 still under-populates `linkedSubtaskIds`** (~10% of TCs cite a subtask vs MOD-1's 76%). Not blocking — feature/EPIC/US linkage is sufficient — but worth strengthening the prompt in a future round.
+- **Tree feature sub-grouping doesn't yet handle TCs that genuinely span multiple features** (e.g. cross-feature integration tests). Currently shown under their first `linkedFeatureIds` entry only. Defensible default; could be revisited if architects request multi-bucket display.
+
+### Carryover lessons for future skill work
+
+- **Same regression class hits SKILL-06 as SKILL-07**: under deep context (10+ features × stories × subtasks), the AI pattern-matches to a per-user-story document instead of the canonical module-wide structure. The corrective is identical across skills — wrap the prompt with hard-coded heading labels + explicit forbidden patterns. SKILL-04 already had its per-feature-loop fix; SKILL-05 had its per-story-loop fix; now SKILL-06 has its module-wide-scope wrapper and SKILL-07 has its per-feature/per-category/per-feature-white-box loops. Five out of seven skills now have orchestrator overrides.
+- **Stack-aware heuristics matter.** The validator's first cut flagged 5 gaps on MOD-04, but 4 of them were heuristic false positives caused by NestJS-paired Next.js (where route handlers are optional and `frontend/features/*api.ts` plays the route-handler role). One round of tuning made the validator green for the actual structural reality. Future heuristics should be **stack-aware from day 1** — read `lldConfig.backendStackId` etc. before applying targets.
+- **Self-healing > pointer-update everywhere.** The stale `mod.ftcArtifactId` bug had two layers of cause (missing pointer refresh in 3 orchestrator paths) and one symptom (white-box button disabled). Adding the pointer refresh in all 3 places is necessary, but adding the fallback `getFtcArtifact → latest-by-moduleDbId` is what makes the system survive future similar bugs without disrupting users.
+- **Idempotency is the test plan.** Every new mode (2b, 2c, complete pipeline, per-section regen, validator) is idempotent. The "test plan" for the architect is "click the button twice — second click is a fast no-op". This is also how I de-risked the white-box rollout — first F-04-08 alone ($0.05), then the remaining 8 via the complete pipeline (idempotent skip on F-04-08). Cheaper, safer, more diagnostic than running everything in one shot.
+
+---
+
 Generated as part of the **G4 (Architecture diagram refresh)** backlog item. Tracks every feature shipped in v4 including post-PRD expansions, and supersedes the v3 walkthrough as the canonical "current state" document.
