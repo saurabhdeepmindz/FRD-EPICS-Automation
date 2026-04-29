@@ -1121,6 +1121,42 @@ export async function regenerateLldForFeature(
   return data;
 }
 
+/**
+ * Result of POST /ba/modules/:id/execute/SKILL-06-LLD/diagrams — diagram
+ * refresh (mode 06d). Reports which of the four module-level diagrams
+ * (Module Dependency Graph, Class Diagram, Sequence Diagrams, Schema
+ * Diagram) were actually rewritten in this run, which were preserved
+ * because they are human-modified, and which the AI failed to emit.
+ */
+export interface LldDiagramsRegenResult {
+  artifactId: string;
+  sectionsRefreshed: string[];
+  sectionsSkippedHuman: string[];
+  sectionsFailed: string[];
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Refresh the four module-level Mermaid diagrams (Module Dependency Graph,
+ * Class Diagram, Sequence Diagrams, Schema Diagram) so they reflect the
+ * current pseudo-file / data-model surface. Use after running per-feature
+ * regen (mode 06c) to close drift between pseudo-files and diagrams.
+ * Idempotent — human-modified diagrams are preserved. ~$0.05 per call,
+ * ~30-60 s wall time.
+ */
+export async function regenerateLldDiagrams(
+  moduleDbId: string,
+): Promise<LldDiagramsRegenResult> {
+  const { data } = await api.post<LldDiagramsRegenResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-06-LLD/diagrams`,
+    {},
+    // 2 min — focused AI call covering four diagrams in one shot, ~30-60 s typical
+    { timeout: 2 * 60 * 1000 },
+  );
+  return data;
+}
+
 // ─── Narrative attachments + gap-check ─────────────────────────────────────
 
 export async function listLldAttachments(moduleDbId: string): Promise<BaLldAttachmentList> {

@@ -3562,6 +3562,311 @@ export class BaSkillOrchestratorService {
     };
   }
 
+  // ─── SKILL-06-LLD diagram refresh (mode 06d) ──────────────────────────
+  //
+  // The four module-level Mermaid diagrams (Module Dependency Graph, Class
+  // Diagram, Sequence Diagrams, Schema Diagram) are produced by the initial
+  // SKILL-06 run together with the pseudo-files. Once mode 06b (per-section)
+  // or mode 06c (per-feature pseudo-file) is invoked to fill gaps, the
+  // pseudo-files / entities / SQL migrations move forward but the diagrams
+  // stay frozen at the initial-gen snapshot. This mode does ONE focused AI
+  // call that regenerates exactly those four sections, reading the current
+  // pseudo-file surface + §9 Data Model Definitions + §8 API Contract
+  // Manifest as the ground truth so the diagrams catch up.
+  //
+  // Cost: ~$0.05/call (small focused prompt, four diagrams in one shot so
+  // they stay internally consistent). Idempotent: any of the four sections
+  // marked `isHumanModified` is preserved untouched (the parser enforces
+  // this — orchestrator only short-circuits the AI call when ALL four are
+  // human-modified).
+
+  /** Section keys this mode targets. Order matches the LLD document order. */
+  private readonly DIAGRAM_SECTION_KEYS = [
+    'module_dependency_graph',
+    'class_diagram',
+    'sequence_diagrams',
+    'schema_diagram',
+  ] as const;
+
+  /**
+   * Refresh the four module-level diagram sections so they reflect the
+   * current pseudo-file / data-model surface. Returns which diagrams were
+   * actually updated, which were preserved as human edits, and which the
+   * AI failed to emit.
+   */
+  async executeSkill06ForDiagrams(
+    moduleDbId: string,
+  ): Promise<{
+    artifactId: string;
+    sectionsRefreshed: string[];
+    sectionsSkippedHuman: string[];
+    sectionsFailed: string[];
+    skipped: boolean;
+    reason?: string;
+  }> {
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // Prerequisite: LLD artifact must exist (we're upserting four sections
+    // on it, not creating from scratch).
+    const lldArtifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.LLD },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!lldArtifact) {
+      throw new Error(
+        `Cannot refresh diagrams for ${mod.moduleId}: no LLD artifact exists. Click "Generate LLD" first.`,
+      );
+    }
+
+    // Snapshot the four target sections plus the source-of-truth sections
+    // we feed back into the prompt. Done in one fetch to minimise round-
+    // trips and keep section-state consistent across the workflow.
+    const allSections = await this.prisma.baArtifactSection.findMany({
+      where: { artifactId: lldArtifact.id },
+      select: {
+        sectionKey: true,
+        sectionLabel: true,
+        content: true,
+        isHumanModified: true,
+        updatedAt: true,
+      },
+    });
+    const byKey = new Map(allSections.map((s) => [s.sectionKey, s]));
+
+    const targetState = this.DIAGRAM_SECTION_KEYS.map((key) => {
+      const row = byKey.get(key);
+      return {
+        key,
+        existed: !!row,
+        humanModified: row?.isHumanModified ?? false,
+        currentContent: row?.content ?? '',
+        previousUpdatedAt: row?.updatedAt ?? null,
+      };
+    });
+
+    const allHumanModified = targetState.every((t) => t.existed && t.humanModified);
+    if (allHumanModified) {
+      return {
+        artifactId: lldArtifact.id,
+        sectionsRefreshed: [],
+        sectionsSkippedHuman: targetState.map((t) => t.key),
+        sectionsFailed: [],
+        skipped: true,
+        reason:
+          'All four diagram sections (Module Dependency Graph, Class Diagram, Sequence Diagrams, Schema Diagram) are human-modified. ' +
+          'Manually clear the human-modified flag on at least one section in the editor first if you want the diagram refresh to overwrite it.',
+      };
+    }
+
+    // Surface which diagrams the AI is allowed to overwrite vs preserve.
+    // The parser enforces preservation regardless, but listing both lists in
+    // the prompt makes the AI's intent match what will actually be written.
+    const editableKeys = targetState.filter((t) => !t.humanModified).map((t) => t.key);
+    const preservedKeys = targetState.filter((t) => t.humanModified).map((t) => t.key);
+
+    // Source-of-truth context for the AI: data model definitions, API
+    // contracts, integration map, current pseudo-files. The AI MUST derive
+    // the four diagrams from this surface — not hallucinate new entities.
+    const dataModelContent = byKey.get('data_model_definitions')?.content ?? '';
+    const apiContractContent = byKey.get('api_contract_manifest')?.content ?? '';
+    const integrationContent = byKey.get('integration_points')?.content ?? '';
+    const summaryContent = byKey.get('summary')?.content ?? '';
+
+    const pseudoFiles = await this.prisma.baPseudoFile.findMany({
+      where: { artifactDbId: lldArtifact.id },
+      select: { path: true, language: true },
+      orderBy: { path: 'asc' },
+    });
+    const pseudoFilePaths = pseudoFiles
+      .map((f) => `- ${f.path} (${f.language})`)
+      .join('\n');
+
+    // RTM rows give the AI the FRD → EPIC → US → Feature breakdown so the
+    // sequence diagrams reflect every flow, not just the ones the AI guesses
+    // are important.
+    const rtmRows = mod.projectId
+      ? await this.prisma.baRtmRow.findMany({
+          where: { projectId: mod.projectId, moduleId: mod.moduleId },
+          select: { featureId: true, storyId: true, epicId: true },
+          orderBy: [{ featureId: 'asc' }, { storyId: 'asc' }],
+        })
+      : [];
+    const rtmLines = rtmRows.length > 0
+      ? rtmRows.map((r) => `- ${r.featureId ?? '?'} | ${r.epicId ?? '?'} | ${r.storyId ?? '?'}`).join('\n')
+      : '(no RTM rows — derive flows from EPIC scope)';
+
+    const editableLabels = editableKeys.map((k) => {
+      const focus = this.LLD_SECTION_FOCUS[k];
+      return `- \`${k}\` — ${focus?.label ?? k} :: ${focus?.focus ?? ''}`;
+    }).join('\n');
+
+    const preservedNote = preservedKeys.length > 0
+      ? preservedKeys.map((k) => `- \`${k}\` (${this.LLD_SECTION_FOCUS[k]?.label ?? k}) — human edits will be preserved; do NOT emit this section.`).join('\n')
+      : '- (none — all four diagrams are open for refresh)';
+
+    const skillPrompt = this.loadSkillFile('SKILL-06-LLD');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-06-LLD');
+
+    const diagramFocusedPrompt = [
+      '## 🎯 SKILL-06-LLD DIAGRAM REFRESH — ORCHESTRATOR OVERRIDE (mode 06d)',
+      '',
+      `You are running in diagram-only refresh mode. The LLD artifact for module **${mod.moduleId}** already exists with all narrative sections, data models, API contracts, and pseudo-files populated. The four module-level Mermaid diagrams (Module Dependency Graph, Class Diagram, Sequence Diagrams, Schema Diagram) date from the initial generation and now lag the current pseudo-file / data-model surface. Your job is to regenerate ONLY those four diagrams (or the subset listed below as editable) so they reflect the current state.`,
+      '',
+      `**LLD ARTIFACT: ${lldArtifact.artifactId}** (id: ${lldArtifact.id})`,
+      '',
+      '### Sections to emit (editable — overwrite-allowed)',
+      '',
+      editableLabels.length > 0 ? editableLabels : '- (none — bail out)',
+      '',
+      '### Sections to NOT emit (human-modified — preserved untouched)',
+      '',
+      preservedNote,
+      '',
+      '### Source of truth for diagram content',
+      '',
+      'Derive the diagrams from the existing sections + pseudo-file surface below. Do NOT invent entities, classes, or flows that are not represented in this material.',
+      '',
+      '#### §1 Summary (current)',
+      '',
+      summaryContent ? this.truncateForPrompt(summaryContent, 1500) : '(empty)',
+      '',
+      '#### §8 API Contract Manifest (current)',
+      '',
+      apiContractContent ? this.truncateForPrompt(apiContractContent, 3000) : '(empty)',
+      '',
+      '#### §9 Data Model Definitions (current)',
+      '',
+      dataModelContent ? this.truncateForPrompt(dataModelContent, 4000) : '(empty)',
+      '',
+      '#### §11 Integration Points (current)',
+      '',
+      integrationContent ? this.truncateForPrompt(integrationContent, 2000) : '(empty)',
+      '',
+      `#### Pseudo-files on this artifact (${pseudoFiles.length} files)`,
+      '',
+      pseudoFilePaths.length > 0 ? pseudoFilePaths : '(none)',
+      '',
+      '#### RTM rows (FRD Feature | EPIC | User Story)',
+      '',
+      rtmLines,
+      '',
+      '### What to emit',
+      '',
+      'For each editable section above, emit a single `## ` heading using the canonical label, followed by the diagram body. Keep the original Mermaid block tags exactly:',
+      '',
+      '- `## Module Dependency Graph` → fenced ```mermaid block opened by `flowchart TD`',
+      '- `## Class Diagram` → fenced ```mermaid block opened by `classDiagram`',
+      '- `## Sequence Diagrams` → ONE fenced ```mermaid block per major flow opened by `sequenceDiagram`. Group by user story; cite the US-NNN id in the title.',
+      '- `## Schema Diagram` → fenced ```mermaid block opened by `erDiagram`',
+      '',
+      '### Hard rules',
+      '',
+      '- Do NOT emit any of the other 15 narrative sections (Summary, Tech Stack, NFRs, etc.) — they already exist and you would be overwriting them.',
+      '- Do NOT emit pseudo-code files (no `## Pseudo-Code Files` heading, no path-tagged code fences).',
+      '- Use ONLY entities listed in §9 Data Model Definitions for `erDiagram` and `classDiagram` blocks.',
+      '- Use ONLY user stories listed in the RTM rows for `sequenceDiagram` titles.',
+      '- Mermaid syntax rules from the original skill definition still apply: lowercase erDiagram types, parens/slashes in graph labels need quoting, every `classDiagram` arrow uses ASCII (`-->`, `--|>`, `..>`).',
+      '- Output is one markdown document with the editable section headings only. No preamble, no closing summary.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (for context — apply the Mermaid syntax rules from the diagram sections only)',
+      '',
+      skillPrompt,
+    ].join('\n');
+
+    const runStartedAt = new Date();
+    const aiResponse = await this.callAiServiceWithRetry(
+      diagramFocusedPrompt,
+      { ...contextPacket, currentFocusMode: 'mode-06d-diagrams' },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for diagram refresh on ${mod.moduleId}`);
+    }
+
+    // Persist the AI response so the architect can inspect what was emitted
+    // even when one of the diagrams failed to land. Mirrors mode 06c.
+    const execRow = await this.prisma.baSkillExecution.create({
+      data: {
+        moduleDbId,
+        skillName: 'SKILL-06-LLD',
+        status: BaExecutionStatus.AWAITING_REVIEW,
+        humanDocument,
+        startedAt: runStartedAt,
+        completedAt: new Date(),
+      },
+    });
+    this.logger.log(
+      `SKILL-06-LLD diagram refresh: AI response stored in execution ${execRow.id} (${humanDocument.length} chars)`,
+    );
+
+    // Parser is idempotent — AI-modified rows updated in place, human-
+    // modified rows preserved. The parser may also pick up an inadvertent
+    // narrative section the AI emitted; we count only the four target keys.
+    await this.lldParser.parseAndStore(humanDocument, lldArtifact.id);
+
+    // Re-read the four target rows to figure out which were actually
+    // refreshed in this run vs preserved (human-modified) vs failed
+    // (AI didn't emit them).
+    const after = await this.prisma.baArtifactSection.findMany({
+      where: {
+        artifactId: lldArtifact.id,
+        sectionKey: { in: [...this.DIAGRAM_SECTION_KEYS] },
+      },
+      select: { sectionKey: true, content: true, updatedAt: true, isHumanModified: true },
+    });
+    const afterByKey = new Map(after.map((s) => [s.sectionKey, s]));
+
+    const sectionsRefreshed: string[] = [];
+    const sectionsSkippedHuman: string[] = [];
+    const sectionsFailed: string[] = [];
+    for (const t of targetState) {
+      if (t.humanModified) {
+        sectionsSkippedHuman.push(t.key);
+        continue;
+      }
+      const row = afterByKey.get(t.key);
+      if (!row) {
+        sectionsFailed.push(t.key);
+        continue;
+      }
+      // Refreshed when updatedAt advanced past our snapshot OR when the
+      // row was just created (didn't exist before).
+      const wasRefreshed = !t.previousUpdatedAt
+        || row.updatedAt.getTime() > t.previousUpdatedAt.getTime();
+      if (wasRefreshed) sectionsRefreshed.push(t.key);
+      else sectionsFailed.push(t.key);
+    }
+
+    this.logger.log(
+      `SKILL-06-LLD diagram refresh: refreshed=${sectionsRefreshed.length} skippedHuman=${sectionsSkippedHuman.length} failed=${sectionsFailed.length} on ${lldArtifact.id}`,
+    );
+
+    return {
+      artifactId: lldArtifact.id,
+      sectionsRefreshed,
+      sectionsSkippedHuman,
+      sectionsFailed,
+      skipped: false,
+    };
+  }
+
+  /**
+   * Trim large source-of-truth sections to a budget so the diagram-refresh
+   * prompt stays under the AI service's context limit on big modules. Keeps
+   * the head of the section (which carries the headings + first paragraphs)
+   * and appends a marker when truncation occurred.
+   */
+  private truncateForPrompt(text: string, maxChars: number): string {
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars)}\n\n…(truncated ${text.length - maxChars} chars for prompt budget)`;
+  }
+
   /**
    * Determine where this module's next US-NNN number should start so that
    * re-runs don't collide with existing stories in the project. Reads all

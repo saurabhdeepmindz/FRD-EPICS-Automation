@@ -170,6 +170,21 @@ export class BaLldController {
     return this.orchestrator.executeSkill06ForFeature(moduleDbId, featureId);
   }
 
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-06-LLD/diagrams — focused AI call
+   * to refresh the four module-level Mermaid diagrams (Module Dependency
+   * Graph, Class Diagram, Sequence Diagrams, Schema Diagram) so they reflect
+   * the current pseudo-file / data-model surface. Use this after running
+   * mode 06c (per-feature pseudo-file regen) to close the drift between
+   * pseudo-files and diagrams. Idempotent — sections marked human-modified
+   * are preserved; if all four are human-modified the AI call is skipped.
+   * Cost: ~$0.05 per call.
+   */
+  @Post('modules/:id/execute/SKILL-06-LLD/diagrams')
+  async executeSkill06ForDiagrams(@Param('id') moduleDbId: string) {
+    return this.orchestrator.executeSkill06ForDiagrams(moduleDbId);
+  }
+
   // ─── Narrative + attachments + gap-check ──────────────────────────────
 
   /** GET /api/ba/modules/:id/lld/attachments — list architect attachments */
