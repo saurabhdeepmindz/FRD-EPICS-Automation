@@ -3303,6 +3303,23 @@ export class BaSkillOrchestratorService {
     pseudoFilesAdded: number;
     skipped: boolean;
     reason?: string;
+    /**
+     * Result of the diagram-refresh chain that auto-fires when this run
+     * actually adds pseudo-files. `null` when the chain didn't run (no
+     * pseudo-files added, or this run was skipped). Populated when the
+     * chain ran successfully or threw — see `error` for the non-success
+     * case. The chain failure never bubbles up; the caller still gets
+     * the pseudo-file result so a transient AI hiccup on the diagram
+     * refresh can be retried later via the standalone /diagrams endpoint.
+     */
+    diagramsRefreshed: {
+      sectionsRefreshed: string[];
+      sectionsSkippedHuman: string[];
+      sectionsFailed: string[];
+      skipped: boolean;
+      reason?: string;
+      error?: string;
+    } | null;
   }> {
     if (!/^F-\d+-\d+$/.test(featureId)) {
       throw new Error(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
@@ -3354,6 +3371,7 @@ export class BaSkillOrchestratorService {
         pseudoFilesAdded: 0,
         skipped: true,
         reason: `No user stories or subtasks found for ${featureId}. Run SKILL-04 + SKILL-05 first to populate the implementation surface this regen needs to target.`,
+        diagramsRefreshed: null,
       };
     }
 
@@ -3399,6 +3417,7 @@ export class BaSkillOrchestratorService {
         pseudoFilesAdded: 0,
         skipped: true,
         reason: `Feature ${featureId} already has ${existingForFeature.length} pseudo-file(s) including a backend service, controller, and entity/migration — no regen needed. Delete one or more files manually if you want to force a regen.`,
+        diagramsRefreshed: null,
       };
     }
 
@@ -3554,11 +3573,57 @@ export class BaSkillOrchestratorService {
     this.logger.log(
       `SKILL-06-LLD per-feature ${featureId}: appended ${newFiles.length} pseudo-file(s) to ${lldArtifact.id}`,
     );
+
+    // Auto-chain (mode 06d): when this run actually added pseudo-files,
+    // refresh the four module-level diagrams so they reflect the new
+    // entities / SQL migrations / classes. We deliberately swallow chain
+    // errors — the caller still gets the pseudo-file result, and a
+    // transient AI hiccup on the diagram refresh can be retried later
+    // via the standalone /diagrams endpoint. When `pseudoFilesAdded === 0`
+    // the AI returned but produced no new files; there is nothing for the
+    // diagrams to catch up to, so we skip the chain.
+    let diagramsRefreshed: {
+      sectionsRefreshed: string[];
+      sectionsSkippedHuman: string[];
+      sectionsFailed: string[];
+      skipped: boolean;
+      reason?: string;
+      error?: string;
+    } | null = null;
+    if (newFiles.length > 0) {
+      try {
+        const r = await this.executeSkill06ForDiagrams(moduleDbId);
+        diagramsRefreshed = {
+          sectionsRefreshed: r.sectionsRefreshed,
+          sectionsSkippedHuman: r.sectionsSkippedHuman,
+          sectionsFailed: r.sectionsFailed,
+          skipped: r.skipped,
+          reason: r.reason,
+        };
+        this.logger.log(
+          `SKILL-06-LLD per-feature ${featureId}: auto-chained diagram refresh — refreshed=${r.sectionsRefreshed.length} skippedHuman=${r.sectionsSkippedHuman.length} failed=${r.sectionsFailed.length}`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'unknown error';
+        this.logger.warn(
+          `SKILL-06-LLD per-feature ${featureId}: auto-chained diagram refresh failed — ${message}; non-fatal, retry via /diagrams endpoint`,
+        );
+        diagramsRefreshed = {
+          sectionsRefreshed: [],
+          sectionsSkippedHuman: [],
+          sectionsFailed: [...this.DIAGRAM_SECTION_KEYS],
+          skipped: false,
+          error: message,
+        };
+      }
+    }
+
     return {
       featureId,
       artifactId: lldArtifact.id,
       pseudoFilesAdded: newFiles.length,
       skipped: false,
+      diagramsRefreshed,
     };
   }
 

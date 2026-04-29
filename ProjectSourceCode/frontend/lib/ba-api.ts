@@ -1097,6 +1097,22 @@ export interface LldFeatureRegenResult {
   pseudoFilesAdded: number;
   skipped: boolean;
   reason?: string;
+  /**
+   * Result of the diagram-refresh chain that auto-fires whenever this run
+   * actually added pseudo-files (mode 06d). `null` when the chain didn't
+   * run (no new pseudo-files, or this run was skipped). When `error` is
+   * set the chain failed transiently — the pseudo-file result is still
+   * valid; the four diagrams can be retried later via
+   * `regenerateLldDiagrams`.
+   */
+  diagramsRefreshed: {
+    sectionsRefreshed: string[];
+    sectionsSkippedHuman: string[];
+    sectionsFailed: string[];
+    skipped: boolean;
+    reason?: string;
+    error?: string;
+  } | null;
 }
 
 /**
@@ -1115,8 +1131,9 @@ export async function regenerateLldForFeature(
   const { data } = await api.post<LldFeatureRegenResult>(
     `/ba/modules/${moduleDbId}/execute/SKILL-06-LLD/feature/${featureId}`,
     {},
-    // 3 min — per-feature regen emits 6-12 pseudo-files; ~60-90 s typical
-    { timeout: 3 * 60 * 1000 },
+    // 5 min — per-feature regen (60-90 s) auto-chains a diagram refresh
+    // (30-60 s) when pseudo-files are actually added; budget covers both.
+    { timeout: 5 * 60 * 1000 },
   );
   return data;
 }
