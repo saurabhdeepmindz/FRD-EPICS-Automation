@@ -4567,16 +4567,41 @@ export class BaSkillOrchestratorService {
 
   // ─── Lightweight markdown parsers (server-side RTM extraction) ────────
 
+  /**
+   * Extract every Feature declared in an FRD humanDocument. Recognises
+   * BOTH authoring shapes the SKILL-01-S prompt is allowed to emit:
+   *
+   *   1. **Heading + KV block** — `#### **F-NN-NN: Name**` followed by a
+   *      prose / bullet block carrying `Status`, `Priority`, `Screen
+   *      Reference` lines. This is the legacy shape the SKILL-01-S
+   *      example output uses.
+   *
+   *   2. **Markdown table catalog** — a `| Feature ID | Feature Name | …`
+   *      header row followed by one row per feature. This is what the
+   *      newer SKILL-01-S runs produce when the module has 10+ features
+   *      (the AI condenses the catalog so the response stays under the
+   *      token budget). MOD-05's 21-feature FRD uses this shape.
+   *
+   * The previous implementation only handled (1), which silently dropped
+   * 20 of MOD-05's 21 features from the RTM seeding pass. Now both shapes
+   * are walked and merged by featureId — the heading form wins on
+   * duplicates because its KV block usually carries fuller metadata.
+   */
   private parseFrdFeatures(markdown: string): Array<{ featureId: string; featureName: string; status: string; priority: string; screenRef: string }> {
-    const features: Array<{ featureId: string; featureName: string; status: string; priority: string; screenRef: string }> = [];
-    // Match ####/###/## **F-XX-XX: Name** or F-XX-XX: Name
+    const out = new Map<string, { featureId: string; featureName: string; status: string; priority: string; screenRef: string }>();
+
+    // ── Shape 1: heading-form features ────────────────────────────────
     const re = /#{1,4}\s+\*{0,2}(F-\d+-\d+)[:\s—-]+\s*(.+?)\*{0,2}\s*\n([\s\S]*?)(?=#{1,4}\s+\*{0,2}F-\d+-\d+|---\s*\n\s*#{1,4}\s+\*{0,2}F-|$)/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(markdown)) !== null) {
       const featureId = m[1];
+      // Skip if we already have a heading-form record for this id (prefer the
+      // first occurrence — usually the canonical declaration; later headings
+      // tend to be cross-references / examples).
+      if (out.has(featureId)) continue;
       const featureName = m[2].replace(/\*+/g, '').trim();
       const block = m[3];
-      features.push({
+      out.set(featureId, {
         featureId,
         featureName,
         status: this.extractField(block, ['Status', 'Feature Status']) || 'CONFIRMED',
@@ -4584,7 +4609,108 @@ export class BaSkillOrchestratorService {
         screenRef: this.extractField(block, ['Screen Reference', 'Screen Ref', 'Screen']) || '',
       });
     }
-    return features;
+
+    // ── Shape 2: markdown table catalog ───────────────────────────────
+    for (const row of this.parseFrdFeatureTableRows(markdown)) {
+      // Heading form wins on collision; table fills the gaps for features
+      // declared only in the catalog table.
+      if (out.has(row.featureId)) continue;
+      out.set(row.featureId, row);
+    }
+
+    return [...out.values()];
+  }
+
+  /**
+   * Walk markdown tables in the document and return every row whose
+   * "Feature ID" column carries a `F-NN-NN` value. Header-driven
+   * (column positions detected from the header row) so it tolerates
+   * the column-order shifts SKILL-01-S has used over time:
+   *
+   *   | Feature ID | Feature Name | Status | Priority | Screen Ref | … |
+   *   | Module ID | Module Name | Package | Feature ID | Feature Name | Priority | Status | Screen Ref | … |
+   *
+   * Returns an empty list when the document has no recognisable feature
+   * table — safe to call on every FRD.
+   */
+  private parseFrdFeatureTableRows(
+    markdown: string,
+  ): Array<{ featureId: string; featureName: string; status: string; priority: string; screenRef: string }> {
+    const out: Array<{ featureId: string; featureName: string; status: string; priority: string; screenRef: string }> = [];
+    const lines = markdown.split(/\r?\n/);
+
+    const splitRow = (raw: string): string[] => {
+      // `| A | B | C |` → ['A', 'B', 'C']. Walk cell-by-cell rather than
+      // a naive split() so empty cells (e.g. blank TBD-Future Ref) are
+      // preserved positionally.
+      const trimmed = raw.trim();
+      if (!trimmed.startsWith('|')) return [];
+      const inner = trimmed.replace(/^\|/, '').replace(/\|\s*$/, '');
+      return inner.split('|').map((c) => c.trim());
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!/^\s*\|/.test(line)) continue;
+      const header = splitRow(line);
+      if (header.length === 0) continue;
+
+      const findCol = (re: RegExp): number => header.findIndex((h) => re.test(h));
+      const idIdx = findCol(/^feature\s*id$/i);
+      if (idIdx < 0) continue;
+      const nameIdx = findCol(/^feature\s*name$/i);
+      const statusIdx = findCol(/^(feature\s*)?status$/i);
+      const priorityIdx = findCol(/^(priority|moscow)$/i);
+      const screenIdx = findCol(/^screen(\s*(ref|reference|s))?$/i);
+
+      // Optional separator row (`|---|---|---|`); skip if present.
+      let j = i + 1;
+      if (j < lines.length && /^\s*\|[\s|:-]+\|\s*$/.test(lines[j])) j++;
+
+      // Walk data rows until the table ends.
+      for (; j < lines.length; j++) {
+        const dataLine = lines[j];
+        if (!/^\s*\|/.test(dataLine)) break;
+        const cells = splitRow(dataLine);
+        if (cells.length === 0) break;
+        const cellAt = (idx: number): string => (idx >= 0 && idx < cells.length ? cells[idx] : '');
+        const featureId = cellAt(idIdx).replace(/\*+/g, '').trim();
+        if (!/^F-\d+-\d+$/.test(featureId)) {
+          // Non-feature row (e.g. summary, footer, "Total" line) — table
+          // body has ended for our purposes.
+          continue;
+        }
+        const rawName = cellAt(nameIdx).replace(/\*+/g, '').trim();
+        out.push({
+          featureId,
+          featureName: rawName || `Feature ${featureId}`,
+          status: this.normaliseStatus(cellAt(statusIdx)) || 'CONFIRMED',
+          priority: this.normalisePriority(cellAt(priorityIdx)) || 'Must',
+          screenRef: cellAt(screenIdx).replace(/^["']|["']$/g, '').trim(),
+        });
+      }
+      i = j - 1; // skip past this table
+    }
+    return out;
+  }
+
+  /** Map common SKILL-01-S status strings to the RTM canonical form. */
+  private normaliseStatus(raw: string): string {
+    const v = raw.toUpperCase();
+    if (v.includes('PARTIAL')) return 'CONFIRMED-PARTIAL';
+    if (v.includes('CONFIRMED')) return 'CONFIRMED';
+    if (v.includes('DRAFT')) return 'DRAFT';
+    return raw.trim();
+  }
+
+  /** Map "Must Have"/"Should Have"/etc to MoSCoW short form for RTM. */
+  private normalisePriority(raw: string): string {
+    const v = raw.toLowerCase();
+    if (v.includes('must')) return 'Must';
+    if (v.includes('should')) return 'Should';
+    if (v.includes('could')) return 'Could';
+    if (v.includes('would') || v.includes("won't") || v.includes('wont')) return "Won't";
+    return raw.trim();
   }
 
   private parseEpicSummary(markdown: string): { epicId: string; epicName: string; featureIds: string[] } {
