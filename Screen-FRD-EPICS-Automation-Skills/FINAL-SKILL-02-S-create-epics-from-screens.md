@@ -511,6 +511,31 @@ Project-Documents/EPICs/EPIC-Handoff-[ProjectCode]-EPIC-[NNN].json
 
 ## Rules
 
+### Screen Citation Format (mandatory across every EPIC section)
+
+When citing a screen in **prose / body sentences / heading text** — including
+Business Context paragraphs, Source-screens lines, Scope statements,
+Acceptance Criteria, Test Scenarios, and Open Questions — write the screen
+with both its ID and title separated by an em-dash:
+
+- ✅ `SCR-15 — Assign Task Screen`
+- ✅ `Admin navigates to SCR-15 — Assign Task Screen via the Quick Action`
+- ❌ `SCR-15` (bare ID, no title)
+- ❌ `SCR-15 (Assign Task Screen)` (parens — non-standard)
+
+Bare IDs (no title) are acceptable ONLY in:
+
+- Tabular cells with a separate "Screen Ref" or "Screen" column.
+- JSON arrays inside the EPIC Handoff Packet.
+- The "Source screens:" enumeration line if it lists 4+ screens (use bare
+  IDs there for compactness, but expand each ID with a title in the
+  Business Context paragraph).
+
+This keeps the customer-facing PDF/Word exports, the live preview, and the
+RTM consistent without the export pipeline having to patch references.
+
+### General
+
 - NEVER write an EPIC before completing the Feature-to-EPIC Assignment Map.
 - NEVER leave a FRD Feature ID unassigned.
 - NEVER include a DRAFT feature in an EPIC.

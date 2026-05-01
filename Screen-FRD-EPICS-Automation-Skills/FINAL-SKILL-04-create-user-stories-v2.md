@@ -407,6 +407,32 @@ Project-Documents/RTM/Module-FRD-EPIC-Screen-UserStory-RTM-[ProjectCode].md
 
 ## Rules
 
+### Screen Citation Format (mandatory across every User Story section)
+
+When citing a screen in **prose** — including the Description, Acceptance
+Criteria, Edge Cases, Test Scenarios, Algorithm Outline, the §3 Story
+heading, and the Traceability Header `Screen:` field — write the screen
+with both its ID and title separated by an em-dash:
+
+- ✅ `Screen: SCR-15 — Assign Task Screen`  (matches the existing example
+  in §3 of this skill)
+- ✅ `On SCR-15 — Assign Task Screen the Admin selects a professional`
+- ❌ `SCR-15` (bare ID, no title)
+- ❌ `SCR-15 (Assign Task Screen)` (parens — non-standard)
+
+Bare IDs (no title) are acceptable ONLY in:
+
+- The Section 14 RTM/inventory cell that has a column header for Screen.
+- JSON `screenIds` arrays inside any handoff packet.
+- Inline references in code-fence Algorithm Outlines where the screen is
+  mentioned more than once and the first mention already carries the title.
+
+This keeps the customer-facing PDF/Word exports, the live preview, and the
+RTM consistent without the export pipeline patching references after the
+fact. It also matches the format SKILL-05 uses for SubTask Traceability.
+
+### General
+
 - NEVER write User Stories without approved EPICs, FRD, AND Screens.
 - NEVER mix Frontend + Backend in one story — separate by type always.
 - NEVER leave FRD Feature ID blank.

@@ -420,9 +420,30 @@ The backend uses this to badge the FTC artifact with a coverage-complete indicat
 - Never hallucinate IDs. Cite only IDs present in the context.
 - Preserve every `TBD-Future` marker from upstream verbatim — do not silently resolve them; reference them under §15 Open Questions.
 - SQL dialect matches `projectMeta.sqlDialect`. When the dialect is null, default to PostgreSQL and note the default applied.
-- Output only Markdown — no JSON handoff packet (the parser reads TC blocks directly).
-- Do NOT wrap the entire response in a markdown code fence.
+- Output only Markdown — do NOT wrap the entire response in a markdown code fence.
 - Keep each TC focused on ONE acceptance criterion; multi-AC TCs should be split.
+
+### Screen Citation Format (mandatory across every test case section)
+
+When citing a screen in **prose** — including TC Description, Pre Condition,
+E2E Flow, Test Steps, Expected, Post Validation, Playwright Hints, and
+Developer Hints — write the screen with both its ID and title separated by
+an em-dash:
+
+- ✅ `Navigate to SCR-15 — Assign Task Screen via the Quick Action panel`
+- ✅ `Expected: SCR-16 — Confirmation Modal appears with the assigned name`
+- ❌ `SCR-15` (bare ID, no title)
+- ❌ `SCR-15 (Assign Task Screen)` (parens — non-standard)
+
+Bare IDs (no title) are acceptable ONLY in:
+
+- JSON arrays inside any structured packet.
+- Inline references inside the same TC where the screen is mentioned more
+  than once and the first mention already carries the title.
+
+This keeps the customer-facing PDF/Word exports, the live preview, and the
+RTM consistent without the export pipeline patching references after the
+fact, and matches the format SKILL-04 / SKILL-05 use upstream.
 
 ## 8. Test Case Appendix (final section of the document)
 

@@ -363,6 +363,35 @@ Project-Documents/RTM/Module-FRD-RTM-[ProjectCode].md
 
 ## Rules
 
+### Screen Citation Format (mandatory across every section that mentions a screen)
+
+When citing a screen in **prose / body sentences / heading text** — including
+Business Context, Scope statements, Functional Requirements, Acceptance
+Criteria, Edge Cases, Open Questions, and any "Source screens:" line — write
+the screen with both its ID and title separated by an em-dash:
+
+- ✅ `SCR-15 — Assign Task Screen`
+- ✅ `On SCR-15 — Assign Task Screen, the Admin selects a professional...`
+- ❌ `SCR-15` (bare ID, no title)
+- ❌ `SCR-15 (Assign Task Screen)` (parens — non-standard, breaks downstream
+  enrichment)
+
+Bare IDs (no title) are acceptable ONLY in:
+
+- Tabular cells that have a separate "Screen" column (the column header
+  already provides context).
+- JSON `screenIds` arrays inside the Handoff Packet (those carry IDs as
+  data, not prose).
+- The compact "Screen Reference" field of the RTM table (column already
+  named).
+
+The customer deliverables (PDF + Word exports) always render screens with
+their titles inline; emitting `SCR-NN — Title` directly here keeps the live
+preview, RTM, and exports consistent without the export pipeline having to
+patch references after the fact.
+
+### General
+
 - NEVER process multiple modules in one execution.
 - NEVER block a feature from proceeding because of a TBD-Future integration.
 - NEVER mark a feature DRAFT because of TBD-Future integrations — DRAFT is only for unresolved scope questions.

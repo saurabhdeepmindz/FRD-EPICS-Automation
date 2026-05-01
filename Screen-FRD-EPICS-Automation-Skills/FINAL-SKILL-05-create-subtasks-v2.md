@@ -919,6 +919,31 @@ When MOD-03 is later processed and its SubTasks are approved:
 
 ## Rules
 
+### Screen Citation Format (mandatory across every SubTask section)
+
+When citing a screen in **prose** — including the Description, Acceptance
+Criteria, Test Scenarios, Algorithm Outline, the §3 SubTask heading, and
+the Traceability Header `Screen:` field — write the screen with both its
+ID and title separated by an em-dash:
+
+- ✅ `Screen: SCR-15 — Assign Task Screen`  (matches the existing example
+  on line 428 of this skill)
+- ✅ `Calls API endpoint exposed by SCR-15 — Assign Task Screen`
+- ❌ `SCR-15` (bare ID, no title)
+- ❌ `SCR-15 (Assign Task Screen)` (parens — non-standard)
+
+Bare IDs (no title) are acceptable ONLY in:
+
+- JSON `screenIds` arrays inside any handoff packet.
+- Inline references in code-fence Algorithm Outlines where the screen is
+  mentioned more than once and the first mention already carries the title.
+
+This keeps the customer-facing PDF/Word exports, the live preview, and the
+RTM consistent without the export pipeline patching references after the
+fact. It also matches the format SKILL-04 uses for User Story Traceability.
+
+### General
+
 - NEVER skip any AUTOMATION CRITICAL field — a vague field generates broken code.
 - NEVER write "TBD" alone in any Integration Point — always provide assumed interface.
 - NEVER block a SubTask due to TBD-Future integrations.
