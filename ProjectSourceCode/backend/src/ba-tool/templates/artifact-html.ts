@@ -82,11 +82,40 @@ function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+/**
+ * Append each screen's title next to bare `SCR-NN` references in a body of
+ * text so customer-facing PDFs / Word docs read fluently without forcing
+ * the reader to flip to the Screen Inventory. Idempotent: any `SCR-NN`
+ * already followed by an em-dash, hyphen, colon, paren or bracket
+ * (regardless of intervening whitespace) is left alone, so re-running this
+ * over previously-enriched content does NOT double-stamp the title.
+ *
+ * Used by both the HTML/PDF render path and the DOCX render path (via
+ * `BaArtifactExportService`) so the two outputs stay aligned.
+ */
+export function enrichScreenReferences(
+  text: string,
+  screens: Array<{ screenId: string; screenTitle: string }>,
+): string {
+  if (!text) return text;
+  if (!screens || screens.length === 0) return text;
+  const titleById = new Map<string, string>();
+  for (const s of screens) titleById.set(s.screenId, s.screenTitle);
+
+  return text.replace(/\bSCR-\d+\b/g, (match, offset: number, full: string) => {
+    const tail = full.slice(offset + match.length, offset + match.length + 80);
+    if (/^\s*[—\-:(\[]/.test(tail)) return match;
+    const title = titleById.get(match);
+    if (!title) return match;
+    return `${match} — ${title}`;
+  });
+}
+
 // ─── Minimal markdown → HTML renderer ───────────────────────────────────────
 // Handles headings, lists, tables (pipe-syntax), code fences, bold/italic/inline
 // code, horizontal rules, blockquotes and paragraphs. No external deps.
 
-function renderMarkdown(md: string): string {
+export function renderMarkdown(md: string): string {
   const lines = md.split(/\r?\n/);
   const out: string[] = [];
   let i = 0;
@@ -471,15 +500,22 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
     )
     .join('');
 
+  // Customer-facing deliverables read better when bare SCR-NN references in
+  // the section body carry the human screen title (e.g. `SCR-01 — Login`).
+  // Enrichment is idempotent so manually-edited sections that already
+  // include the title aren't double-stamped.
+  const screensForEnrichment = doc.module.screens ?? [];
+
   const sectionHtml = sections
     .map((s, idx) => {
-      const content = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+      const rawContent = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+      const content = enrichScreenReferences(rawContent || '', screensForEnrichment);
       const badges: string[] = [];
       if (s.aiGenerated && !s.isHumanModified) badges.push('<span class="badge badge-ai">AI</span>');
       if (s.isHumanModified) badges.push('<span class="badge badge-edited">Edited</span>');
       return `<section id="sec-${slug(s.sectionKey || s.sectionLabel || String(idx))}" class="doc-section">
         <h2>${idx + 1}. ${esc(s.sectionLabel || s.sectionKey)} ${badges.join(' ')}</h2>
-        <div class="section-body">${renderMarkdown(content || '')}</div>
+        <div class="section-body">${renderMarkdown(content)}</div>
       </section>`;
     })
     .join('\n');
@@ -624,18 +660,23 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
 
 function renderScreensBlock(doc: BaArtifactDoc): string {
   const allScreens = doc.module.screens ?? [];
-  // Only include screens for artifacts where they're visually relevant
-  const wanted = doc.artifactType === 'EPIC' || doc.artifactType === 'USER_STORY' || doc.artifactType === 'SUBTASK' || doc.artifactType === 'FRD';
+  // Customer deliverables (PDF/DOCX of EPICs, User Stories, FTCs, FRDs,
+  // SubTasks) include the screen catalog so the reader can match every
+  // SCR-NN reference back to a real wireframe without leaving the doc.
+  // LLD/SCREEN_ANALYSIS exports are technical/internal and skip the block.
+  const wanted =
+    doc.artifactType === 'EPIC'
+    || doc.artifactType === 'USER_STORY'
+    || doc.artifactType === 'SUBTASK'
+    || doc.artifactType === 'FRD'
+    || doc.artifactType === 'FTC';
   if (!wanted || allScreens.length === 0) return '';
 
-  // Filter to ONLY screens this artifact references in its section content
-  const referenced = new Set<string>();
-  for (const s of doc.sections) {
-    const text = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
-    for (const m of (text || '').matchAll(/\bSCR-\d+\b/g)) referenced.add(m[0]);
-  }
-  const screens = allScreens.filter((s) => referenced.has(s.screenId));
-  if (screens.length === 0) return '';
+  // Render every screen in the module, not just the ones cited in the
+  // section body. The customer needs the full catalog as a navigation aid;
+  // omitting non-cited screens produced gaps when reviewers wanted to
+  // cross-check the source wireframes.
+  const screens = allScreens;
 
   const tiles = screens.map((s) => `
     <div class="screen-tile">
@@ -648,7 +689,7 @@ function renderScreensBlock(doc: BaArtifactDoc): string {
     </div>`).join('');
   return `
   <div class="screens">
-    <h2>Referenced Screens <span class="count">(${screens.length} of ${allScreens.length})</span></h2>
+    <h2>Referenced Screens <span class="count">(${screens.length})</span></h2>
     <div class="screen-grid">${tiles}</div>
   </div>
   <style>

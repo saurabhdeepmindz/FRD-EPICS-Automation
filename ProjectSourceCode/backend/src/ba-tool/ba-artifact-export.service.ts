@@ -20,7 +20,16 @@ interface MermaidImage {
 }
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../export/pdf.service';
-import { generateBaArtifactHtml, type BaArtifactDoc } from './templates/artifact-html';
+import {
+  generateBaArtifactHtml,
+  enrichScreenReferences,
+  type BaArtifactDoc,
+} from './templates/artifact-html';
+
+// docx@9 ImageRun accepts these raster `type` values without a fallback.
+// SVG is supported by docx but requires a PNG fallback buffer; screens are
+// always uploaded as raster, so we keep the union tight.
+type DocxImageType = 'png' | 'jpg' | 'gif' | 'bmp';
 
 @Injectable()
 export class BaArtifactExportService {
@@ -293,6 +302,12 @@ export class BaArtifactExportService {
     children.push(new Paragraph({ text: '' }));
     children.push(new Paragraph({ text: '' }));
 
+    // Embed the per-module screen catalog right after the title page so the
+    // customer can correlate every SCR-NN reference in the body with the
+    // actual wireframe image. Only emitted for the artifact types where
+    // screens are meaningful (EPIC / User Story / FTC / FRD / SubTask).
+    this.appendScreensSection(children, doc);
+
     // Sort sections by displayOrder then createdAt for stable output.
     const sorted = [...doc.sections].sort((a, b) => {
       if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
@@ -301,9 +316,15 @@ export class BaArtifactExportService {
       return at - bt;
     });
 
+    // Same screen list used for inline reference enrichment in the body —
+    // every bare `SCR-NN` is rewritten to `SCR-NN — Title` so the Word doc
+    // reads fluently without forcing a flip back to the screen catalog.
+    const screensForEnrichment = doc.module.screens ?? [];
+
     for (const section of sorted) {
-      const body = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
-      if (!body || !body.trim()) continue;
+      const rawBody = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+      if (!rawBody || !rawBody.trim()) continue;
+      const body = enrichScreenReferences(rawBody, screensForEnrichment);
       children.push(new Paragraph({
         text: section.sectionLabel || section.sectionKey.replace(/_/g, ' '),
         heading: HeadingLevel.HEADING_1,
@@ -817,6 +838,173 @@ export class BaArtifactExportService {
         })),
       ],
     });
+  }
+
+  /**
+   * Artifact types where the per-module screen catalog is a meaningful
+   * deliverable. Mirrors the `wanted` set inside the HTML template's
+   * `renderScreensBlock`. LLD and SCREEN_ANALYSIS are intentionally
+   * excluded — those are technical/internal docs.
+   */
+  private readonly SCREENS_BLOCK_ARTIFACT_TYPES = new Set([
+    'EPIC',
+    'USER_STORY',
+    'SUBTASK',
+    'FRD',
+    'FTC',
+  ]);
+
+  /**
+   * Append a "Referenced Screens" section to the DOCX body, right after the
+   * title page. Each screen renders as a small block: ID + title heading,
+   * type chip, and the wireframe image scaled to page width. The HTML/PDF
+   * path produces the same visual via `renderScreensBlock` in the template.
+   *
+   * Failures (corrupt base64, unsupported MIME, oversized data) are logged
+   * and the screen is skipped — the export never fails because of one bad
+   * image.
+   */
+  private appendScreensSection(children: Array<Paragraph | Table>, doc: BaArtifactDoc): void {
+    if (!this.SCREENS_BLOCK_ARTIFACT_TYPES.has(doc.artifactType)) return;
+    const screens = doc.module.screens ?? [];
+    if (screens.length === 0) return;
+
+    children.push(new Paragraph({
+      text: `Referenced Screens (${screens.length})`,
+      heading: HeadingLevel.HEADING_1,
+    }));
+    children.push(new Paragraph({
+      children: [new TextRun({
+        text: 'The wireframes below are referenced throughout this document by their Screen ID (e.g. SCR-01). Each ID is annotated with the screen title in the body sections so the reader can match a reference to its source without leaving the document.',
+        italics: true,
+        size: 18,
+      })],
+    }));
+    children.push(new Paragraph({ text: '' }));
+
+    for (const s of screens) {
+      // Heading: ID — Title  (matches the inline body enrichment style)
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: s.screenId, bold: true, font: 'Consolas', size: 22 }),
+          new TextRun({ text: '  —  ', bold: true, size: 22 }),
+          new TextRun({ text: s.screenTitle, bold: true, size: 22 }),
+        ],
+      }));
+      if (s.screenType) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `Type: ${s.screenType}`, italics: true, size: 18, color: '64748B' })],
+        }));
+      }
+
+      const decoded = this.decodeScreenImage(s.fileData);
+      if (decoded) {
+        try {
+          children.push(new Paragraph({
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 540),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed to embed image for ${s.screenId}: ${(err as Error).message}`);
+          children.push(new Paragraph({
+            children: [new TextRun({ text: `(image unavailable for ${s.screenId})`, italics: true, size: 18, color: '94A3B8' })],
+          }));
+        }
+      } else {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `(image unavailable for ${s.screenId})`, italics: true, size: 18, color: '94A3B8' })],
+        }));
+      }
+      children.push(new Paragraph({ text: '' }));
+    }
+  }
+
+  /**
+   * Decode a screen's `fileData` (a `data:image/<type>;base64,...` URL) into
+   * a Buffer + dimensions + DOCX-compatible `type` discriminator.
+   *
+   * `BaScreen.fileData` is stored as a complete data-URL by the upload
+   * pipeline; we sniff the MIME from the URL prefix and fall back to
+   * `image/png` when the prefix is missing. Returns null when the input is
+   * empty, malformed, or carries a MIME type the `docx` library doesn't
+   * support natively (e.g. webp — which Word renderers handle inconsistently).
+   *
+   * Width/height default to `0` when we can't read the PNG/JPEG header
+   * cheaply; `scaleImageForDocx` clamps to `maxWidthPx` in that case so
+   * Word still gets a usable image.
+   */
+  private decodeScreenImage(fileData: string): { buffer: Buffer; type: DocxImageType; width: number; height: number } | null {
+    if (!fileData || typeof fileData !== 'string') return null;
+
+    const dataUrlMatch = fileData.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,([\s\S]+)$/);
+    let mime = 'png';
+    let b64 = fileData;
+    if (dataUrlMatch) {
+      mime = dataUrlMatch[1].toLowerCase();
+      b64 = dataUrlMatch[2];
+    }
+    // Map sniffed MIME to docx-supported `type`. The library accepts
+    // png/jpg/gif/bmp/svg; everything else is rejected with a runtime
+    // error inside `Packer.toBuffer`. Treat `jpeg` as `jpg`.
+    let type: DocxImageType;
+    switch (mime) {
+      case 'png': type = 'png'; break;
+      case 'jpg':
+      case 'jpeg': type = 'jpg'; break;
+      case 'gif': type = 'gif'; break;
+      case 'bmp': type = 'bmp'; break;
+      default:
+        // SVG / WebP / unknown — skip so the export doesn't fail. The
+        // caller writes a "(image unavailable for SCR-NN)" placeholder.
+        this.logger.warn(`Unsupported screen image MIME "image/${mime}" — skipping in DOCX`);
+        return null;
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(b64, 'base64');
+    } catch (err) {
+      this.logger.warn(`Screen image base64 decode failed: ${(err as Error).message}`);
+      return null;
+    }
+    if (buffer.length === 0) return null;
+
+    const dims = this.sniffImageDimensions(buffer, type);
+    return { buffer, type, width: dims.width, height: dims.height };
+  }
+
+  /**
+   * Read PNG/JPEG dimensions from the image header without decoding the
+   * pixel data. Returns `{0,0}` when the header isn't recognised — the
+   * caller's `scaleImageForDocx` clamps to `maxWidthPx` in that case.
+   */
+  private sniffImageDimensions(buffer: Buffer, type: DocxImageType): { width: number; height: number } {
+    if (type === 'png' && buffer.length >= 24 && buffer.readUInt32BE(0) === 0x89504e47) {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    if (type === 'jpg') {
+      // Walk JPEG markers to find the SOF (Start Of Frame) chunk that
+      // carries height + width. Keep the walk bounded so a corrupt header
+      // can't loop forever.
+      let i = 2;
+      const end = Math.min(buffer.length - 8, 65535);
+      while (i < end) {
+        if (buffer[i] !== 0xff) break;
+        const marker = buffer[i + 1];
+        const segLen = buffer.readUInt16BE(i + 2);
+        const isSof = (marker >= 0xc0 && marker <= 0xcf) && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+        if (isSof) {
+          return { height: buffer.readUInt16BE(i + 5), width: buffer.readUInt16BE(i + 7) };
+        }
+        i += 2 + segLen;
+      }
+    }
+    return { width: 0, height: 0 };
   }
 
   /**
