@@ -3030,6 +3030,299 @@ export class BaSkillOrchestratorService {
     };
   }
 
+  // ─── SKILL-04 per-feature user-story regeneration (mode 04b) ──────────
+  //
+  // The single-shot SKILL-04 path already runs a per-feature loop internally
+  // (`callAiServiceSkill04PerFeature`), but that loop is gated by the RTM
+  // row catalog. When the upstream FRD under-emits features (observed on
+  // MOD-05: 20 screens, but FRD only declared F-05-03), the loop runs once
+  // and the EPIC's other 9 feature ids (F-05-01..F-05-10) never get
+  // their own user stories. The validator surfaces "1 user story for
+  // 20 screens" but offers no targeted fix.
+  //
+  // Mode 04b is that targeted fix: an architect calls it with one
+  // featureId, the orchestrator looks the feature up in EPIC content
+  // (so it works even when RTM is sparse), and produces 2-3 stories
+  // for THAT feature only. Output is appended to the existing
+  // USER_STORY artifact via splitIntoSections (idempotent per section
+  // key — re-runs that produce the same key update in place).
+  //
+  // Cost: ~$0.10 / call. Idempotent: features that already have ≥3
+  // stories cited in the artifact short-circuit before any AI spend.
+
+  /**
+   * Generate User Stories for ONE feature on the module's existing
+   * USER_STORY artifact. Reads feature info from RTM if present, else
+   * from EPIC artifact section content (so MOD-05-class gaps where the
+   * EPIC sees more features than the FRD/RTM are still fillable). Story
+   * numbers reserved via `computeNextUserStoryNumber` so re-runs across
+   * the project never collide.
+   */
+  async executeSkill04ForFeature(
+    moduleDbId: string,
+    featureId: string,
+  ): Promise<{
+    featureId: string;
+    artifactId: string;
+    storiesAdded: number;
+    storyIds: string[];
+    skipped: boolean;
+    reason?: string;
+  }> {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new Error(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: moduleDbId },
+      include: { project: true },
+    });
+    if (!mod) throw new NotFoundException(`Module ${moduleDbId} not found`);
+
+    // Prerequisite: USER_STORY artifact must exist (we're appending stories,
+    // not bootstrapping from scratch). If it doesn't, the architect should
+    // run SKILL-04 once first — analogous to mode 06c's LLD prereq.
+    const usArtifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.USER_STORY },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!usArtifact) {
+      throw new Error(
+        `Cannot regenerate per-feature User Stories for ${mod.moduleId} / ${featureId}: ` +
+        `no USER_STORY artifact exists. Run "Generate User Stories" (single-shot) first.`,
+      );
+    }
+
+    // Resolve feature name. Prefer RTM, then EPIC content, then a generic
+    // fallback that just uses the feature ID.
+    const rtmRow = mod.projectId
+      ? await this.prisma.baRtmRow.findFirst({
+          where: { projectId: mod.projectId, moduleId: mod.moduleId, featureId },
+          select: { featureName: true, featureStatus: true, priority: true, screenRef: true },
+        })
+      : null;
+    let featureName = rtmRow?.featureName?.trim() || '';
+    let featureStatus = rtmRow?.featureStatus?.trim() || '';
+    let featurePriority = rtmRow?.priority?.trim() || '';
+    let featureScreenRef = rtmRow?.screenRef?.trim() || '';
+    if (!featureName) {
+      // Fall back to EPIC content scan. EPIC tables typically have rows of
+      // the shape `| F-05-04 | <feature name> | ...` — pull the name field.
+      const epicArtifact = await this.prisma.baArtifact.findFirst({
+        where: { moduleDbId, artifactType: BaArtifactType.EPIC },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (epicArtifact) {
+        const epicSections = await this.prisma.baArtifactSection.findMany({
+          where: { artifactId: epicArtifact.id },
+          select: { content: true },
+        });
+        const epicText = epicSections.map((s) => s.content || '').join('\n');
+        const escapedFid = featureId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const tableRowRe = new RegExp(`\\|\\s*${escapedFid}\\s*\\|\\s*([^|\\n]+?)\\s*\\|`, 'i');
+        const tableMatch = epicText.match(tableRowRe);
+        if (tableMatch) featureName = tableMatch[1].trim();
+        // Also try `F-05-04 — <name>` or `**F-05-04: <name>**` patterns.
+        if (!featureName) {
+          const proseRe = new RegExp(`${escapedFid}\\s*[—:\\-]\\s*([^\\n*|]{3,80})`, 'i');
+          const proseMatch = epicText.match(proseRe);
+          if (proseMatch) featureName = proseMatch[1].trim().replace(/\*+$/, '').trim();
+        }
+      }
+    }
+    if (!featureName) featureName = `Feature ${featureId}`;
+    if (!featureStatus) featureStatus = 'CONFIRMED';
+    if (!featurePriority) featurePriority = 'Must';
+
+    // Idempotency — count distinct US-NNN ids in the existing artifact's
+    // sections that mention THIS feature. ≥3 stories means we likely have
+    // Frontend / Backend / Integration covered; skip without spending AI.
+    const existingSections = await this.prisma.baArtifactSection.findMany({
+      where: { artifactId: usArtifact.id },
+      select: { sectionKey: true, sectionLabel: true, content: true },
+    });
+    const escapedFidForScan = featureId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const featureCiteRe = new RegExp(`\\b${escapedFidForScan}\\b`);
+    const featureUsIds = new Set<string>();
+    for (const s of existingSections) {
+      const blob = `${s.sectionKey}\n${s.sectionLabel}\n${s.content || ''}`;
+      if (!featureCiteRe.test(blob)) continue;
+      for (const m of blob.matchAll(/\bUS-\d{3,}\b/g)) featureUsIds.add(m[0]);
+    }
+    if (featureUsIds.size >= 3) {
+      return {
+        featureId,
+        artifactId: usArtifact.id,
+        storiesAdded: 0,
+        storyIds: [],
+        skipped: true,
+        reason:
+          `Feature ${featureId} already has ${featureUsIds.size} user story/stories ` +
+          `(${[...featureUsIds].sort().join(', ')}) cited in the artifact — no regen needed. ` +
+          `Delete one or more of these sections manually if you want to force a regen.`,
+      };
+    }
+
+    const skillPrompt = this.loadSkillFile('SKILL-04');
+    const contextPacket = await this.assembleContext(moduleDbId, 'SKILL-04');
+
+    // Reserve a US-NNN starting number that won't collide with any
+    // existing story across the project.
+    const nextUsNumber = await this.computeNextUserStoryNumber(mod.moduleId);
+
+    const focusOverride = [
+      '## 🎯 SKILL-04 PER-FEATURE FOCUS — ORCHESTRATOR OVERRIDE (mode 04b)',
+      '',
+      'You are running in per-feature User Story regeneration mode. The module already has a USER_STORY artifact with some stories populated. The orchestrator has identified that **this feature** is missing complete user-story coverage. Your job is to produce User Stories for THIS feature only.',
+      '',
+      `**TARGET FEATURE: ${featureId} — ${featureName}**`,
+      `- Module:   ${mod.moduleId} — ${mod.moduleName}`,
+      `- Status:   ${featureStatus}`,
+      `- Priority: ${featurePriority}`,
+      featureScreenRef ? `- Screens:  ${featureScreenRef}` : '',
+      `- Existing US ids on this feature: ${featureUsIds.size > 0 ? [...featureUsIds].sort().join(', ') : '(none — this is the first story batch for the feature)'}`,
+      '',
+      '### What to emit',
+      '',
+      `1. A single \`## User Stories for ${featureId}\` heading.`,
+      '2. **2–3 complete User Stories** for this feature only — covering Backend, Frontend, and Integration roles where applicable. CONFIRMED-PARTIAL features with TBD-Future integrations MUST include the Integration story; pure UI features can skip Integration.',
+      '3. Each story uses the full 27-section template from the skill definition (Section 0 Traceability Header through Section 27 Linked SubTasks). Sections that are not applicable still get a heading + a one-line N/A note — do not skip them.',
+      `4. Number stories starting at **US-${String(nextUsNumber).padStart(3, '0')}** and increment by 1 for each subsequent story.`,
+      '5. Every story\'s Section 5 (FRD Feature Reference) MUST cite `' + featureId + '` exactly so the RTM extender can link them.',
+      '',
+      '### What to SKIP',
+      '',
+      '- Do NOT write a Coverage Summary table — those live at the top of the parent artifact.',
+      '- Do NOT mention or write stories for any feature OTHER than ' + featureId + '.',
+      '- Do NOT emit an RTM Extension table — the orchestrator extends RTM from the story headings after this call returns.',
+      '- Do NOT repeat introductory module-level prose like "This document covers..." — the artifact already has that.',
+      '- Do NOT re-emit any existing US-NNN id listed above (under "Existing US ids on this feature").',
+      '',
+      '### Hard rules',
+      '',
+      '- Story headings MUST be `### US-NNN — <Story Name>` so the parser locates them.',
+      '- Cite the screen IDs for the feature in the canonical `SCR-NN — <Screen Title>` form (per the Screen Citation Format in the skill rules).',
+      '- Acceptance Criteria, Algorithm Outline, and API Contract sections are mandatory and non-empty — these are what SKILL-05 / SKILL-06 / SKILL-07 read downstream.',
+      '- Output is one markdown document starting with the `## User Stories for ' + featureId + '` heading. No preamble, no closing summary.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (apply Section 4 Story Template + Screen Citation Format + Hard rules from §Rules section, constrained by the override above)',
+      '',
+      skillPrompt,
+    ].filter((l) => l !== '').join('\n');
+
+    const runStartedAt = new Date();
+    const aiResponse = await this.callAiServiceWithRetry(
+      focusOverride,
+      { ...contextPacket, currentFocusFeature: featureId },
+    );
+    const { humanDocument } = this.parseAiOutput(aiResponse);
+    if (!humanDocument || !humanDocument.trim()) {
+      throw new Error(`AI returned empty humanDocument for feature ${featureId}`);
+    }
+
+    // Persist the AI response so the architect can audit what was emitted
+    // (matches mode 06c's pattern). The execution row is APPROVED status
+    // because the artifact is the canonical record — review happens there,
+    // not on the execution.
+    const execRow = await this.prisma.baSkillExecution.create({
+      data: {
+        moduleDbId,
+        skillName: 'SKILL-04',
+        status: BaExecutionStatus.AWAITING_REVIEW,
+        humanDocument,
+        startedAt: runStartedAt,
+        completedAt: new Date(),
+      },
+    });
+    this.logger.log(
+      `SKILL-04 per-feature ${featureId}: AI response stored in execution ${execRow.id} (${humanDocument.length} chars)`,
+    );
+
+    // Append new sections to the existing USER_STORY artifact. Idempotent:
+    // a section key that already exists is updated in place (when AI-
+    // generated) or skipped (when human-modified) — same contract used by
+    // the LLD parser. We don't have a dedicated user-story parser, but
+    // splitIntoSections + per-row upsert covers the common case.
+    const sections = this.splitIntoSections(humanDocument);
+    const newStoryIds: string[] = [];
+    for (const section of sections) {
+      // Track US-NNN ids in the new sections so we can report them.
+      for (const m of `${section.label}\n${section.content}`.matchAll(/\bUS-\d{3,}\b/g)) {
+        if (!newStoryIds.includes(m[0])) newStoryIds.push(m[0]);
+      }
+      const existing = await this.prisma.baArtifactSection.findFirst({
+        where: { artifactId: usArtifact.id, sectionKey: section.key },
+        select: { id: true, isHumanModified: true },
+      });
+      if (existing) {
+        if (existing.isHumanModified) {
+          this.logger.warn(
+            `SKILL-04 per-feature ${featureId}: skipped overwrite of section ${section.key} — human-modified`,
+          );
+          continue;
+        }
+        try {
+          await this.prisma.baArtifactSection.update({
+            where: { id: existing.id },
+            data: { content: section.content, sectionLabel: section.label },
+          });
+        } catch (err) {
+          this.logger.warn(
+            `SKILL-04 per-feature ${featureId}: failed to update section ${section.key}: ${err instanceof Error ? err.message : 'unknown'}`,
+          );
+        }
+        continue;
+      }
+      try {
+        await this.prisma.baArtifactSection.create({
+          data: {
+            artifactId: usArtifact.id,
+            sectionKey: section.key,
+            sectionLabel: section.label,
+            aiGenerated: true,
+            isHumanModified: false,
+            content: section.content,
+          },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `SKILL-04 per-feature ${featureId}: failed to insert section ${section.key}: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      }
+    }
+
+    // Extend RTM so the new stories are linked to their feature row(s).
+    if (mod.projectId) {
+      try {
+        await this.extendRtmWithStories(moduleDbId, mod.projectId, humanDocument);
+      } catch (err) {
+        this.logger.warn(
+          `SKILL-04 per-feature ${featureId}: RTM extend failed — ${err instanceof Error ? err.message : 'unknown'}; non-fatal`,
+        );
+      }
+    }
+
+    // Filter newStoryIds to ones that didn't already exist on this feature
+    // — those are the *added* stories. The AI may echo an existing story
+    // id in cross-references (e.g. "supersedes US-051"); those are not
+    // counted as adds.
+    const addedStoryIds = newStoryIds.filter((sid) => !featureUsIds.has(sid));
+
+    this.logger.log(
+      `SKILL-04 per-feature ${featureId}: appended ${addedStoryIds.length} story(ies) to ${usArtifact.id} (${addedStoryIds.join(', ') || 'none'})`,
+    );
+
+    return {
+      featureId,
+      artifactId: usArtifact.id,
+      storiesAdded: addedStoryIds.length,
+      storyIds: addedStoryIds,
+      skipped: false,
+    };
+  }
+
   // ─── SKILL-06-LLD per-section regeneration (mode 06b) ─────────────────
   //
   // Single-shot LLD generation can truncate later sections or under-emit

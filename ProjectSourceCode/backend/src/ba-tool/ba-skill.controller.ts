@@ -125,6 +125,25 @@ export class BaSkillController {
     return this.orchestrator.executeSkill05ForStory(moduleDbId, storyId);
   }
 
+  /**
+   * POST /api/ba/modules/:id/execute/SKILL-04/feature/:featureId — focused AI
+   * call to generate User Stories for ONE feature on the existing USER_STORY
+   * artifact. Use when the upstream FRD under-emitted features (so the
+   * single-shot SKILL-04's per-feature loop missed them) OR when one feature
+   * came back with too few stories. Idempotent — skips when the feature
+   * already has ≥3 stories cited in the artifact. Cost: ~$0.10 per call.
+   */
+  @Post('modules/:id/execute/SKILL-04/feature/:featureId')
+  executeSkill04ForFeature(
+    @Param('id') moduleDbId: string,
+    @Param('featureId') featureId: string,
+  ) {
+    if (!/^F-\d+-\d+$/.test(featureId)) {
+      throw new BadRequestException(`Invalid featureId "${featureId}". Expected F-NN-NN.`);
+    }
+    return this.orchestrator.executeSkill04ForFeature(moduleDbId, featureId);
+  }
+
   // ─── Artifacts ─────────────────────────────────────────────────────────
 
   /** GET /api/ba/artifacts/:id — get an artifact with sections */

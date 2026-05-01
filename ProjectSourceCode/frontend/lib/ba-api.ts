@@ -1086,6 +1086,41 @@ export async function regenerateLldSection(
 }
 
 /**
+ * Result of POST /ba/modules/:id/execute/SKILL-04/feature/:featureId —
+ * per-feature User Story regeneration (mode 04b). Reports how many stories
+ * the AI added to the existing USER_STORY artifact, their US-NNN ids, or
+ * `skipped` when the feature already has ≥3 stories.
+ */
+export interface Skill04FeatureRegenResult {
+  featureId: string;
+  artifactId: string;
+  storiesAdded: number;
+  storyIds: string[];
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Generate User Stories for ONE feature on the existing USER_STORY artifact.
+ * Use when SKILL-04's single-shot per-feature loop missed a feature (because
+ * the upstream FRD/RTM was sparse) or when one feature came back with too
+ * few stories. Idempotent — skips when the feature already has ≥3 stories.
+ * ~$0.10 per call, ~60-90 s wall time.
+ */
+export async function regenerateUserStoriesForFeature(
+  moduleDbId: string,
+  featureId: string,
+): Promise<Skill04FeatureRegenResult> {
+  const { data } = await api.post<Skill04FeatureRegenResult>(
+    `/ba/modules/${moduleDbId}/execute/SKILL-04/feature/${featureId}`,
+    {},
+    // 3 min — single AI call producing 2-3 user stories; ~60-90 s typical
+    { timeout: 3 * 60 * 1000 },
+  );
+  return data;
+}
+
+/**
  * Result of POST /ba/modules/:id/execute/SKILL-06-LLD/feature/:featureId —
  * per-feature pseudo-file regeneration. Reports how many new pseudo-files
  * the AI added (or `skipped` when the feature already has comprehensive
@@ -1997,6 +2032,679 @@ export async function ftcGapCheck(moduleDbId: string): Promise<{ gaps: BaLldGap[
     `/ba/modules/${moduleDbId}/ftc/gap-check`,
     {},
     { timeout: 120_000 },
+  );
+  return data;
+}
+
+// ─── Discovery & Solutioning Track (Stage 1: Audio + WFT) ───────────────────
+
+export type BaAudioFileStatus = 'UPLOADED' | 'TRANSCRIBING' | 'TRANSCRIBED' | 'FAILED';
+
+export interface BaAudioFile {
+  id: string;
+  projectId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  durationSec: number | null;
+  fileData: string; // base64; '' on list/detail responses (server strips for performance)
+  rawTranscript: string | null;
+  detectedLang: string | null;
+  sttProvider: string | null;
+  status: BaAudioFileStatus;
+  errorMessage: string | null;
+  retentionUntil: string | null;
+  uploadedById: string | null;
+  wftId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BaWftStatus = 'DRAFT' | 'COMPLETE' | 'APPROVED';
+
+export interface BaWftConcept {
+  name: string;
+  context: string;
+}
+
+export interface BaWftMeta {
+  language?: string | null;
+  domainContext?: string | null;
+  model?: string | null;
+  generatedAt?: string;
+}
+
+export interface BaWft {
+  id: string;
+  projectId: string;
+  rawTranscript: string;
+  cleanedText: string | null;
+  paraphrased: string | null;
+  concepts: BaWftConcept[] | null;
+  actionItems: string[] | null;
+  openQuestions: string[] | null;
+  meta: BaWftMeta | null;
+  status: BaWftStatus;
+  createdAt: string;
+  updatedAt: string;
+  audioFiles?: BaAudioFile[];
+}
+
+// Audio operations
+
+export async function uploadDiscoveryAudio(
+  projectId: string,
+  file: File,
+  retentionDays?: number,
+): Promise<BaAudioFile> {
+  const formData = new FormData();
+  formData.append('audio', file);
+  if (retentionDays != null) formData.append('retentionDays', String(retentionDays));
+  const { data } = await api.post<BaAudioFile>(
+    `/ba/projects/${projectId}/discovery/audio`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 },
+  );
+  return data;
+}
+
+export async function listDiscoveryAudio(projectId: string): Promise<BaAudioFile[]> {
+  const { data } = await api.get<BaAudioFile[]>(`/ba/projects/${projectId}/discovery/audio`);
+  return data;
+}
+
+export async function transcribeDiscoveryAudio(
+  projectId: string,
+  audioId: string,
+): Promise<BaAudioFile> {
+  const { data } = await api.post<BaAudioFile>(
+    `/ba/projects/${projectId}/discovery/audio/${audioId}/transcribe`,
+    {},
+    { timeout: 120_000 },
+  );
+  return data;
+}
+
+export async function deleteDiscoveryAudio(projectId: string, audioId: string): Promise<void> {
+  await api.delete(`/ba/projects/${projectId}/discovery/audio/${audioId}`);
+}
+
+// WFT operations
+
+export async function generateDiscoveryWft(
+  projectId: string,
+  audioFileIds: string[],
+  domainContext?: string,
+  languageHint?: string,
+): Promise<BaWft> {
+  const { data } = await api.post<BaWft>(
+    `/ba/projects/${projectId}/discovery/wft`,
+    { audioFileIds, domainContext, languageHint },
+    { timeout: 180_000 },
+  );
+  return data;
+}
+
+export async function getLatestDiscoveryWft(projectId: string): Promise<BaWft | null> {
+  const { data } = await api.get<BaWft | null>(`/ba/projects/${projectId}/discovery/wft`);
+  return data;
+}
+
+export interface UpdateBaWftDto {
+  cleanedText?: string;
+  paraphrased?: string;
+  concepts?: BaWftConcept[];
+  actionItems?: string[];
+  openQuestions?: string[];
+  status?: BaWftStatus;
+}
+
+export async function updateDiscoveryWft(
+  projectId: string,
+  wftId: string,
+  updates: UpdateBaWftDto,
+): Promise<BaWft> {
+  const { data } = await api.patch<BaWft>(
+    `/ba/projects/${projectId}/discovery/wft/${wftId}`,
+    updates,
+  );
+  return data;
+}
+
+export async function regenerateDiscoveryWft(
+  projectId: string,
+  wftId: string,
+  domainContext?: string,
+  languageHint?: string,
+): Promise<BaWft> {
+  const { data } = await api.post<BaWft>(
+    `/ba/projects/${projectId}/discovery/wft/${wftId}/regenerate`,
+    { domainContext, languageHint },
+    { timeout: 180_000 },
+  );
+  return data;
+}
+
+// BRD operations (Stage 2)
+
+export type BaBrdStatus = 'DRAFT' | 'COMPLETE' | 'APPROVED';
+export type BaBrdAudience = 'internal-tool' | 'end-client-product';
+
+export interface BaFrTableRow {
+  id: string;
+  requirement: string;
+  testable: boolean;
+}
+
+export interface BaBrdMeta {
+  audience?: string | null;
+  productName?: string | null;
+  model?: string | null;
+  generatedAt?: string;
+}
+
+export interface BaBrd {
+  id: string;
+  projectId: string;
+  wftId: string;
+  /** Map of section number ('1' to '15') → markdown body. */
+  sections: Record<string, string>;
+  frTable: BaFrTableRow[] | null;
+  openItems: string[] | null;
+  meta: BaBrdMeta | null;
+  status: BaBrdStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Section titles per skill 02 — matched on the Python side too. */
+export const BRD_SECTION_TITLES: Record<string, string> = {
+  '1': 'Background',
+  '2': 'Problem Statement',
+  '3': 'Business Objectives',
+  '4': 'Scope',
+  '5': 'Stakeholders',
+  '6': 'Functional Requirements',
+  '7': 'Data Requirements',
+  '8': 'Non-Functional Requirements',
+  '9': 'Success Metrics',
+  '10': 'Assumptions',
+  '11': 'Constraints',
+  '12': 'Risks & Mitigation',
+  '13': 'High-Level Solution Architecture',
+  '14': 'Next Steps',
+  '15': 'Open Items',
+};
+
+export async function generateDiscoveryBrd(
+  projectId: string,
+  wftId: string,
+  productName?: string,
+  audience?: BaBrdAudience,
+): Promise<BaBrd> {
+  const { data } = await api.post<BaBrd>(
+    `/ba/projects/${projectId}/discovery/brd`,
+    { wftId, productName, audience },
+    { timeout: 240_000 },
+  );
+  return data;
+}
+
+export async function getLatestDiscoveryBrd(projectId: string): Promise<BaBrd | null> {
+  const { data } = await api.get<BaBrd | null>(`/ba/projects/${projectId}/discovery/brd`);
+  return data;
+}
+
+export interface UpdateBaBrdDto {
+  /** Partial section map — only the keys present overwrite. */
+  sections?: Record<string, string>;
+  frTable?: BaFrTableRow[];
+  openItems?: string[];
+  status?: BaBrdStatus;
+}
+
+export async function updateDiscoveryBrd(
+  projectId: string,
+  brdId: string,
+  updates: UpdateBaBrdDto,
+): Promise<BaBrd> {
+  const { data } = await api.patch<BaBrd>(
+    `/ba/projects/${projectId}/discovery/brd/${brdId}`,
+    updates,
+  );
+  return data;
+}
+
+export async function regenerateDiscoveryBrd(
+  projectId: string,
+  brdId: string,
+  productName?: string,
+  audience?: BaBrdAudience,
+): Promise<BaBrd> {
+  const { data } = await api.post<BaBrd>(
+    `/ba/projects/${projectId}/discovery/brd/${brdId}/regenerate`,
+    { productName, audience },
+    { timeout: 240_000 },
+  );
+  return data;
+}
+
+// Approach Note operations (Stage 3)
+
+export type BaAnVersionStatus = 'DRAFT' | 'REVIEW' | 'APPROVED';
+export type BaAnAudience = 'internal-tool' | 'end-client-product';
+
+export interface BaAnBrandTokens {
+  primary: string;
+  surface: string;
+  cta: string;
+  logo: string | null;
+  productName: string;
+}
+
+export interface BaAnDecision {
+  question: string;
+  decision: string;
+}
+
+export interface BaAnOpenQuestion {
+  number: number;
+  question: string;
+  default: string;
+}
+
+export interface BaAnVersionMeta {
+  audience?: string | null;
+  productName?: string | null;
+  model?: string | null;
+  generatedAt?: string;
+}
+
+export interface BaApproachNoteVersion {
+  id: string;
+  approachNoteId: string;
+  versionNumber: number;
+  /** Map of section number ('1' to '11') → markdown body. */
+  sections: Record<string, string>;
+  brandTokens: BaAnBrandTokens | null;
+  decisionsLocked: BaAnDecision[] | null;
+  openQuestions: BaAnOpenQuestion[] | null;
+  /** Required v2+, null on v1. */
+  changesSince: string | null;
+  /** FK to prior version this one supersedes; null on v1. */
+  supersedesId: string | null;
+  meta: BaAnVersionMeta | null;
+  status: BaAnVersionStatus;
+  generatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BaApproachNote {
+  id: string;
+  projectId: string;
+  brdId: string;
+  currentVersionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  versions: BaApproachNoteVersion[];
+  currentVersion: BaApproachNoteVersion | null;
+}
+
+/** Section titles per skill 03 — matched on the Python side too. */
+export const AN_SECTION_TITLES: Record<string, string> = {
+  '1': 'Executive Verdict',
+  '2': 'Feature / Model Palette',
+  '3': 'Requirement-by-Requirement Fit',
+  '4': 'Solution Architecture',
+  '5': 'Model Routing Strategy',
+  '6': 'Coverage Summary',
+  '7': 'Decision Inputs vs Alternatives',
+  '8': 'Decisions Locked & Open Questions',
+  '9': 'Phase 1 (PoC) Scope',
+  '10': 'Open Items for Next Version',
+  '11': 'Phase 2 Roadmap',
+};
+
+export async function generateDiscoveryAn(
+  projectId: string,
+  brdId: string,
+  productName?: string,
+  audience?: BaAnAudience,
+): Promise<BaApproachNote> {
+  const { data } = await api.post<BaApproachNote>(
+    `/ba/projects/${projectId}/discovery/approach-note`,
+    { brdId, productName, audience },
+    { timeout: 360_000 },
+  );
+  return data;
+}
+
+export async function getLatestDiscoveryAn(
+  projectId: string,
+): Promise<BaApproachNote | null> {
+  const { data } = await api.get<BaApproachNote | null>(
+    `/ba/projects/${projectId}/discovery/approach-note`,
+  );
+  return data;
+}
+
+export async function getDiscoveryAn(
+  projectId: string,
+  approachNoteId: string,
+): Promise<BaApproachNote> {
+  const { data } = await api.get<BaApproachNote>(
+    `/ba/projects/${projectId}/discovery/approach-note/${approachNoteId}`,
+  );
+  return data;
+}
+
+export async function createDiscoveryAnVersion(
+  projectId: string,
+  approachNoteId: string,
+  changesSince: string,
+  productName?: string,
+  audience?: BaAnAudience,
+): Promise<BaApproachNote> {
+  const { data } = await api.post<BaApproachNote>(
+    `/ba/projects/${projectId}/discovery/approach-note/${approachNoteId}/versions`,
+    { changesSince, productName, audience },
+    { timeout: 360_000 },
+  );
+  return data;
+}
+
+export interface UpdateBaAnVersionDto {
+  /** Partial section map — only the keys present overwrite. */
+  sections?: Record<string, string>;
+  brandTokens?: Partial<BaAnBrandTokens>;
+  decisionsLocked?: BaAnDecision[];
+  openQuestions?: BaAnOpenQuestion[];
+  status?: BaAnVersionStatus;
+}
+
+export async function updateDiscoveryAnVersion(
+  projectId: string,
+  versionId: string,
+  updates: UpdateBaAnVersionDto,
+): Promise<BaApproachNoteVersion> {
+  const { data } = await api.patch<BaApproachNoteVersion>(
+    `/ba/projects/${projectId}/discovery/approach-note/versions/${versionId}`,
+    updates,
+  );
+  return data;
+}
+
+export interface ExtractAnBrandTokensResult {
+  extracted: { primary: string; surface: string; cta: string; productName: string; model?: string };
+  updated: BaApproachNoteVersion;
+}
+
+/** Multipart upload of a reference image; AI extracts brand tokens and merges them into the version. */
+export async function extractAnBrandTokens(
+  projectId: string,
+  versionId: string,
+  file: File,
+): Promise<ExtractAnBrandTokensResult> {
+  const formData = new FormData();
+  formData.append('image', file);
+  const { data } = await api.post<ExtractAnBrandTokensResult>(
+    `/ba/projects/${projectId}/discovery/approach-note/versions/${versionId}/extract-brand-tokens`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90_000 },
+  );
+  return data;
+}
+
+// Wireframes operations (Stage 4)
+
+export type BaWireframeSetStatus = 'DRAFT' | 'COMPLETE' | 'APPROVED';
+
+export interface BaWireframeCallout {
+  n: number | string;
+  description: string;
+  mappedTo: string;
+}
+
+export interface BaWireframeComponent {
+  file: string;
+  purpose: string;
+}
+
+export interface BaWireframeScreen {
+  id: string;
+  setId: string;
+  sequenceNum: number;
+  slug: string;
+  title: string;
+  pattern: string | null;
+  callouts: BaWireframeCallout[];
+  components: BaWireframeComponent[] | null;
+  mdContent: string | null;
+  htmlContent: string | null;
+  meta: { frRefs?: string[] } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BaWireframeCoverageStatus {
+  validated: boolean;
+  totalScreens: number;
+  totalCallouts: number;
+  totalFrs: number;
+  orphanFrs: string[];
+  orphanScreens: number[];
+  notes?: string | null;
+}
+
+export interface BaWireframeSet {
+  id: string;
+  projectId: string;
+  approachNoteVersionId: string;
+  brandTokensSnapshot: BaAnBrandTokens;
+  coverageStatus: BaWireframeCoverageStatus | null;
+  meta: { audience?: string | null; model?: string | null; generatedAt?: string; screenCount?: number } | null;
+  status: BaWireframeSetStatus;
+  createdAt: string;
+  updatedAt: string;
+  screens: BaWireframeScreen[];
+}
+
+/** Skill 04 §4 — 13-pattern catalogue used for the screen-picker UI. */
+export const WIREFRAME_PATTERNS: { id: string; label: string }[] = [
+  { id: '§4.1 Landing', label: 'Landing / entry' },
+  { id: '§4.2 Conversational chat', label: 'Conversational / chat surface' },
+  { id: '§4.3 Read-only browse', label: 'Read-only browse / list' },
+  { id: '§4.4 Detail / drill-down', label: 'Detail / drill-down' },
+  { id: '§4.5 Search / catalogue', label: 'Search / filter / catalogue' },
+  { id: '§4.6 Setup wizard', label: 'One-time setup wizard' },
+  { id: '§4.7 Admin home', label: 'Admin / dashboard home' },
+  { id: '§4.8 CRUD form', label: 'CRUD form (create / edit)' },
+  { id: '§4.9 Audio-assisted form', label: 'Audio-assisted form' },
+  { id: '§4.10 Modal', label: 'Modal / quick-add overlay' },
+  { id: '§4.11 Configuration', label: 'Configuration / settings' },
+  { id: '§4.12 Observability', label: 'Observability dashboard' },
+  { id: '§4.13 Analytics', label: 'Analytics / business-impact' },
+];
+
+export async function generateDiscoveryWireframes(
+  projectId: string,
+  approachNoteVersionId?: string,
+  selectedPatterns?: string[],
+  productName?: string,
+): Promise<BaWireframeSet> {
+  const { data } = await api.post<BaWireframeSet>(
+    `/ba/projects/${projectId}/discovery/wireframes`,
+    { approachNoteVersionId, selectedPatterns, productName },
+    { timeout: 480_000 },
+  );
+  return data;
+}
+
+export async function getLatestDiscoveryWireframeSet(
+  projectId: string,
+): Promise<BaWireframeSet | null> {
+  const { data } = await api.get<BaWireframeSet | null>(
+    `/ba/projects/${projectId}/discovery/wireframes`,
+  );
+  return data;
+}
+
+export async function regenerateDiscoveryWireframes(
+  projectId: string,
+  setId: string,
+): Promise<BaWireframeSet> {
+  const { data } = await api.post<BaWireframeSet>(
+    `/ba/projects/${projectId}/discovery/wireframes/${setId}/regenerate`,
+    {},
+    { timeout: 480_000 },
+  );
+  return data;
+}
+
+export async function getDiscoveryWireframeScreen(
+  projectId: string,
+  screenId: string,
+): Promise<BaWireframeScreen> {
+  const { data } = await api.get<BaWireframeScreen>(
+    `/ba/projects/${projectId}/discovery/wireframes/screens/${screenId}`,
+  );
+  return data;
+}
+
+export interface UpdateWireframeScreenDto {
+  title?: string;
+  mdContent?: string;
+  htmlContent?: string;
+  callouts?: BaWireframeCallout[];
+  components?: BaWireframeComponent[];
+}
+
+export async function updateDiscoveryWireframeScreen(
+  projectId: string,
+  screenId: string,
+  updates: UpdateWireframeScreenDto,
+): Promise<BaWireframeScreen> {
+  const { data } = await api.patch<BaWireframeScreen>(
+    `/ba/projects/${projectId}/discovery/wireframes/screens/${screenId}`,
+    updates,
+  );
+  return data;
+}
+
+// Hi-fi mockup operations (Stage 5)
+
+export type BaHifiSetStatus = 'DRAFT' | 'COMPLETE' | 'APPROVED';
+
+export interface BaHifiCallout {
+  n: number | string;
+  description: string;
+  mappedTo: string;
+}
+
+/** Per-screen parity status; populated by the deterministic validator on the backend. */
+export interface BaHifiScreenParity {
+  sequenceNum: number;
+  lofiCallouts: string[];
+  hifiCallouts: string[];
+  hifiOnly: string[];
+  missing: string[];
+  invalidExtras: string[];
+  ok: boolean;
+}
+
+export interface BaHifiScreen {
+  id: string;
+  setId: string;
+  sequenceNum: number;
+  slug: string;
+  title: string;
+  htmlContent: string;
+  callouts: BaHifiCallout[];
+  parityStatus: BaHifiScreenParity | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BaHifiParityStatus {
+  validated: boolean;
+  totalScreens: number;
+  perScreen: BaHifiScreenParity[];
+  notes?: string | null;
+}
+
+export interface BaHifiSet {
+  id: string;
+  projectId: string;
+  wireframeSetId: string;
+  brandTokensSnapshot: BaAnBrandTokens;
+  syntheticDataSeed: { hint?: string; notes?: string } | null;
+  parityStatus: BaHifiParityStatus | null;
+  meta: { audience?: string | null; model?: string | null; generatedAt?: string; screenCount?: number } | null;
+  status: BaHifiSetStatus;
+  createdAt: string;
+  updatedAt: string;
+  screens: BaHifiScreen[];
+}
+
+export async function generateDiscoveryHifi(
+  projectId: string,
+  options: { wireframeSetId?: string; productName?: string; syntheticDataHint?: string } = {},
+): Promise<BaHifiSet> {
+  const { data } = await api.post<BaHifiSet>(
+    `/ba/projects/${projectId}/discovery/hifi`,
+    options,
+    { timeout: 600_000 },
+  );
+  return data;
+}
+
+export async function getLatestDiscoveryHifi(
+  projectId: string,
+): Promise<BaHifiSet | null> {
+  const { data } = await api.get<BaHifiSet | null>(
+    `/ba/projects/${projectId}/discovery/hifi`,
+  );
+  return data;
+}
+
+export async function regenerateDiscoveryHifi(
+  projectId: string,
+  setId: string,
+): Promise<BaHifiSet> {
+  const { data } = await api.post<BaHifiSet>(
+    `/ba/projects/${projectId}/discovery/hifi/${setId}/regenerate`,
+    {},
+    { timeout: 600_000 },
+  );
+  return data;
+}
+
+export async function getDiscoveryHifiScreen(
+  projectId: string,
+  screenId: string,
+): Promise<BaHifiScreen> {
+  const { data } = await api.get<BaHifiScreen>(
+    `/ba/projects/${projectId}/discovery/hifi/screens/${screenId}`,
+  );
+  return data;
+}
+
+export interface UpdateHifiScreenDto {
+  title?: string;
+  htmlContent?: string;
+  callouts?: BaHifiCallout[];
+}
+
+export async function updateDiscoveryHifiScreen(
+  projectId: string,
+  screenId: string,
+  updates: UpdateHifiScreenDto,
+): Promise<BaHifiScreen> {
+  const { data } = await api.patch<BaHifiScreen>(
+    `/ba/projects/${projectId}/discovery/hifi/screens/${screenId}`,
+    updates,
   );
   return data;
 }
