@@ -11,7 +11,7 @@
  *       structural derivation guarantees), at least 1 ST-USNNN-FE/BE/QA-NN
  *       per user story, and RTM has subtaskId for at least one feature.
  */
-import { Check, distinctMatches, probeAiService, probeBackend } from './lib';
+import { Check, distinctMatches, probeAiService, probeBackend, NO_ORPHAN_EXECUTIONS_CHECK } from './lib';
 
 export const PRE_CHECKS: Check[] = [
   {
@@ -136,6 +136,7 @@ export const POST_CHECKS: Check[] = [
       return { ok: linked > 0 && linked >= total - 1, detail: `${linked}/${total}` };
     },
   },
+  NO_ORPHAN_EXECUTIONS_CHECK,
 ];
 
 if (require.main === module) {

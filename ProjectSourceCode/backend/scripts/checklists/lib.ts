@@ -114,3 +114,47 @@ export async function probeBackend(apiBase: string): Promise<{ ok: boolean; deta
     return { ok: false, detail: `unreachable (${msg})` };
   }
 }
+
+/** Map of skill name → artifact type produced. Mirrors SKILL_ARTIFACT_MAP
+ * in the orchestrator. Kept here so checklist scripts don't depend on
+ * the orchestrator directly (no Nest bootstrap). */
+export const SKILL_TO_ARTIFACT: Record<string, string> = {
+  'SKILL-00': 'SCREEN_ANALYSIS',
+  'SKILL-01-S': 'FRD',
+  'SKILL-02-S': 'EPIC',
+  'SKILL-04': 'USER_STORY',
+  'SKILL-05': 'SUBTASK',
+  'SKILL-06-LLD': 'LLD',
+  'SKILL-07-FTC': 'FTC',
+};
+
+/**
+ * Cross-skill module-hygiene check: verifies that every skill whose
+ * latest execution is APPROVED for this module also has its artifact
+ * present in the DB. Catches the "Phase A cleanup deleted artifacts
+ * but left execution records APPROVED" scenario, which makes the UI
+ * render misleading status badges (e.g. "User Stories — Approved" with
+ * an old timestamp even though no USER_STORY artifact exists). Module-
+ * level rather than skill-specific, so include it in every skill's
+ * POST_CHECKS via spread.
+ */
+export const NO_ORPHAN_EXECUTIONS_CHECK: Check = {
+  name: 'No orphaned skill executions (APPROVED exec without matching artifact)',
+  async run({ prisma, moduleDbId }) {
+    const orphans: string[] = [];
+    for (const [skill, artType] of Object.entries(SKILL_TO_ARTIFACT)) {
+      const exec = await prisma.baSkillExecution.findFirst({
+        where: { moduleDbId, skillName: skill, status: 'APPROVED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!exec) continue;
+      const art = await prisma.baArtifact.findFirst({
+        where: { moduleDbId, artifactType: artType as never },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!art) orphans.push(`${skill} (exec ${exec.id.slice(0, 8)} APPROVED ${exec.createdAt.toISOString().slice(0, 10)} but no ${artType} artifact)`);
+    }
+    if (orphans.length === 0) return { ok: true, detail: 'all skill execs aligned with artifacts' };
+    return { ok: false, detail: orphans.join('; ') };
+  },
+};

@@ -7,7 +7,7 @@
  *       present, every feature has at least one user story, RTM rows
  *       have storyId.
  */
-import { Check, distinctMatches, probeAiService, probeBackend } from './lib';
+import { Check, distinctMatches, probeAiService, probeBackend, NO_ORPHAN_EXECUTIONS_CHECK } from './lib';
 
 export const PRE_CHECKS: Check[] = [
   {
@@ -116,6 +116,7 @@ export const POST_CHECKS: Check[] = [
       return { ok: linked >= rows.length - 1, detail: `${linked}/${rows.length} features story-linked` };
     },
   },
+  NO_ORPHAN_EXECUTIONS_CHECK,
 ];
 
 if (require.main === module) {
