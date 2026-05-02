@@ -62,6 +62,53 @@ The in-app editor view, by contrast, renders each feature's referenced screen th
 
 ---
 
+## 4. EPIC tree "INTERNAL PROCESSING" mis-classification
+
+**Symptom:** When viewing an EPIC artifact in the BA-tool tree, sections that the LLM labeled with leading numbers (`1. **Module Overview**`, `2. **Feature List...**`, `3. **Feature Summaries**`, etc.) get classified as "INTERNAL PROCESSING" rather than as deliverable sections. The data is correct — it's only the tree grouping that's misleading.
+
+**Root cause:** The frontend's `INTERNAL_SECTION_REGEX` in `FrdArtifactView.tsx` likely matches the leading-number pattern (`/^\d+\. /` or similar) which catches both legitimate "Step N: ..." processing labels (which ARE internal) and EPIC's canonical numbered section headings (which are NOT internal).
+
+**First seen on:** MOD-06 (2026-05-02). The EPIC's standard 9-section structure (Module Overview, Feature List, Feature Summaries, Integration Signals, Business Rules, Traceability, Summary Table, Conclusion) appeared under "INTERNAL PROCESSING" in the artifact tree.
+
+**Suggested follow-up:** Review the regex in `FrdArtifactView.tsx`. The fix is to make the internal classification match `step_*` / `step-N` keys specifically rather than any leading-digit pattern, OR to maintain an explicit allowlist of EPIC's canonical section labels.
+
+**Risk:** None. Cosmetic only.
+
+---
+
+## 5. Phase A cleanup script should also remove orphaned `BaSkillExecution` records
+
+**Symptom:** When `_cleanup-mod06-broken.ts` (or any module's Phase A cleanup) deletes an artifact (e.g. USER_STORY) but preserves the historical execution records, the UI subsequently shows misleading status badges. Specifically: a SKILL-04 BaSkillExecution from a prior approved run still has `status=APPROVED` after its USER_STORY artifact is deleted, so the BA-tool UI renders "User Stories — Approved" with the old timestamp even though no artifact exists.
+
+**Root cause:** The cleanup script comment says it "preserves historical skill execution records" — that's good for audit trail but creates UI lies when the corresponding artifact is gone. The UI's "latest skill execution status per module" query has no way to know the artifact was wiped.
+
+**Suggested follow-up:** Update the Phase A cleanup pattern to also delete (or mark FAILED) any `BaSkillExecution` rows for skills whose artifact type was just deleted. Generic helper `_cleanup-orphan-executions.ts` could sweep across all modules. Either approach removes the misleading-badge class entirely.
+
+**First seen on:** MOD-06 (2026-05-02). Stale 4/30 SKILL-04 execution was manually deleted via a one-off script after the UI showed "User Stories — Approved" badge with the old timestamp; corresponding USER_STORY artifact had been wiped in Phase A.
+
+**Risk:** Low. Loses some audit trail history, but only for executions whose artifacts are already gone — the trace is broken anyway.
+
+---
+
+## 6. SkillExecutionPanel doesn't pick up AWAITING_REVIEW execution after a Phase A cleanup + re-run
+
+**Symptom:** After we wipe a SKILL-02-S execution + EPIC artifact (Phase A cleanup) and re-run SKILL-02-S, the new execution lands in `AWAITING_REVIEW` in the DB, but the BA-tool UI's right pane keeps showing the pre-execution state ("Complete the previous step first" / "Run EPIC Generation"). The "Approve & Continue" green button never appears, even after a normal browser refresh, and even Ctrl+Shift+R sometimes doesn't help. Approval has to fall back to a direct API call (`POST /api/ba/executions/:id/approve`).
+
+**Root cause (preliminary):** The page's local React state for `mod` is fetched once on initial load. The `latestExecution` `useMemo` filters `mod.skillExecutions` by skillName and picks `[0]` (newest). If `mod.skillExecutions` doesn't include the new execution because the cached fetch predates it, the panel sees `execution=null` AND `canStartStep` returns false (because module status has already advanced past this skill's "ready" step), so the fallback "Complete the previous step first" message renders. Suspected fixes:
+
+- Re-fetch `mod` automatically when the user clicks a different pipeline tile, OR
+- Add a manual "refresh module" button somewhere visible, OR
+- Have `useSkillExecution` poll the executions endpoint directly when its `existingExecution` is null but the module status suggests the skill should have run, OR
+- Disable HTTP caching headers on the `/api/ba/modules/:id` endpoint so even soft refreshes pick up new state.
+
+**First seen on:** MOD-06 (2026-05-02). Hit again on MOD-04 and MOD-05 the same session — only the API approval fallback worked.
+
+**Workaround:** `curl -X POST http://localhost:4000/api/ba/executions/<execId>/approve` from a terminal.
+
+**Risk:** None data-side. UX issue only. But it consistently blocks UI-based approval after any Phase A regen, so worth fixing before the next module's review cycle if multiple users are doing this work.
+
+---
+
 ## Done
 
 (items move here once shipped)

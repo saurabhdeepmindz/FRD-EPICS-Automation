@@ -7,7 +7,7 @@
  *       EPIC-NN-NN ids present, every feature has at least one EPIC,
  *       RTM rows have epicId.
  */
-import { Check, distinctMatches, probeAiService, probeBackend } from './lib';
+import { Check, distinctMatches, probeAiService, probeBackend, NO_ORPHAN_EXECUTIONS_CHECK } from './lib';
 
 export const PRE_CHECKS: Check[] = [
   {
@@ -102,8 +102,14 @@ export const POST_CHECKS: Check[] = [
     },
   },
   {
-    name: 'EPIC content contains EPIC-NN identifiers',
+    name: 'EPIC traceability resolvable (explicit id in content OR module-id fallback)',
     async run({ prisma, moduleDbId }) {
+      // The orchestrator's extendRtmWithEpic carries a fallback that
+      // derives `EPIC-{NN}` from a module-id of shape `MOD-{NN}` when
+      // the LLM-generated EPIC content omits an explicit EPIC-NN. So
+      // either path is acceptable here — what matters for downstream
+      // skills + RTM linkage is that an epicId can be assigned, not
+      // whether the LLM happened to include it in the markdown.
       const art = await prisma.baArtifact.findFirst({
         where: { moduleDbId, artifactType: 'EPIC' },
         orderBy: { createdAt: 'desc' },
@@ -111,7 +117,15 @@ export const POST_CHECKS: Check[] = [
       });
       const full = art ? art.sections.map((s) => s.content).join('\n\n') : '';
       const ids = distinctMatches(full, /\bEPIC-\d+(?:-\d+)?\b/g);
-      return { ok: ids.size > 0, detail: `${ids.size} epic ids` };
+      const mod = await prisma.baModule.findUnique({ where: { id: moduleDbId } });
+      const fallbackMatch = mod?.moduleId.match(/^MOD-(\d+)$/);
+      if (ids.size > 0) {
+        return { ok: true, detail: `${ids.size} epic id(s) in content` };
+      }
+      if (fallbackMatch) {
+        return { ok: true, detail: `no epic id in content; fallback ${mod!.moduleId} → EPIC-${fallbackMatch[1]}` };
+      }
+      return { ok: false, detail: '0 ids in content AND module-id is non-standard (no fallback possible)' };
     },
   },
   {
@@ -126,6 +140,7 @@ export const POST_CHECKS: Check[] = [
       return { ok: linked > 0 && linked === total, detail: `${linked}/${total}` };
     },
   },
+  NO_ORPHAN_EXECUTIONS_CHECK,
 ];
 
 if (require.main === module) {

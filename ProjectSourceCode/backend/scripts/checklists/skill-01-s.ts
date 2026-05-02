@@ -10,7 +10,7 @@
  *       all 9 mandatory attributes, the handoff packet parses, and
  *       RTM rows got seeded.
  */
-import { Check, distinctMatches, loadModuleContext, probeAiService, probeBackend } from './lib';
+import { Check, distinctMatches, loadModuleContext, probeAiService, probeBackend, NO_ORPHAN_EXECUTIONS_CHECK } from './lib';
 
 const NINE_ATTRIBUTES: { name: string; pattern: RegExp }[] = [
   { name: 'Description', pattern: /\*?\*?\s*(?:Feature\s+)?Description\s*\*?\*?\s*[:\-]/i },
@@ -227,6 +227,7 @@ export const POST_CHECKS: Check[] = [
       return { ok: count > 0, detail: `${count} rows` };
     },
   },
+  NO_ORPHAN_EXECUTIONS_CHECK,
 ];
 
 if (require.main === module) {

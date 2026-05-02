@@ -186,6 +186,8 @@ export class BaSkillOrchestratorService {
         wrappedPrompt = this.wrapSkill06Prompt(skillPrompt, contextPacket);
       } else if (skillName === 'SKILL-01-S') {
         wrappedPrompt = this.wrapSkill01SPrompt(skillPrompt, contextPacket);
+      } else if (skillName === 'SKILL-02-S') {
+        wrappedPrompt = this.wrapSkill02SPrompt(skillPrompt, contextPacket);
       }
 
       // SKILL-05: route through the per-story append loop.
@@ -243,6 +245,41 @@ export class BaSkillOrchestratorService {
           return;
         }
         this.logger.log(`SKILL-01-S validation passed for module ${moduleDbId}: ${v.summary}`);
+      }
+
+      // 5b. SKILL-02-S contract enforcement: the EPIC document MUST follow
+      // the canonical 17-section template (EPIC Header + FRD Feature IDs
+      // Section + Sections 1-17). Without this guard the LLM can collapse
+      // into a meta-overview/feature-summary shape — observed on MOD-05
+      // and MOD-06 — that the EPIC parser then mostly classifies as
+      // "INTERNAL PROCESSING", producing a degraded EPIC viewer experience.
+      if (skillName === 'SKILL-02-S') {
+        const v = this.validateSkill02SOutput(humanDocument);
+        if (!v.ok) {
+          const detailLines: string[] = [v.summary];
+          if (v.missingSections.length > 0) {
+            detailLines.push(`Missing required H4 section headings: ${v.missingSections.join(', ')}`);
+          }
+          if (v.forbiddenHeadings.length > 0) {
+            detailLines.push(`Forbidden meta-overview headings detected (these MUST NOT appear in an EPIC document): ${v.forbiddenHeadings.join(', ')}`);
+          }
+          detailLines.push('Re-run SKILL-02-S; the prompt now requires the canonical 17-section EPIC structure with explicit `#### Section N — <Label>` headings.');
+          const errorMessage = detailLines.join('\n');
+          await this.prisma.baSkillExecution.update({
+            where: { id: executionId },
+            data: {
+              status: BaExecutionStatus.FAILED,
+              rawOutput: aiResponse,
+              humanDocument,
+              handoffPacket: handoffPacket as object | undefined,
+              completedAt: new Date(),
+              errorMessage,
+            },
+          });
+          this.logger.error(`SKILL-02-S validation failed for module ${moduleDbId}: ${v.summary}`);
+          return;
+        }
+        this.logger.log(`SKILL-02-S validation passed for module ${moduleDbId}: ${v.summary}`);
       }
 
       await this.prisma.baSkillExecution.update({
@@ -1200,6 +1237,102 @@ export class BaSkillOrchestratorService {
       `Self-check before emitting your response: count your \`#### F-XX-XX:\` heading blocks. If the count does not equal the number of features you derived from the screens, you have a validation failure waiting to happen — emit the missing blocks before responding.`,
       '',
       '---',
+      '',
+      skillPrompt,
+    ].join('\n');
+  }
+
+  /**
+   * Wrap the SKILL-02-S prompt with a focus override that re-states the
+   * canonical 17-section EPIC structure. Without this wrapper the LLM
+   * has been observed (MOD-05, MOD-06) to collapse into a meta-overview /
+   * feature-summary document instead of a structured EPIC, producing
+   * sections like "Module Overview", "Feature List with IDs/Names/Status",
+   * "Feature Summaries", "Conclusion" that the EPIC parser doesn't
+   * recognise and dumps into the "INTERNAL PROCESSING" bucket.
+   *
+   * The override repeats the canonical heading list at AI call time,
+   * which keeps the structure top-of-context even after the 6KB skill
+   * file is processed. Same prevention pattern that wrapSkill01SPrompt
+   * uses for the 9-attribute contract.
+   */
+  private wrapSkill02SPrompt(
+    skillPrompt: string,
+    contextPacket: Record<string, unknown>,
+  ): string {
+    const moduleId = String(contextPacket.moduleId ?? 'this module');
+    const moduleName = String(contextPacket.moduleName ?? '');
+    const rtmRows = Array.isArray(contextPacket.rtmRows) ? (contextPacket.rtmRows as Array<Record<string, unknown>>) : [];
+    const featureIds = Array.from(new Set(
+      rtmRows
+        .map((r) => String(r.featureId ?? '').trim())
+        .filter((fid) => /^F-\d+-\d+$/.test(fid)),
+    )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const featureCount = featureIds.length;
+    const featurePreview = featureIds.length > 0
+      ? `${featureCount} features: ${featureIds.slice(0, 4).join(', ')}${featureCount > 4 ? `, …, ${featureIds[featureCount - 1]}` : ''}`
+      : 'all features in the FRD Handoff Packet';
+
+    return [
+      '## 🎯 SKILL-02-S FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      `Produce **one canonical 17-section EPIC document** for **${moduleId}${moduleName ? ` — ${moduleName}` : ''}** covering ${featurePreview}. This is a structured EPIC specification, NOT a feature-summary or analysis document.`,
+      '',
+      '### Validator contract (CRITICAL — non-negotiable)',
+      '',
+      'The backend will run a post-emission validator (`validateSkill02SOutput`) that walks the markdown looking for the canonical EPIC section headings. Its rules:',
+      '',
+      '1. The EPIC document MUST contain ALL 17 of these `####` (H4) headings, in this order, with the exact text shown:',
+      '',
+      '```text',
+      '#### EPIC Header',
+      '#### FRD Feature IDs Section',
+      '#### Section 1 — EPIC Name',
+      '#### Section 2 — Initiative Reference',
+      '#### Section 3 — Summary',
+      '#### Section 4 — Business Context',
+      '#### Section 5 — Key Actors',
+      '#### Section 6 — High-Level Flow',
+      '#### Section 7 — Pre-requisites',
+      '#### Section 8 — Trigger',
+      '#### Section 9 — Scope',
+      '#### Section 10 — Module / Package Name',
+      '#### Section 11 — Integration Domains',
+      '#### Section 12 — Acceptance Criteria',
+      '#### Section 13 — NFRs',
+      '#### Section 14 — Business Value',
+      '#### Section 15 — Integration with Other EPICs',
+      '#### Section 16 — Out of Scope',
+      '#### Section 17 — Risks & Challenges',
+      '```',
+      '',
+      'The validator does case-insensitive substring matching on the keyword portion (e.g. "Business Context", "Key Actors", "Integration Domains") so minor wording variation is tolerated, but missing sections OR substituted labels listed below will hard-fail.',
+      '',
+      '2. The EPIC Header must specify EPIC ID (one EPIC per module — `EPIC-' + (moduleId.match(/^MOD-(\d+)$/)?.[1] ?? 'NN') + '`), Module ID, Package Name.',
+      '3. The FRD Feature IDs Section must list every Feature ID from the Feature-to-EPIC Assignment Map with status and screen reference.',
+      '',
+      '### Forbidden patterns — these WILL hard-fail the validator',
+      '',
+      '- ❌ Emitting a meta-overview document. Tell-tale headings to NEVER use as top-level EPIC sections (these are the failure mode observed on MOD-05 and MOD-06):',
+      '    - `1. Module Overview` / `Module Overview`',
+      '    - `2. Feature List with IDs, Names, and Status` / `Feature List`',
+      '    - `3. Feature Summaries` / `Feature Coverage Status`',
+      '    - `Business Rules & Validations (Highlights)` (as top-level — Section 11/13 cover the canonical placement)',
+      '    - `Traceability` as a top-level section (FRD Feature IDs Section already covers this)',
+      '    - `Summary Table` as a top-level section',
+      '    - `Conclusion` / `Key Observations & Recommendations`',
+      '- ❌ Skipping any of the 17 required sections. Even when content is `None applicable` or `Standalone module`, the heading MUST appear so downstream parsers find it.',
+      '- ❌ Numbering sections with arbitrary leading numbers (`1. **Module Overview**`, `2. **...**`). Use the EXACT `#### Section N — <Label>` heading format.',
+      '- ❌ Wrapping the entire response in a single code fence.',
+      '- ❌ Producing more than one EPIC document unless the FRD has explicitly partitioned features into multiple EPICs (default: ONE EPIC PER MODULE).',
+      '',
+      '### Self-check before responding',
+      '',
+      'Before you finish: count your `#### Section ` headings. There should be exactly 17 (Section 1 through Section 17). Plus the EPIC Header and FRD Feature IDs Section. If your document has any of the forbidden meta-overview headings above, delete them and replace with the canonical Section N labels — the validator will reject the response otherwise.',
+      '',
+      '---',
+      '',
+      '## Original Skill Definition (follow all rules below, constrained by the override above)',
       '',
       skillPrompt,
     ].join('\n');
@@ -4675,6 +4808,78 @@ export class BaSkillOrchestratorService {
     return ATTRS.filter((a) => !a.pattern.test(block)).map((a) => a.name);
   }
 
+  // ─── SKILL-02-S canonical 17-section EPIC structure validator ──────────
+  //
+  // The EPIC document MUST follow the canonical EPIC Header + FRD Feature
+  // IDs Section + Section 1..17 layout defined in
+  // FINAL-SKILL-02-S-create-epics-from-screens.md. Without this guard,
+  // SKILL-02-S can collapse into a meta-overview / feature-summary
+  // document — observed on MOD-05 and MOD-06 — that the EPIC parser then
+  // mostly classifies as "INTERNAL PROCESSING", producing a degraded
+  // EPIC viewer experience.
+  //
+  // The validator does case-insensitive substring matching on the keyword
+  // portion of each canonical heading so minor wording variations (e.g.
+  // "Pre-requisites" vs "Prerequisites") are tolerated. Missing sections
+  // and explicitly forbidden meta-overview headings are hard failures.
+
+  private validateSkill02SOutput(
+    humanDocument: string,
+  ): { ok: boolean; missingSections: string[]; forbiddenHeadings: string[]; summary: string } {
+    // Canonical 17-section structure. Each entry is [displayName, regex
+    // matched against the document]. The regex is intentionally lenient:
+    // matches on H4 heading lines that contain the keyword phrase.
+    const REQUIRED_SECTIONS: { name: string; pattern: RegExp }[] = [
+      { name: 'EPIC Header', pattern: /^#{1,4}\s+\*{0,2}EPIC\s+Header\*{0,2}\s*$/im },
+      { name: 'FRD Feature IDs Section', pattern: /^#{1,4}\s+\*{0,2}FRD\s+Feature\s+IDs(?:\s+Section)?[^\n]*$/im },
+      { name: 'Section 1 — EPIC Name', pattern: /^#{1,4}\s+\*{0,2}Section\s*1\s*[—\-:]/im },
+      { name: 'Section 2 — Initiative Reference', pattern: /^#{1,4}\s+\*{0,2}Section\s*2\s*[—\-:]/im },
+      { name: 'Section 3 — Summary', pattern: /^#{1,4}\s+\*{0,2}Section\s*3\s*[—\-:]/im },
+      { name: 'Section 4 — Business Context', pattern: /^#{1,4}\s+\*{0,2}Section\s*4\s*[—\-:]/im },
+      { name: 'Section 5 — Key Actors', pattern: /^#{1,4}\s+\*{0,2}Section\s*5\s*[—\-:]/im },
+      { name: 'Section 6 — High-Level Flow', pattern: /^#{1,4}\s+\*{0,2}Section\s*6\s*[—\-:]/im },
+      { name: 'Section 7 — Pre-requisites', pattern: /^#{1,4}\s+\*{0,2}Section\s*7\s*[—\-:]/im },
+      { name: 'Section 8 — Trigger', pattern: /^#{1,4}\s+\*{0,2}Section\s*8\s*[—\-:]/im },
+      { name: 'Section 9 — Scope', pattern: /^#{1,4}\s+\*{0,2}Section\s*9\s*[—\-:]/im },
+      { name: 'Section 10 — Module / Package Name', pattern: /^#{1,4}\s+\*{0,2}Section\s*10\s*[—\-:]/im },
+      { name: 'Section 11 — Integration Domains', pattern: /^#{1,4}\s+\*{0,2}Section\s*11\s*[—\-:]/im },
+      { name: 'Section 12 — Acceptance Criteria', pattern: /^#{1,4}\s+\*{0,2}Section\s*12\s*[—\-:]/im },
+      { name: 'Section 13 — NFRs', pattern: /^#{1,4}\s+\*{0,2}Section\s*13\s*[—\-:]/im },
+      { name: 'Section 14 — Business Value', pattern: /^#{1,4}\s+\*{0,2}Section\s*14\s*[—\-:]/im },
+      { name: 'Section 15 — Integration with Other EPICs', pattern: /^#{1,4}\s+\*{0,2}Section\s*15\s*[—\-:]/im },
+      { name: 'Section 16 — Out of Scope', pattern: /^#{1,4}\s+\*{0,2}Section\s*16\s*[—\-:]/im },
+      { name: 'Section 17 — Risks & Challenges', pattern: /^#{1,4}\s+\*{0,2}Section\s*17\s*[—\-:]/im },
+    ];
+
+    // Forbidden meta-overview headings — these indicate the LLM drifted
+    // into feature-summary / analysis-doc shape instead of canonical EPIC.
+    // Match as standalone H1-H4 headings (not bullets) to avoid
+    // false-positives when the words appear inside prose.
+    const FORBIDDEN_HEADINGS: { name: string; pattern: RegExp }[] = [
+      { name: 'Module Overview (top-level)', pattern: /^#{1,4}\s+\*{0,2}(?:\d+\.\s*\*{0,2})?Module\s+Overview\b[^\n]*$/im },
+      { name: 'Feature List (top-level)', pattern: /^#{1,4}\s+\*{0,2}(?:\d+\.\s*\*{0,2})?Feature\s+List\b[^\n]*$/im },
+      { name: 'Feature Summaries (top-level)', pattern: /^#{1,4}\s+\*{0,2}(?:\d+\.\s*\*{0,2})?Feature\s+Summaries\b[^\n]*$/im },
+      { name: 'Feature Coverage Status (top-level)', pattern: /^#{1,4}\s+\*{0,2}(?:\d+\.\s*\*{0,2})?Feature\s+Coverage\s+Status\b[^\n]*$/im },
+      { name: 'Conclusion (top-level)', pattern: /^#{1,4}\s+\*{0,2}(?:\d+\.\s*\*{0,2})?Conclusion\b[^\n]*$/im },
+      { name: 'Key Observations & Recommendations (top-level)', pattern: /^#{1,4}\s+\*{0,2}(?:\d+\.\s*\*{0,2})?Key\s+Observations\b[^\n]*$/im },
+    ];
+
+    const missingSections: string[] = [];
+    for (const s of REQUIRED_SECTIONS) {
+      if (!s.pattern.test(humanDocument)) missingSections.push(s.name);
+    }
+    const forbiddenHeadings: string[] = [];
+    for (const f of FORBIDDEN_HEADINGS) {
+      if (f.pattern.test(humanDocument)) forbiddenHeadings.push(f.name);
+    }
+
+    const ok = missingSections.length === 0 && forbiddenHeadings.length === 0;
+    const summary = ok
+      ? `All ${REQUIRED_SECTIONS.length} canonical EPIC sections present; no forbidden meta-overview headings.`
+      : `SKILL-02-S canonical EPIC contract violation. Missing ${missingSections.length}/${REQUIRED_SECTIONS.length} required sections; ${forbiddenHeadings.length} forbidden meta-overview heading(s) detected.`;
+    return { ok, missingSections, forbiddenHeadings, summary };
+  }
+
   // ─── Artifact creation ─────────────────────────────────────────────────
 
   private async createArtifactFromOutput(
@@ -4933,9 +5138,50 @@ export class BaSkillOrchestratorService {
     const mod = await this.prisma.baModule.findUnique({ where: { id: moduleDbId } });
     if (!mod) return;
 
-    const { epicId, epicName, featureIds } = this.parseEpicSummary(epicMarkdown);
+    const parsed = this.parseEpicSummary(epicMarkdown);
+    let epicId = parsed.epicId;
+    let epicName = parsed.epicName;
+    let featureIds = parsed.featureIds;
+
+    // Fallback A: if the EPIC document didn't emit an EPIC-NN identifier
+    // anywhere in its content, derive one from the module ID. SKILL-02-S
+    // is supposed to produce "one EPIC per module" with an explicit
+    // EPIC-NN heading, but LLM output is unreliable about including the
+    // ID consistently — observed on MOD-06 which produced 9-section
+    // content with zero EPIC-NN refs while MOD-05's identical-shape
+    // output happened to mention `EPIC-05` once. Without this fallback,
+    // RTM linkage silently shows 0/N and downstream traceability breaks
+    // through no fault of the user. Module → epic mapping (MOD-06 →
+    // EPIC-06) is well-defined since the prompt model is one EPIC per
+    // module.
+    if (!epicId) {
+      const modNumMatch = mod.moduleId.match(/^MOD-(\d+)$/);
+      if (modNumMatch) {
+        epicId = `EPIC-${modNumMatch[1]}`;
+        if (!epicName) epicName = epicId;
+        this.logger.log(`RTM: EPIC content had no explicit EPIC-NN id — falling back to ${epicId} derived from ${mod.moduleId}`);
+      }
+    }
+
+    // Fallback B: if the EPIC document didn't enumerate F-NN-NN feature
+    // ids, pull them from the module's existing RTM rows (seeded by
+    // SKILL-01-S). Covers the case where the EPIC doc is purely meta-
+    // summary and doesn't repeat the feature catalog. The featureIds
+    // list is also what limits the updateMany — without it, no rows
+    // would be linked.
+    if (featureIds.length === 0) {
+      const rtmRows = await this.prisma.baRtmRow.findMany({
+        where: { projectId, moduleId: mod.moduleId },
+        select: { featureId: true },
+      });
+      featureIds = Array.from(new Set(rtmRows.map((r) => r.featureId).filter((f): f is string => !!f)));
+      if (featureIds.length > 0) {
+        this.logger.log(`RTM: EPIC content had no F-NN-NN ids — using ${featureIds.length} features from RTM rows`);
+      }
+    }
+
     if (!epicId || featureIds.length === 0) {
-      this.logger.warn(`RTM: EPIC parse yielded no linkage (epicId=${epicId}, features=${featureIds.length})`);
+      this.logger.warn(`RTM: EPIC parse yielded no linkage even with fallbacks (epicId=${epicId}, features=${featureIds.length})`);
       return;
     }
 
