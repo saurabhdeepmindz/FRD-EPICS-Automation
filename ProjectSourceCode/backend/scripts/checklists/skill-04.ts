@@ -116,6 +116,53 @@ export const POST_CHECKS: Check[] = [
       return { ok: linked >= rows.length - 1, detail: `${linked}/${rows.length} features story-linked` };
     },
   },
+  {
+    name: 'Every user story carries the canonical 27-section template',
+    async run({ prisma, moduleDbId }) {
+      // Iterate per-story BaArtifactSection rows (sectionKey starts with
+      // `us_` and label like `US-NNN — <Name>`). The orchestrator's
+      // splitIntoSections strips the H2 heading line into sectionLabel
+      // and stores only the body in content, so the heading would not
+      // be in `content.join('\n\n')` — searching for `## US-NNN` there
+      // returns 0. Per-row iteration avoids that.
+      const art = await prisma.baArtifact.findFirst({
+        where: { moduleDbId, artifactType: 'USER_STORY' },
+        orderBy: { createdAt: 'desc' },
+        include: { sections: true },
+      });
+      if (!art) return { ok: false, detail: 'no USER_STORY artifact' };
+
+      const storyRows = art.sections.filter((s) => /^us[_-]\d{3,}/i.test(s.sectionKey));
+      if (storyRows.length === 0) {
+        return { ok: false, detail: `no per-story sections found (sectionKey shape ^us[_-]\\d+); ${art.sections.length} sections total` };
+      }
+
+      const incomplete: string[] = [];
+      for (const r of storyRows) {
+        const present = new Set<number>();
+        const re = /\*\*(\d+)\.\s/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(r.content)) !== null) {
+          const n = parseInt(m[1], 10);
+          if (n >= 1 && n <= 27) present.add(n);
+        }
+        if (present.size < 27) {
+          // Extract US-NNN from sectionLabel for friendlier output
+          const idMatch = r.sectionLabel.match(/US-\d{3,}/);
+          const id = idMatch ? idMatch[0] : r.sectionKey;
+          incomplete.push(`${id}(${present.size}/27)`);
+        }
+      }
+      const total = storyRows.length;
+      const ok = incomplete.length === 0;
+      return {
+        ok,
+        detail: ok
+          ? `${total}/${total} stories with all 27 sections`
+          : `${incomplete.length}/${total} stories incomplete: ${incomplete.slice(0, 5).join(', ')}${incomplete.length > 5 ? `, +${incomplete.length - 5} more` : ''}`,
+      };
+    },
+  },
   NO_ORPHAN_EXECUTIONS_CHECK,
 ];
 

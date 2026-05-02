@@ -282,6 +282,46 @@ export class BaSkillOrchestratorService {
         this.logger.log(`SKILL-02-S validation passed for module ${moduleDbId}: ${v.summary}`);
       }
 
+      // 5c. SKILL-04 contract enforcement: every user story MUST follow the
+      // canonical 27-section template. Without this guard the LLM collapses
+      // into a simplified narrative shape under context pressure (3-5 numbered
+      // fields per story), observed on MOD-05's 67 stories. SubTasks /
+      // SKILL-06-LLD / SKILL-07-FTC all read specific sections (4/5/6/8 for
+      // RTM, 17 API Contract, 22 Algorithm Outline, 25 Source File, 26
+      // Traceability) and silently degrade when stories are missing them.
+      if (skillName === 'SKILL-04') {
+        const v = this.validateSkill04Output(humanDocument);
+        if (!v.ok) {
+          const detailLines: string[] = [v.summary];
+          if (v.missingStories.length > 0) {
+            detailLines.push(`Stories whose body has no per-section markers: ${v.missingStories.join(', ')}`);
+          }
+          if (v.partialStories.length > 0) {
+            detailLines.push('Stories with incomplete 27-section coverage:');
+            for (const p of v.partialStories.slice(0, 5)) {
+              detailLines.push(`  - ${p.storyId}: missing [${p.missingSections.join(', ')}]`);
+            }
+            if (v.partialStories.length > 5) detailLines.push(`  ... and ${v.partialStories.length - 5} more`);
+          }
+          detailLines.push('Re-run SKILL-04; the prompt + per-feature focus override now require the canonical 27-section template per story.');
+          const errorMessage = detailLines.join('\n');
+          await this.prisma.baSkillExecution.update({
+            where: { id: executionId },
+            data: {
+              status: BaExecutionStatus.FAILED,
+              rawOutput: aiResponse,
+              humanDocument,
+              handoffPacket: handoffPacket as object | undefined,
+              completedAt: new Date(),
+              errorMessage,
+            },
+          });
+          this.logger.error(`SKILL-04 validation failed for module ${moduleDbId}: ${v.summary}`);
+          return;
+        }
+        this.logger.log(`SKILL-04 validation passed for module ${moduleDbId}: ${v.summary}`);
+      }
+
       await this.prisma.baSkillExecution.update({
         where: { id: executionId },
         data: {
@@ -1596,12 +1636,43 @@ export class BaSkillOrchestratorService {
         '3. Each story uses the full 27-section template (Header through Section 27)',
         `4. Number your stories starting at **US-${String(nextUsNumber).padStart(3, '0')}** (increment by 1 for each)`,
         '',
+        '### Validator contract (CRITICAL — non-negotiable)',
+        '',
+        'The backend will run a post-emission validator (`validateSkill04Output`) that walks the markdown looking for `## US-NNN — <Name>` heading blocks. Its rules:',
+        '',
+        '1. Each user story heading must be `## US-NNN — <Name>` at H2 level. Heading variants (`## User Story: US-NNN`, `### US-NNN`, etc.) hard-fail.',
+        '2. Each story body must contain ALL 27 numbered section headings as `**N. Label**` bold lines, in order:',
+        '   `**1. User Story ID**`, `**2. User Story Name**`, `**3. User Story Description (Goal)**`,',
+        '   `**4. Module Reference**`, `**5. FRD Feature Reference**`, `**6. EPIC Reference**`,',
+        '   `**7. User Story Type**`, `**8. User Story Status**`, `**9. Trigger**`,',
+        '   `**10. Actor(s)**`, `**11. Primary Flow**`, `**12. Alternate / Exception Flows**`,',
+        '   `**13. StateChart**`, `**14. Screen Reference**`, `**15. Display Field Types**`,',
+        '   `**16. Primary Class Name**`, `**17. API Contract**`, `**18. Database Entities**`,',
+        '   `**19. Business Rules**`, `**20. Validations**`, `**21. Integrations**`,',
+        '   `**22. Algorithm Outline**`, `**23. Error Handling Outline**`, `**24. Acceptance Criteria**`,',
+        '   `**25. Source File Reference**`, `**26. Traceability Header Content**`, `**27. SubTasks**`.',
+        '3. Sections 4, 5, 6, 8 are RTM-critical — must be populated for every story.',
+        '4. Sections 17 (API Contract), 21 (Integrations), 22 (Algorithm Outline), 25 (Source File), 26 (Traceability) must appear for ALL story types — Frontend stories use `N/A — UI-only` rather than omitting.',
+        '5. Bare `TBD`, empty bullets, naked dashes are validator failures. Use `N/A — <reason>` for genuinely-not-applicable sections.',
+        '',
+        '### Forbidden patterns — these WILL hard-fail the validator',
+        '',
+        '- ❌ Producing a simplified narrative shape with only 3-5 fields (`1. **Story Name**` + `2. **Narrative**` + `3. **Acceptance Criteria**`). This is the failure mode observed on MOD-05\'s 67 stories. Every story needs all 27 sections.',
+        '- ❌ Skipping Section 4 / 5 / 6 / 8 (Module Reference, FRD Feature Reference, EPIC Reference, User Story Status). These break RTM linkage.',
+        '- ❌ Skipping Section 17 / 21 / 22 / 25 / 26 even for Frontend stories. Use `N/A — UI-only`.',
+        '- ❌ Replacing the `## US-NNN — Name` heading. Per-story heading MUST be `## US-NNN — <Name>` at H2.',
+        '- ❌ Wrapping the response inside a single code fence.',
+        '',
         '### What to SKIP',
         '',
         '- Do NOT write a Coverage Summary table — the orchestrator emits it after aggregation',
         '- Do NOT mention or write stories for other features (they are handled by their own sub-calls)',
         '- Do NOT write a Context header or Decomposition note — orchestrator handles scaffolding',
         '- Do NOT emit an RTM Extension section — orchestrator appends one combined table at the end',
+        '',
+        '### Self-check before responding',
+        '',
+        'Before you finish: count the `**N.` bold-numbered headings inside each `## US-NNN` story body. There should be EXACTLY 27 per story (1 through 27). If any story has fewer than 27 numbered section headings, you are in the failure mode — fix before responding.',
         '',
         '---',
         '',
@@ -4880,6 +4951,97 @@ export class BaSkillOrchestratorService {
     return { ok, missingSections, forbiddenHeadings, summary };
   }
 
+  // ─── SKILL-04 canonical 27-section user-story validator ────────────────
+  //
+  // Every user story MUST follow the canonical 27-section template. Without
+  // this guard the LLM degrades into a simplified narrative shape under
+  // context pressure (3-5 fields per story), observed on MOD-05's 67
+  // stories. Downstream skills (SKILL-05 SubTasks, SKILL-06-LLD,
+  // SKILL-07-FTC) read specific sections (4/5/6/8 for RTM linkage,
+  // 17 API Contract, 22 Algorithm, 25 Source File, 26 Traceability) and
+  // silently degrade when stories are incomplete.
+
+  private validateSkill04Output(
+    humanDocument: string,
+  ): { ok: boolean; missingStories: string[]; partialStories: { storyId: string; missingSections: number[] }[]; summary: string } {
+    // Slice the document into per-story blocks. Stories are headed by
+    // `## US-NNN — <Name>` at H2 OR `## User Stories for F-NN-NN` group
+    // headers (which we also break on so a malformed group heading
+    // doesn't swallow the next story's body). The block body runs from
+    // the story heading to the next H2 heading or end-of-document.
+    //
+    // The validator runs against the RAW AI response (humanDocument)
+    // BEFORE splitIntoSections has stripped the headings, so US-NNN
+    // headings ARE present and findable here.
+    const lines = humanDocument.split('\n');
+    const storyHeadingRe = /^##\s+\*?\*?\s*(US-\d{3,})\b/;
+    const stopRe = /^##\s/; // any H2 ends the prior story block
+    const blocks: { storyId: string; body: string }[] = [];
+    let curId: string | null = null;
+    let buf: string[] = [];
+    const flush = (): void => {
+      if (curId) blocks.push({ storyId: curId, body: buf.join('\n') });
+      buf = [];
+    };
+    for (const line of lines) {
+      const m = line.match(storyHeadingRe);
+      if (m) {
+        flush();
+        curId = m[1];
+        buf = [line];
+        continue;
+      }
+      if (curId && stopRe.test(line)) {
+        flush();
+        curId = null;
+        continue;
+      }
+      if (curId) buf.push(line);
+    }
+    flush();
+
+    if (blocks.length === 0) {
+      return {
+        ok: false,
+        missingStories: [],
+        partialStories: [],
+        summary: 'No `## US-NNN — Name` headings detected. SKILL-04 output is empty or uses a non-canonical heading shape (e.g. `## User Story: US-NNN`, `### US-NNN`).',
+      };
+    }
+
+    // For each story, count how many of the 27 numbered section headings
+    // (`**N. Label**` lines) appear in its body. We're permissive about
+    // the label text — substring match would require enumerating each
+    // section's keywords; instead we just count distinct numbers 1..27
+    // that appear as `**N. ` at any line position.
+    const partialStories: { storyId: string; missingSections: number[] }[] = [];
+    const missingStories: string[] = [];
+    for (const b of blocks) {
+      const present = new Set<number>();
+      const sectionRe = /\*\*(\d+)\.\s/g;
+      let m: RegExpExecArray | null;
+      while ((m = sectionRe.exec(b.body)) !== null) {
+        const n = parseInt(m[1], 10);
+        if (n >= 1 && n <= 27) present.add(n);
+      }
+      const missing: number[] = [];
+      for (let n = 1; n <= 27; n++) {
+        if (!present.has(n)) missing.push(n);
+      }
+      if (present.size === 0) {
+        missingStories.push(b.storyId);
+      } else if (missing.length > 0) {
+        partialStories.push({ storyId: b.storyId, missingSections: missing });
+      }
+    }
+
+    const ok = missingStories.length === 0 && partialStories.length === 0;
+    const summary = ok
+      ? `All ${blocks.length} stories carry the canonical 27-section template.`
+      : `SKILL-04 canonical 27-section contract violation. ${missingStories.length} story/stories with no section markers; ${partialStories.length} stories with incomplete coverage out of ${blocks.length} total.`;
+    return { ok, missingStories, partialStories, summary };
+  }
+
   // ─── Artifact creation ─────────────────────────────────────────────────
 
   private async createArtifactFromOutput(
@@ -5409,7 +5571,13 @@ export class BaSkillOrchestratorService {
 
   private extractField(block: string, labels: string[]): string {
     const lowerLabels = labels.map((l) => l.toLowerCase());
-    for (const line of block.split('\n')) {
+    const lines = block.split('\n');
+
+    // Pass 1: legacy `Label: value` on the same line. Also handles the
+    // SKILL-01-S detail-block format `- **Label:** value` (after the
+    // pre-strip of bullets and bold markers) when value is inline.
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       const cleaned = line.replace(/^\s*[-*]*\s*/, '').replace(/\*{1,2}/g, '').trim();
       const colonIdx = cleaned.indexOf(':');
       if (colonIdx < 1) continue;
@@ -5419,6 +5587,45 @@ export class BaSkillOrchestratorService {
       for (const target of lowerLabels) {
         if (lineLabel === target || lineLabel.includes(target) || target.includes(lineLabel)) return lineValue;
       }
+    }
+
+    // Pass 2: SKILL-04 bold-numbered format — `**N. Label**` heading on
+    // one line, value on the next non-empty line. Without this pass,
+    // parseUserStories returned empty featureRef on every story → 0 RTM
+    // story-linkage on MOD-06's first hardened SKILL-04 run.
+    const numberedHeadingRe = /^\s*\*{1,2}\d+\.\s+([^*\n:]+?)\*{1,2}\s*$/;
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(numberedHeadingRe);
+      if (!m) continue;
+      const headingLabel = m[1].trim().toLowerCase();
+      let isMatch = false;
+      for (const target of lowerLabels) {
+        if (headingLabel === target || headingLabel.includes(target) || target.includes(headingLabel)) {
+          isMatch = true;
+          break;
+        }
+      }
+      if (!isMatch) continue;
+      // Scan forward for the first non-empty line that isn't another
+      // numbered heading. Capture it as the value (single line is the
+      // common case; multi-line bullet lists are joined by walking
+      // until the next numbered heading).
+      const collected: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j];
+        if (numberedHeadingRe.test(next)) break;
+        if (/^\s*\*{1,2}[A-Za-z]/.test(next)) break; // **Header**, **Revision History** etc.
+        collected.push(next);
+      }
+      while (collected.length > 0 && !collected[0].trim()) collected.shift();
+      while (collected.length > 0 && !collected[collected.length - 1].trim()) collected.pop();
+      if (collected.length === 0) continue;
+      // Strip leading bullet markers and bold from each line for clean value
+      const normalised = collected
+        .map((l) => l.replace(/^\s*[-*]\s*/, '').replace(/\*+/g, '').trim())
+        .filter((l) => l.length > 0);
+      if (normalised.length === 0) continue;
+      return normalised.join('\n').trim();
     }
     return '';
   }
