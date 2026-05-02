@@ -18,6 +18,43 @@ function isInternalSection(label: string): boolean {
   return INTERNAL_SECTION_REGEX.test(label.trim());
 }
 
+/**
+ * Detects sections whose only content is a redundant preamble label —
+ * e.g. `**Functional Requirements Document (FRD) — Module Section**\n\n---\n`.
+ * These appear when SKILL-01-S emits a title-bearing line at the top of
+ * its output that the section splitter then captures as a section body.
+ * The cover page already carries the document title, so rendering this
+ * as an expandable section adds noise.
+ *
+ * Rule: section is preamble-only if (a) it's short (≤ 200 chars), and
+ * (b) after stripping bold markers, dividers (`---`), pipe-table noise,
+ * and whitespace, the residue contains no F-XX-XX / BR-NN / AC-NN /
+ * EPIC- / US- identifiers. Sections with substantive content are kept
+ * regardless of length so we don't accidentally hide real prose.
+ */
+function isPreambleOnlySection(content: string): boolean {
+  const trimmed = content.trim();
+  if (trimmed.length > 200) return false;
+  const residue = trimmed
+    .replace(/\*+/g, '')
+    .replace(/^---+\s*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (residue.length === 0) return true;
+  const hasIdentifier = /\b(?:F-\d+-\d+|BR-\d+|AC-\d+|EPIC-\d+|US-\d{3,}|ST-US\d+)\b/i.test(residue);
+  if (hasIdentifier) return false;
+  // Common preamble phrases — lower-cased substring check.
+  const lower = residue.toLowerCase();
+  const PREAMBLE_PATTERNS = [
+    'functional requirements document',
+    'frd — module section',
+    'frd module section',
+    'module section',
+    'document section',
+  ];
+  return PREAMBLE_PATTERNS.some((p) => lower.includes(p));
+}
+
 interface FrdArtifactViewProps {
   artifact: BaArtifact;
   activeFeatureId?: string | null;
@@ -40,6 +77,11 @@ export function FrdArtifactView({ artifact, activeFeatureId, onUpdated }: FrdArt
       // body text before the next H2; the section parser still creates a
       // section keyed off the heading, but len === 0.
       if (!s.content?.trim()) continue;
+      // Skip preamble-only sections: short bodies whose only meaningful
+      // content is a label like "**Functional Requirements Document
+      // (FRD) — Module Section**" followed by a horizontal rule. These
+      // are LLM-emitted intro lines that duplicate the cover-page title.
+      if (isPreambleOnlySection(s.content)) continue;
       (isInternalSection(s.label) ? internal : deliverable).push(s);
     }
     return { deliverableSections: deliverable, internalSections: internal };
