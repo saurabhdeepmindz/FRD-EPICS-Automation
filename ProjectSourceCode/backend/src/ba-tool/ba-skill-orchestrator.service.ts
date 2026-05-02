@@ -4512,7 +4512,9 @@ export class BaSkillOrchestratorService {
   // ─── Output parsing ────────────────────────────────────────────────────
 
   private parseAiOutput(rawOutput: string): { humanDocument: string; handoffPacket: Record<string, unknown> | null } {
-    // Try to extract JSON handoff packet from the output
+    // Try to extract JSON handoff packet from the output. The JSON is
+    // captured into a dedicated handoffPacket field on BaSkillExecution,
+    // which downstream skills (SKILL-02-S, SKILL-04, ...) consume directly.
     let handoffPacket: Record<string, unknown> | null = null;
     const jsonMatch = rawOutput.match(/```json\s*\n([\s\S]*?)\n\s*```/);
     if (jsonMatch) {
@@ -4522,7 +4524,38 @@ export class BaSkillOrchestratorService {
         this.logger.warn('Failed to parse handoff packet JSON from AI output');
       }
     }
-    return { humanDocument: rawOutput, handoffPacket };
+
+    // Strip the handoff packet JSON block (and its preceding heading line)
+    // from humanDocument so it never ends up as a separate artifact section
+    // visible in the FRD preview / Word / PDF exports. The JSON is already
+    // captured above into the handoffPacket field — keeping it in
+    // humanDocument too creates duplicate storage and renders inside
+    // F-XX-XX feature blocks because the catch-all "$" terminator on the
+    // last feature's body extends through the JSON section.
+    let humanDocument = rawOutput;
+    // 1. Pattern A: a "## ... Handoff Packet ..." heading immediately
+    //    followed by a ```json ... ``` block. Drops both the heading and
+    //    the fence atomically.
+    humanDocument = humanDocument.replace(
+      /\n?#{1,4}\s+[^\n]*Handoff\s+Packet[^\n]*\n+```json[\s\S]*?\n\s*```\s*/gi,
+      '\n',
+    );
+    // 2. Pattern B: a bare ```json ... ``` block whose content parses as
+    //    the handoff packet shape (i.e. contains a "moduleId" key). Some
+    //    SKILL-01-S responses emit the JSON without a preceding heading.
+    humanDocument = humanDocument.replace(
+      /\n?```json\s*\n([\s\S]*?)\n\s*```\s*/gi,
+      (match, body) => {
+        if (typeof body === 'string' && /\"moduleId\"\s*:/.test(body)) {
+          return '\n';
+        }
+        return match;
+      },
+    );
+    // 3. Trim trailing whitespace cascades.
+    humanDocument = humanDocument.replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+
+    return { humanDocument, handoffPacket };
   }
 
   // ─── SKILL-01-S 9-attribute contract validator ────────────────────────
