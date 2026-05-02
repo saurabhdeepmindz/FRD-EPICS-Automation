@@ -103,6 +103,52 @@ Open `Master-Documents/EPIC-Template.md`. The following sections must ALL be com
 
 ---
 
+#### Hard Rules — non-negotiable canonical EPIC structure
+
+The output of this skill is **one structured EPIC document per module** following the exact 17-section template defined below (EPIC Header + FRD Feature IDs Section + Sections 1–17). The downstream artifact tree, `epic-parser.ts`, the orchestrator's `validateSkill02SOutput`, and SKILL-04 / SKILL-05 / SKILL-06-LLD all expect this exact shape.
+
+**MANDATORY structural contract — every EPIC document MUST emit these headings, in this order, exactly:**
+
+| # | H4 heading | Skill-04 / Skill-05 / parser depends on it for |
+|---|---|---|
+| – | `#### EPIC Header` | EPIC ID, Module ID, Package Name extraction |
+| – | `#### FRD Feature IDs Section (Mandatory — Automation Critical)` | RTM linkage; verifies feature → epic mapping |
+| 1 | `#### Section 1 — EPIC Name` | EPIC name in artifact tree + RTM |
+| 2 | `#### Section 2 — Initiative Reference` | Parent initiative metadata |
+| 3 | `#### Section 3 — Summary` | Stakeholder readers; PDF/Word cover |
+| 4 | `#### Section 4 — Business Context` | LLD module docstring (AUTOMATION CRITICAL) |
+| 5 | `#### Section 5 — Key Actors` | Stories actor field; SubTask role assignment |
+| 6 | `#### Section 6 — High-Level Flow` | Sequence diagram seeding for SKILL-06-LLD |
+| 7 | `#### Section 7 — Pre-requisites` | Cross-EPIC dependency tracking |
+| 8 | `#### Section 8 — Trigger` | Story triggers; FTC test setup |
+| 9 | `#### Section 9 — Scope` | Class inventory for SKILL-06-LLD (AUTOMATION CRITICAL) |
+| 10 | `#### Section 10 — Module / Package Name` | Code generation namespace |
+| 11 | `#### Section 11 — Integration Domains` | TBD-Future Registry linkage |
+| 12 | `#### Section 12 — Acceptance Criteria` | FTC seed; Story acceptance criteria |
+| 13 | `#### Section 13 — NFRs` | Non-functional test cases |
+| 14 | `#### Section 14 — Business Value` | Stakeholder readers |
+| 15 | `#### Section 15 — Integration with Other EPICs` | Cross-EPIC RTM extension |
+| 16 | `#### Section 16 — Out of Scope` | Explicit exclusions |
+| 17 | `#### Section 17 — Risks & Challenges` | Risk register |
+
+**Each section heading MUST appear at H4 level (`####`) with the exact text shown above** (em-dash `—`, not hyphen `-`). The validator does fuzzy-match on label keywords, so minor case/whitespace variation is tolerated, but missing sections OR substituted labels (e.g. "Module Overview", "Feature Summaries", "Conclusion", "Summary Table") trigger a hard fail.
+
+**FORBIDDEN PATTERNS — these will hard-fail the validator:**
+
+- ❌ Emitting a meta-overview / feature-summary document instead of a per-section EPIC. Tell-tale headings to NOT use:
+  - `Module Overview`, `Feature List with IDs/Names/Status`, `Feature Summaries`, `Business Rules & Validations (Highlights)`, `Traceability` (as a top-level section), `Summary Table` (as a top-level section), `Conclusion`, `Key Observations & Recommendations`.
+  - These belong in the FRD or in a separate analysis doc, NOT in the EPIC artifact.
+- ❌ Skipping any of the 17 required sections. Even if the section value is `None` or `Standalone module`, the heading MUST appear.
+- ❌ Numbering sections with arbitrary leading numbers (`1. **Module Overview**`, `2. **Feature List...**`). Use the exact `Section N — <Label>` heading text.
+- ❌ Emitting more than one EPIC document per module unless the FRD has explicitly partitioned features into multiple EPICs (most modules = one EPIC).
+- ❌ Wrapping the entire response inside a single code fence.
+
+If you find yourself writing a "feature summary" / "module overview" / "key observations" section, STOP — that's the failure mode. The EPIC document is a structured spec, not an analysis essay.
+
+---
+
+---
+
 #### EPIC Header
 
 ```
