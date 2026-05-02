@@ -184,14 +184,66 @@ export class BaSkillOrchestratorService {
         wrappedPrompt = this.wrapSkill07Prompt(skillPrompt, contextPacket);
       } else if (skillName === 'SKILL-06-LLD') {
         wrappedPrompt = this.wrapSkill06Prompt(skillPrompt, contextPacket);
+      } else if (skillName === 'SKILL-01-S') {
+        wrappedPrompt = this.wrapSkill01SPrompt(skillPrompt, contextPacket);
       }
 
-      const aiResponse = skillName === 'SKILL-04'
-        ? await this.callAiServiceSkill04PerFeature(skillPrompt, contextPacket)
-        : await this.callAiService(wrappedPrompt, contextPacket);
+      // SKILL-05: route through the per-story append loop.
+      // Legacy single-shot collapses into a meta-overview document on
+      // modules with more than ~10-15 user stories — 100+ structured
+      // 6KB SubTasks don't fit in one response. The per-story loop
+      // (one AI call per US-NNN, append to artifact) is the proven
+      // path that built MOD-04's full SubTask structure.
+      let aiResponse: string;
+      if (skillName === 'SKILL-04') {
+        aiResponse = await this.callAiServiceSkill04PerFeature(skillPrompt, contextPacket);
+      } else if (skillName === 'SKILL-05') {
+        aiResponse = await this.runSkill05PerStoryLoop(moduleDbId);
+      } else {
+        aiResponse = await this.callAiService(wrappedPrompt, contextPacket);
+      }
 
       // 5. Parse and store output
       const { humanDocument, handoffPacket } = this.parseAiOutput(aiResponse);
+
+      // 5a. SKILL-01-S contract enforcement: every feature in the module
+      // MUST be emitted as a #### F-XX-XX: heading block carrying all 9
+      // mandatory attributes. Without this guard, SKILL-01-S can silently
+      // emit a catalog-table-only FRD that breaks downstream skills and
+      // the artifact tree. We persist the raw output so a developer can
+      // inspect what was generated, but mark the execution FAILED so the
+      // workflow does not advance with a degraded FRD.
+      if (skillName === 'SKILL-01-S') {
+        const v = this.validateSkill01SOutput(humanDocument, handoffPacket);
+        if (!v.ok) {
+          const detailLines: string[] = [v.summary];
+          if (v.missingFeatures.length > 0) {
+            detailLines.push(`Missing detail blocks (no #### F-XX-XX: heading): ${v.missingFeatures.join(', ')}`);
+          }
+          if (v.partialFeatures.length > 0) {
+            detailLines.push('Incomplete detail blocks (missing attributes):');
+            for (const pf of v.partialFeatures) {
+              detailLines.push(`  - ${pf.featureId}: missing [${pf.missingAttributes.join(', ')}]`);
+            }
+          }
+          detailLines.push('Re-run SKILL-01-S; the prompt now requires Section 4-Detail with all 9 attributes per feature.');
+          const errorMessage = detailLines.join('\n');
+          await this.prisma.baSkillExecution.update({
+            where: { id: executionId },
+            data: {
+              status: BaExecutionStatus.FAILED,
+              rawOutput: aiResponse,
+              humanDocument,
+              handoffPacket: handoffPacket as object | undefined,
+              completedAt: new Date(),
+              errorMessage,
+            },
+          });
+          this.logger.error(`SKILL-01-S validation failed for module ${moduleDbId}: ${v.summary}`);
+          return;
+        }
+        this.logger.log(`SKILL-01-S validation passed for module ${moduleDbId}: ${v.summary}`);
+      }
 
       await this.prisma.baSkillExecution.update({
         where: { id: executionId },
@@ -204,8 +256,19 @@ export class BaSkillOrchestratorService {
         },
       });
 
-      // 6. Create artifact records
-      const artifact = await this.createArtifactFromOutput(moduleDbId, skillName, humanDocument, handoffPacket);
+      // 6. Create artifact records.
+      // SKILL-05 special case: the per-story append loop in step 4 has
+      // already created and populated the SUBTASK artifact section by
+      // section. Calling createArtifactFromOutput here would create a
+      // SECOND empty artifact and the post-processing step would then
+      // store BaSubTask records referencing the wrong artifactId. So we
+      // just look up the existing artifact for downstream processing.
+      const artifact = skillName === 'SKILL-05'
+        ? await this.prisma.baArtifact.findFirst({
+            where: { moduleDbId, artifactType: BaArtifactType.SUBTASK },
+            orderBy: { createdAt: 'desc' },
+          })
+        : await this.createArtifactFromOutput(moduleDbId, skillName, humanDocument, handoffPacket);
 
       // 7. Incremental RTM population — runs after every skill so the
       //    Requirements Traceability Matrix fills in column-by-column as the
@@ -1045,6 +1108,103 @@ export class BaSkillOrchestratorService {
    *  - Do NOT scope the document to a single user story / feature
    *  - Do NOT use a `# LLD: <story title>` H1 — the parser splits on H2 only
    */
+  /**
+   * Wrap the SKILL-01-S prompt with a focus override that re-states the
+   * Section 4-Detail per-feature 9-attribute contract. Without this
+   * wrapper, the FRD prompt is large enough that under deep context the
+   * AI pattern-matches to a "catalog table + spotlight examples" shape —
+   * observed on MOD-05 — emitting all features as a 21-row table but
+   * only producing detailed `#### F-XX-XX:` heading blocks for the
+   * partial-status features. The orchestrator's post-emission
+   * `validateSkill01SOutput()` is the safety net that hard-fails such
+   * outputs; this wrapper is the prevention layer that makes the
+   * happy-path more reliable.
+   *
+   * The override is short and explicit:
+   *  - One `#### F-XX-XX: Name` heading block per feature (no exceptions)
+   *  - All 9 mandatory attributes per block, in canonical order
+   *  - Section 4 (catalog table) and Section 4-Detail (heading blocks) are
+   *    BOTH required — neither replaces the other
+   */
+  private wrapSkill01SPrompt(
+    skillPrompt: string,
+    contextPacket: Record<string, unknown>,
+  ): string {
+    // Pull a hint of how many features are expected from the screen summary
+    // cards so we can name a target count in the override. This is best-
+    // effort: SKILL-01-S derives the actual feature list from the screens,
+    // so we don't enumerate Feature IDs here (they don't exist yet).
+    const cards = Array.isArray(contextPacket.screenSummaryCards)
+      ? (contextPacket.screenSummaryCards as unknown[])
+      : [];
+    const screenCount = cards.length;
+    const moduleId = String(contextPacket.moduleId ?? 'this module');
+    const moduleName = String(contextPacket.moduleName ?? '');
+
+    return [
+      '## 🎯 SKILL-01-S FOCUS — ORCHESTRATOR OVERRIDE',
+      '',
+      `Produce the FRD module section for **${moduleId}${moduleName ? ` — ${moduleName}` : ''}** covering ALL ${screenCount > 0 ? `${screenCount} screens` : 'screens'} present in the Screen Summary Cards. Every screen-derived feature MUST appear in BOTH Section 4 (catalog table) AND Section 4-Detail (per-feature heading blocks). Section 4-Detail is non-optional and non-negotiable.`,
+      '',
+      '### Validator contract (CRITICAL — non-negotiable)',
+      '',
+      'The backend will run a post-emission validator (`validateSkill01SOutput`) that walks the markdown looking for `#### F-XX-XX:` heading blocks. Its rules:',
+      '',
+      '1. The number of `#### F-XX-XX:` heading blocks must equal the number of distinct Feature IDs in the module — same count as the Section 4 catalog table rows and the `features[]` array in the Handoff Packet JSON.',
+      '2. Each block must contain ALL 9 mandatory attribute labels, prefixed with `- **<Label>:**`, in this order: **Description**, **Screen Reference**, **Trigger**, **Pre-Conditions**, **Post-Conditions**, **Business Rules**, **Validations**, **Integration Signals**, **Acceptance Criteria**.',
+      '3. Empty values, bare `TBD`, naked dashes, or omitted bullets are validation failures. If an attribute is genuinely not applicable, write a one-line rationale starting with `N/A —` (e.g. `N/A — read-only feature, no input validations`).',
+      '4. The Handoff Packet JSON `features[]` array must carry the same 9 attribute keys (`description`, `screenRef`, `trigger`, `preConditions`, `postConditions`, `businessRules`, `validations`, `integrationSignals`, `acceptanceCriteria`) for every entry. Missing keys = validation failure.',
+      '',
+      'If the validator fails, the execution is marked FAILED with a structured error listing the missing/incomplete features. The pipeline does NOT advance to SKILL-02-S.',
+      '',
+      '### Forbidden patterns (will fail validation)',
+      '',
+      '- ❌ Catalog-table-only output: emitting Section 4 (the `| F-XX-XX | Name | Status | Priority | Screen | ... |` table) WITHOUT also emitting a `#### F-XX-XX:` heading block per row.',
+      '- ❌ Spotlight-detail-only output: emitting heading blocks for only a handful of features (e.g. just the CONFIRMED-PARTIAL ones) and treating the catalog table as "enough" for the rest.',
+      '- ❌ Substituting `**F-XX-XX:** Name` (bold-only, no `####` heading) for the heading. The validator parses on the four-hash heading; bold-only mentions do NOT count.',
+      '- ❌ Omitting any of the 9 attribute labels from any block. All 9 must be present even if a value is `N/A — ...`.',
+      '- ❌ Wrapping attribute values inside a single paragraph instead of bullet lines. The Pre-Conditions, Post-Conditions, Business Rules, Validations, Integration Signals, and Acceptance Criteria attributes MUST use bullet lines (`- ...`).',
+      '',
+      '### Mandatory per-feature heading block format',
+      '',
+      'Emit each feature in EXACTLY this shape (one block per feature, in numerical Feature ID order):',
+      '',
+      '```markdown',
+      '#### F-XX-XX: <Feature Name>',
+      '',
+      '- **Description:** 2–4 sentences synthesising the screen analysis into the full behaviour. Must be specific enough that a developer can implement without re-reading the screen.',
+      '- **Screen Reference:** SCR-NN — Screen Title',
+      '- **Trigger:** What initiates the feature (verb-led, e.g. "Admin clicks Save").',
+      '- **Pre-Conditions:**',
+      '  - Condition 1',
+      '  - Condition 2',
+      '- **Post-Conditions:**',
+      '  - State 1 after success',
+      '  - State 2',
+      '- **Business Rules:**',
+      '  - BR-01: Named rule with explicit logic',
+      '  - BR-02: ...',
+      '- **Validations:**',
+      '  - Field-level validation 1',
+      '  - ... (or `N/A — read-only feature, no input validations`)',
+      '- **Integration Signals:**',
+      '  - Signal 1: <Name> — <CLASSIFICATION> — Used for: <purpose> — Assumed Interface: `<sig>` — Resolution: <N/A | TBD-Future ref TBD-NNN>',
+      '  - ... (or `N/A — self-contained feature, no integration dependencies`)',
+      '- **Acceptance Criteria:**',
+      '  - AC-01: Plain-English business-level criterion',
+      '  - AC-02: ...',
+      '```',
+      '',
+      'The skill file (loaded above) carries the full per-attribute semantics. This wrapper is a structural reminder — it does NOT override the attribute definitions in Step 2 of the skill file.',
+      '',
+      `Self-check before emitting your response: count your \`#### F-XX-XX:\` heading blocks. If the count does not equal the number of features you derived from the screens, you have a validation failure waiting to happen — emit the missing blocks before responding.`,
+      '',
+      '---',
+      '',
+      skillPrompt,
+    ].join('\n');
+  }
+
   private wrapSkill06Prompt(
     skillPrompt: string,
     contextPacket: Record<string, unknown>,
@@ -1455,6 +1615,104 @@ export class BaSkillOrchestratorService {
       const nb = parseInt(b.storyId.slice(3), 10);
       return na - nb;
     });
+  }
+
+  /**
+   * Drive the SKILL-05 per-story append mode for every user story in the
+   * module's latest APPROVED SKILL-04 output. Each story gets its own AI
+   * call with a focused single-story override (defined inside
+   * executeSkill05ForStory). Returns a synthetic humanDocument that
+   * combines a per-story summary table with the persisted artifact body —
+   * downstream post-processing (subtask parser, RTM extension) parses
+   * subtasks from this string and links them to the artifact.
+   *
+   * This is the default SKILL-05 path invoked by `executeSkill('SKILL-05')`
+   * since the legacy single-shot route consistently collapses into a
+   * meta-overview document on modules with more than ~10-15 user stories.
+   * Each AI response in this loop carries one story's worth of subtasks,
+   * which fits comfortably in the response budget.
+   */
+  private async runSkill05PerStoryLoop(moduleDbId: string): Promise<string> {
+    const stories = await this.listUserStoriesForModule(moduleDbId);
+    if (stories.length === 0) {
+      throw new Error('SKILL-05: no user stories found in latest APPROVED SKILL-04 output. Run SKILL-04 first.');
+    }
+    this.logger.log(
+      `SKILL-05 per-story loop: processing ${stories.length} stories for module ${moduleDbId}`,
+    );
+
+    const summary: Array<{
+      storyId: string;
+      added: number;
+      skipped: boolean;
+      reason?: string;
+      error?: string;
+    }> = [];
+
+    for (const s of stories) {
+      try {
+        const r = await this.executeSkill05ForStory(moduleDbId, s.storyId);
+        summary.push({ storyId: r.storyId, added: r.added, skipped: r.skipped, reason: r.reason });
+        this.logger.log(
+          `SKILL-05 per-story ${r.storyId}: added=${r.added} skipped=${r.skipped}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        summary.push({ storyId: s.storyId, added: 0, skipped: false, error: msg });
+        this.logger.error(`SKILL-05 per-story ${s.storyId} failed: ${msg}`);
+      }
+    }
+
+    // Read back the persisted SUBTASK artifact and synthesize a
+    // humanDocument that downstream post-processing reads from.
+    //
+    // splitIntoSections() strips the `## <heading>` line into
+    // sectionLabel + sectionKey and stores only the body in content.
+    // SubTaskParserService.parseMarkdown() splits on
+    //   /(?=^## (?:SubTask:\s*)?ST-)/m
+    // and pulls the heading via /^## (?:SubTask:\s*)?(ST-[A-Za-z0-9-]+)/m,
+    // so it requires the `## ST-...` heading to be present in the input.
+    // We must rebuild it here by prepending `## <label>` to each section
+    // body, otherwise parseAndStore finds 0 subtasks and BaSubTask stays
+    // empty even though the artifact has the right content.
+    const artifact = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: BaArtifactType.SUBTASK },
+      orderBy: { createdAt: 'desc' },
+      include: { sections: true },
+    });
+    const artifactBody = artifact
+      ? artifact.sections.map((s) => `## ${s.sectionLabel}\n${s.content}`).join('\n\n')
+      : '';
+
+    const succeeded = summary.filter((r) => r.added > 0 && !r.error).length;
+    const skippedCount = summary.filter((r) => r.skipped).length;
+    const failedCount = summary.filter((r) => r.error).length;
+
+    const summaryHeader = [
+      '# SKILL-05 Per-Story Run Summary',
+      '',
+      `Total stories processed: **${stories.length}**`,
+      `Succeeded: **${succeeded}**`,
+      `Skipped (idempotent — already had sections): **${skippedCount}**`,
+      `Failed: **${failedCount}**`,
+      '',
+      '| Story ID | Sections added | Outcome |',
+      '|---|---|---|',
+      ...summary.map((r) =>
+        `| ${r.storyId} | ${r.added} | ${
+          r.error
+            ? `error: ${r.error.slice(0, 100)}`
+            : r.skipped
+              ? `skipped — ${r.reason ?? 'already had sections'}`
+              : 'OK'
+        } |`,
+      ),
+      '',
+      '---',
+      '',
+    ].join('\n');
+
+    return summaryHeader + artifactBody;
   }
 
   /**
@@ -4265,6 +4523,123 @@ export class BaSkillOrchestratorService {
       }
     }
     return { humanDocument: rawOutput, handoffPacket };
+  }
+
+  // ─── SKILL-01-S 9-attribute contract validator ────────────────────────
+  //
+  // Every feature in the module MUST be emitted as a `#### F-XX-XX:` heading
+  // block carrying all 9 mandatory attributes (Description, Screen Reference,
+  // Trigger, Pre-Conditions, Post-Conditions, Business Rules, Validations,
+  // Integration Signals, Acceptance Criteria). Without this guard, SKILL-01-S
+  // can silently emit a catalog-table-only FRD (observed on MOD-05 — 21
+  // features in the table, 0 detail blocks, 17/21 features with zero
+  // attribute coverage). Downstream skills then ingest a degraded FRD and
+  // the artifact tree shows only a handful of features.
+
+  private validateSkill01SOutput(
+    humanDocument: string,
+    handoffPacket: Record<string, unknown> | null,
+  ): { ok: boolean; missingFeatures: string[]; partialFeatures: { featureId: string; missingAttributes: string[] }[]; summary: string } {
+    const expectedIds = this.expectedSkill01SFeatureIds(humanDocument, handoffPacket);
+    if (expectedIds.length === 0) {
+      return {
+        ok: false,
+        missingFeatures: [],
+        partialFeatures: [],
+        summary: 'No feature IDs detected in SKILL-01-S output (neither handoff packet nor markdown contains any F-XX-XX). Output is unusable.',
+      };
+    }
+
+    const blockMap = this.extractFeatureDetailBlocks(humanDocument);
+    const missingFeatures: string[] = [];
+    const partialFeatures: { featureId: string; missingAttributes: string[] }[] = [];
+    for (const fid of expectedIds) {
+      const block = blockMap.get(fid);
+      if (!block) {
+        missingFeatures.push(fid);
+        continue;
+      }
+      const missing = this.findMissingFeatureAttributes(block);
+      if (missing.length > 0) {
+        partialFeatures.push({ featureId: fid, missingAttributes: missing });
+      }
+    }
+
+    const ok = missingFeatures.length === 0 && partialFeatures.length === 0;
+    const summary = ok
+      ? `All ${expectedIds.length} features have complete 9-attribute detail blocks.`
+      : `SKILL-01-S 9-attribute contract violation. Expected ${expectedIds.length} feature(s) with #### F-XX-XX: heading blocks; missing ${missingFeatures.length}, incomplete ${partialFeatures.length}.`;
+    return { ok, missingFeatures, partialFeatures, summary };
+  }
+
+  private expectedSkill01SFeatureIds(humanDocument: string, handoffPacket: Record<string, unknown> | null): string[] {
+    const ids = new Set<string>();
+    if (handoffPacket && typeof handoffPacket === 'object') {
+      const features = (handoffPacket as { features?: unknown }).features;
+      if (Array.isArray(features)) {
+        for (const f of features) {
+          const fid = (f as { featureId?: unknown }).featureId;
+          if (typeof fid === 'string' && /^F-\d+-\d+$/.test(fid)) ids.add(fid);
+        }
+      }
+    }
+    if (ids.size === 0) {
+      // Fallback: scan markdown for any F-XX-XX mentions (catalog table rows,
+      // narrative refs, etc.). Used when the handoff packet lacks a features
+      // array — older outputs sometimes nest features under modules[0].
+      for (const m of humanDocument.matchAll(/\bF-\d{2,}-\d{2,}\b/g)) ids.add(m[0]);
+    }
+    return [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
+
+  private extractFeatureDetailBlocks(humanDocument: string): Map<string, string> {
+    const blocks = new Map<string, string>();
+    const lines = humanDocument.split('\n');
+    const featureHeadingRe = /^#{4}\s+\*?\*?\s*(F-\d+-\d+)\s*[:\s—\-*].*$/;
+    const stopHeadingRe = /^#{1,3}\s/; // any H1/H2/H3 ends the feature block
+    const peerFeatureRe = /^#{4}\s+\*?\*?\s*F-\d+-\d+/;
+
+    let currentId: string | null = null;
+    let buf: string[] = [];
+    const flush = (): void => {
+      if (currentId) {
+        const prev = blocks.get(currentId) ?? '';
+        blocks.set(currentId, prev ? `${prev}\n${buf.join('\n')}` : buf.join('\n'));
+      }
+      buf = [];
+    };
+
+    for (const line of lines) {
+      const m = line.match(featureHeadingRe);
+      if (m) {
+        flush();
+        currentId = m[1];
+        continue;
+      }
+      if (currentId && (stopHeadingRe.test(line) || peerFeatureRe.test(line))) {
+        flush();
+        currentId = null;
+      } else if (currentId) {
+        buf.push(line);
+      }
+    }
+    flush();
+    return blocks;
+  }
+
+  private findMissingFeatureAttributes(block: string): string[] {
+    const ATTRS: { name: string; pattern: RegExp }[] = [
+      { name: 'Description', pattern: /\*?\*?\s*(?:Feature\s+)?Description\s*\*?\*?\s*[:\-]/i },
+      { name: 'Screen Reference', pattern: /\*?\*?\s*Screen\s*Reference\s*\*?\*?\s*[:\-]/i },
+      { name: 'Trigger', pattern: /\*?\*?\s*Trigger\s*\*?\*?\s*[:\-]/i },
+      { name: 'Pre-Conditions', pattern: /\*?\*?\s*Pre[-\s]*conditions?\s*\*?\*?\s*[:\-]/i },
+      { name: 'Post-Conditions', pattern: /\*?\*?\s*Post[-\s]*conditions?\s*\*?\*?\s*[:\-]/i },
+      { name: 'Business Rules', pattern: /\*?\*?\s*Business\s*Rules?\s*\*?\*?\s*[:\-]/i },
+      { name: 'Validations', pattern: /\*?\*?\s*Validations?\s*\*?\*?\s*[:\-]/i },
+      { name: 'Integration Signals', pattern: /\*?\*?\s*Integration\s*Signals?\s*\*?\*?\s*[:\-]/i },
+      { name: 'Acceptance Criteria', pattern: /\*?\*?\s*Acceptance\s*Criteria\s*\*?\*?\s*[:\-]/i },
+    ];
+    return ATTRS.filter((a) => !a.pattern.test(block)).map((a) => a.name);
   }
 
   // ─── Artifact creation ─────────────────────────────────────────────────

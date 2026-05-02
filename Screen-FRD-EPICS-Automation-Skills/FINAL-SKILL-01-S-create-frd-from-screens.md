@@ -222,7 +222,7 @@ FRD — [Project Name] — Screen-First Edition — Living Document
 │     ├── MOD-01: [Module Name] — Status: Approved
 │     ├── MOD-02: [Module Name] — Status: In Review
 │     └── ...
-├── Section 4: Feature List by Module
+├── Section 4: Feature List by Module ← INDEX/CATALOG TABLE
 │     ├── MOD-01: [Module Name] — Status: Approved
 │     │     ├── F-01-01: [Feature] — CONFIRMED
 │     │     └── ...
@@ -231,6 +231,14 @@ FRD — [Project Name] — Screen-First Edition — Living Document
 │     │     ├── F-02-07: [Feature] — CONFIRMED-PARTIAL [TBD-001]
 │     │     └── ...
 │     └── ...
+├── Section 4-Detail: Per-Feature Detail Blocks ← MANDATORY, ONE BLOCK PER FEATURE
+│     ├── #### F-01-01: [Feature Name]
+│     │     └── 9 mandatory attributes (Description, Screen Reference, Trigger,
+│     │         Pre-Conditions, Post-Conditions, Business Rules, Validations,
+│     │         Integration Signals, Acceptance Criteria)
+│     ├── #### F-01-02: [Feature Name]
+│     │     └── 9 mandatory attributes
+│     └── ... one detail block per Feature ID — NO EXCEPTIONS
 ├── Section 5: Feature Priority Summary (MoSCoW — updates per module)
 ├── Section 6: Consolidated Business Rules
 ├── Section 7: Consolidated Validations
@@ -239,6 +247,58 @@ FRD — [Project Name] — Screen-First Edition — Living Document
 ├── Section 10: Open Questions Log
 └── Section 11: Out of Scope Features
 ```
+
+**Section 4 vs Section 4-Detail — both are required, both are different.**
+
+| Section | Shape | Purpose |
+|---|---|---|
+| **Section 4** | A markdown table — one row per feature, columns: Feature ID, Feature Name, Status, Priority, Screen Ref, etc. | Catalog / quick-reference index. |
+| **Section 4-Detail** | A heading block per feature: `#### F-XX-XX: Feature Name` followed by all 9 mandatory attributes as bullet lines. | The authoritative feature definition. Downstream skills (SKILL-02-S, SKILL-04, SKILL-06, SKILL-07) and the artifact tree consume this. |
+
+It is **not acceptable** to substitute the Section 4 table for Section 4-Detail. The table cannot carry multi-line descriptions, business rules, or acceptance criteria — those belong in Section 4-Detail's heading blocks. Any feature that appears in Section 4 but is missing from Section 4-Detail is a hard validation failure (see Step 7).
+
+**Mandatory per-feature detail block format (Section 4-Detail):**
+
+Every feature in this module — without exception — MUST be emitted in this exact heading format:
+
+```markdown
+#### F-XX-XX: [Feature Name]
+
+- **Description:** 2–4 sentences describing the full behaviour of this feature, synthesised from the screen analysis. Must be specific enough that a developer can implement without re-reading the screen.
+- **Screen Reference:** SCR-NN — Screen Title (use the em-dash + title format defined in Rules below)
+- **Trigger:** What action initiates this feature (e.g. "Admin clicks Save" / "System detects file uploaded").
+- **Pre-Conditions:**
+  - Condition 1 that must be true before the feature can execute
+  - Condition 2
+  - ... (one bullet per pre-condition; minimum 1)
+- **Post-Conditions:**
+  - State 1 that is true after successful completion
+  - State 2
+  - ... (one bullet per post-condition; minimum 1)
+- **Business Rules:**
+  - BR-01: Named rule with explicit logic
+  - BR-02: ...
+  - ... (every rule prefixed with `BR-NN:`; minimum 1)
+- **Validations:**
+  - Field-level validation rule 1 (e.g. "Email field: RFC 5322 format, max 254 chars, required")
+  - Validation rule 2
+  - ... (minimum 1; if the feature has no inputs, write "N/A — read-only feature, no input validations")
+- **Integration Signals:**
+  - Signal 1: [Name] — [EXTERNAL-CONFIRMED | INTERNAL-CONFIRMED | EXTERNAL-TBD-Future | INTERNAL-TBD-Future] — Used for: [purpose] — Assumed Interface: `[signature]` — Resolution: [N/A — confirmed | TBD-Future ref TBD-NNN]
+  - ... (minimum 1; if the feature has no integrations, write "N/A — self-contained feature, no integration dependencies")
+- **Acceptance Criteria:**
+  - AC-01: Plain-English business-level criterion (Given/When/Then is acceptable but not required)
+  - AC-02: ...
+  - ... (every criterion prefixed with `AC-NN:`; minimum 2)
+```
+
+**Hard rules — these are non-negotiable:**
+
+1. The heading line must be exactly `#### F-XX-XX: [Feature Name]` (four hashes, space, feature ID, colon, space, name). No bold wrapping, no em-dash, no parentheses.
+2. All 9 attribute labels must appear, in the order shown, prefixed with `- **Label:**` (bold-wrapped label, colon).
+3. No attribute may be omitted. If genuinely not applicable, write a 1-line rationale starting with `N/A —` (e.g. `N/A — read-only feature, no input validations`). Bare empty bullets, dashes, or "TBD" are not acceptable substitutes.
+4. The block ends at the next `#### F-XX-XX:` heading or the next `## Section` heading.
+5. The number of `#### F-XX-XX:` blocks in Section 4-Detail must equal the number of distinct Feature IDs in Section 4's table — no more, no less. Pre-existing approved modules' detail blocks are carried forward unchanged.
 
 **Approved module sections are locked.** They cannot be edited without explicitly unlocking. Unlocking resets section status to Draft and requires re-approval.
 
@@ -253,6 +313,8 @@ Project-Documents/FRD/FRD-[ProjectCode]-Screen-First.md
 
 After the FRD module section is produced, generate the compact FRD Handoff Packet for this module. This JSON travels into SKILL-02-S — the full FRD document does NOT.
 
+**The `features[]` array carries the SAME 9 mandatory attributes captured in Section 4-Detail's heading blocks** — they are two views of the same data. The artifact tree, downstream skills, and orchestrator validation all cross-check the markdown blocks against this JSON.
+
 ```json
 {
   "moduleId": "MOD-02",
@@ -264,15 +326,21 @@ After the FRD module section is produced, generate the compact FRD Handoff Packe
       "featureName": "Task Submission & Notification",
       "priority": "Must Have",
       "status": "CONFIRMED-PARTIAL",
+      "description": "Admin assigns a task to a professional from the assignment screen. The system persists the task, dispatches a notification, and writes an audit-log entry. Must Have for the Module-02 release because it gates downstream workflow handoffs.",
       "screenRef": "SCR-15",
       "trigger": "Admin clicks Assign Task Now",
       "preConditions": ["Admin authenticated", "All mandatory fields complete"],
       "postConditions": ["Task persisted", "Notification dispatched"],
       "businessRules": ["BR-01: Due date must be future", "BR-02: Professional must be active"],
+      "validations": ["VAL-01: Due date >= today", "VAL-02: Professional dropdown selection required"],
       "integrationSignals": [
         {"name": "NotificationService", "status": "EXTERNAL-CONFIRMED", "assumedInterface": "sendTaskAssignmentNotification(professionalId, taskId)"},
         {"name": "ProfessionalProfileService", "status": "INTERNAL-TBD-Future", "refModule": "MOD-03", "assumedInterface": "getProfessionalById(professionalId)", "registryId": "TBD-001"},
         {"name": "AuditLogService", "status": "INTERNAL-CONFIRMED", "assumedInterface": "logAdminAction(adminId, action, entityId)"}
+      ],
+      "acceptanceCriteria": [
+        "AC-01: Given the admin is on SCR-15 — Assign Task Screen with all mandatory fields filled, when Assign Task Now is clicked, then the task is persisted and the assigned professional receives a notification.",
+        "AC-02: Given the due date is in the past, when Assign Task Now is clicked, then validation VAL-01 fires and the form is not submitted."
       ]
     }
   ],
@@ -281,6 +349,12 @@ After the FRD module section is produced, generate the compact FRD Handoff Packe
   "sourceReportVersion": "v1.0"
 }
 ```
+
+**JSON contract — every entry in `features[]` MUST carry all of these 9 attribute keys, even if value is "N/A":**
+
+`description`, `screenRef`, `trigger`, `preConditions`, `postConditions`, `businessRules`, `validations`, `integrationSignals`, `acceptanceCriteria`.
+
+These are in addition to the bookkeeping fields `featureId`, `featureName`, `priority`, `status`. Missing or empty-array values for any of the 9 mandatory attributes are a validation failure.
 
 Save as:
 ```
@@ -295,9 +369,21 @@ Project-Documents/FRD/FRD-Handoff-[ProjectCode]-[ModuleID].json
 - [ ] Every screen references at least one Feature — no orphan screens
 - [ ] Every Feature has a unique Feature ID
 - [ ] Every Feature has a Priority
-- [ ] Every Feature has Pre-conditions and Post-conditions
-- [ ] Business Rules are named with BR-IDs
 - [ ] Out of Scope explicitly documented
+
+**Per-feature 9-attribute coverage (Section 4-Detail) — MANDATORY:**
+- [ ] The number of `#### F-XX-XX:` heading blocks in Section 4-Detail equals the number of distinct Feature IDs in this module
+- [ ] Every feature's detail block contains a non-empty **Description** line
+- [ ] Every feature's detail block contains a non-empty **Screen Reference** line, formatted as `SCR-NN — Screen Title`
+- [ ] Every feature's detail block contains a non-empty **Trigger** line
+- [ ] Every feature's detail block contains at least one **Pre-Condition** bullet
+- [ ] Every feature's detail block contains at least one **Post-Condition** bullet
+- [ ] Every feature's detail block contains at least one **Business Rule** bullet, prefixed `BR-NN:`
+- [ ] Every feature's detail block contains at least one **Validation** bullet (or `N/A — ...` rationale)
+- [ ] Every feature's detail block contains at least one **Integration Signal** bullet (or `N/A — ...` rationale)
+- [ ] Every feature's detail block contains at least two **Acceptance Criteria** bullets, prefixed `AC-NN:`
+- [ ] Bare `TBD`, empty bullets, or naked dashes are NOT present in any attribute slot
+- [ ] The 9 attribute keys in the Handoff Packet `features[]` JSON match the markdown blocks for every feature
 
 **TBD-Future specific checks:**
 - [ ] Every integration signal has one of the four classifications
@@ -308,6 +394,8 @@ Project-Documents/FRD/FRD-Handoff-[ProjectCode]-[ModuleID].json
 - [ ] TBD-Future Integration Registry updated with all new entries
 - [ ] FRD Handoff Packet JSON generated for this module
 - [ ] No feature is marked DRAFT solely due to TBD-Future integrations
+
+**If ANY check above fails, the FRD module section is NOT ready for sign-off. Re-emit the missing/incomplete blocks before proceeding to Step 8.**
 
 ---
 
@@ -345,12 +433,15 @@ Project-Documents/RTM/Module-FRD-RTM-[ProjectCode].md
 
 - [ ] Module confirmed with ID, Package Name, Integration Domains classified
 - [ ] All features extracted with Feature IDs assigned
+- [ ] **Section 4 (catalog table) lists every feature with one row each, no duplicates**
+- [ ] **Section 4-Detail emits one `#### F-XX-XX:` heading block per feature — block count equals Section 4 row count**
+- [ ] **Every Section 4-Detail block carries all 9 mandatory attributes (Description, Screen Reference, Trigger, Pre-Conditions, Post-Conditions, Business Rules, Validations, Integration Signals, Acceptance Criteria) with non-empty content or an explicit `N/A — ...` rationale**
 - [ ] All integration signals classified across all features
 - [ ] All TBD-Future integrations have assumed interface and resolution trigger
 - [ ] Feature statuses correctly set: CONFIRMED / CONFIRMED-PARTIAL / DRAFT
 - [ ] TBD-Future Integration Registry updated
 - [ ] FRD document updated with new module section
-- [ ] FRD Handoff Packet JSON generated
+- [ ] FRD Handoff Packet JSON generated — every entry in `features[]` carries all 9 mandatory attributes (description, screenRef, trigger, preConditions, postConditions, businessRules, validations, integrationSignals, acceptanceCriteria)
 - [ ] Compact Module Index updated with this module
 - [ ] Customer sign-off obtained — zero DRAFT features remaining
 - [ ] Module-FRD RTM updated with TBD-Future columns
