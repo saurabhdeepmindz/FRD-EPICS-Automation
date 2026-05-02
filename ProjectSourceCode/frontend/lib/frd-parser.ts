@@ -106,8 +106,12 @@ function extractFeatures(content: string): ParsedFeature[] {
     features.push(parseFeatureBlock(featureId, featureName, block));
   }
 
+  // If Strategy 1 found proper detail blocks, trust them and we are done.
+  // Otherwise we fall through to the degraded strategies below.
+  const hasProperHeadingBlocks = features.length > 0;
+
   // Strategy 2: If no heading-style features found, try "Feature ID: F-XX-XX" blocks
-  if (features.length === 0) {
+  if (!hasProperHeadingBlocks) {
     const altRegex = /Feature\s*ID[:\s]+(F-\d+-\d+)\s*\n([\s\S]*?)(?=Feature\s*ID[:\s]+F-\d+-\d+|$)/gi;
     while ((match = altRegex.exec(content)) !== null) {
       const featureId = match[1];
@@ -118,29 +122,45 @@ function extractFeatures(content: string): ParsedFeature[] {
     }
   }
 
-  // Strategy 3: Simple line-by-line scan for F-XX-XX patterns
-  if (features.length === 0) {
+  // Strategy 3: Simple line-by-line scan for `**F-XX-XX:** Name` style mentions.
+  //
+  // This is the loose fallback used when the FRD only spotlights a few features
+  // inline (e.g. partial features in a "TBD-Future" registry). Without the
+  // skip-rules below, we used to capture lines like
+  //   `**Note:** All features have unique IDs (F-05-01 ... F-05-21).`
+  // as a feature heading because they contain `**` and `F-05-01`. Tighten the
+  // matcher so only genuine feature headings qualify.
+  if (!hasProperHeadingBlocks && features.length === 0) {
     const lines = content.split('\n');
     let currentFeature: Partial<ParsedFeature> | null = null;
     let currentBlock: string[] = [];
 
     for (const line of lines) {
-      const idMatch = line.match(/\b(F-\d+-\d+)\b/);
-      if (idMatch && (line.includes('#') || line.includes('**') || line.includes('Feature'))) {
-        // Save previous feature
-        if (currentFeature?.featureId) {
-          features.push(parseFeatureBlock(
-            currentFeature.featureId,
-            currentFeature.featureName ?? currentFeature.featureId,
-            currentBlock.join('\n'),
-          ));
+      const trimmed = line.trim();
+      if (isFeatureHeadingCandidate(trimmed)) {
+        const idMatch = trimmed.match(/\b(F-\d+-\d+)\b/);
+        if (idMatch) {
+          if (currentFeature?.featureId) {
+            features.push(parseFeatureBlock(
+              currentFeature.featureId,
+              currentFeature.featureName ?? currentFeature.featureId,
+              currentBlock.join('\n'),
+            ));
+          }
+          currentFeature = {
+            featureId: idMatch[1],
+            featureName: trimmed
+              .replace(/[#*`]/g, '')
+              .replace(idMatch[1], '')
+              .replace(/[:\-—]/g, ' ')
+              .trim()
+              || idMatch[1],
+          };
+          currentBlock = [];
+          continue;
         }
-        currentFeature = {
-          featureId: idMatch[1],
-          featureName: line.replace(/[#*]/g, '').replace(idMatch[1], '').replace(/[:\-—]/g, '').trim(),
-        };
-        currentBlock = [];
-      } else if (currentFeature) {
+      }
+      if (currentFeature) {
         currentBlock.push(line);
       }
     }
@@ -154,7 +174,60 @@ function extractFeatures(content: string): ParsedFeature[] {
     }
   }
 
-  return features;
+  // Strategy 4: Markdown catalog table fallback. SKILL-01-S emits a
+  // canonical "Feature List by Module" table where each row is
+  //   `| F-XX-XX | Feature Name | Status | Priority | Screen | ... |`.
+  // Always run this when Strategy 1 didn't match — Strategy 3 may have
+  // captured a handful of inline-spotlighted features, but the table is
+  // the canonical catalog, so we additively merge those table rows in
+  // and the dedupe pass below keeps whichever entry has the longer
+  // rawBlock (preserving Strategy 3's richer inline content where it
+  // exists). The result: tree shows ALL features in the module, with
+  // detailed content for any that had it. Once SKILL-01-S re-runs
+  // against the hardened prompt, Strategy 1 will pick up the proper
+  // detail blocks for every feature instead.
+  if (!hasProperHeadingBlocks) {
+    const tableRowRe = /^\s*\|\s*(F-\d+-\d+)\s*\|\s*([^|]+?)\s*\|/gm;
+    let m: RegExpExecArray | null;
+    const seen = new Set(features.map((f) => f.featureId));
+    while ((m = tableRowRe.exec(content)) !== null) {
+      const id = m[1];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const name = m[2].replace(/\*+/g, '').trim();
+      features.push(parseFeatureBlock(id, name, m[0]));
+    }
+  }
+
+  // Dedupe by featureId — Strategy 3 sometimes catches the same id twice
+  // when a feature is mentioned in narrative AND in a heading. Keep the
+  // entry with the longer rawBlock (more attribute coverage).
+  const byId = new Map<string, ParsedFeature>();
+  for (const f of features) {
+    const existing = byId.get(f.featureId);
+    if (!existing || (f.rawBlock?.length ?? 0) > (existing.rawBlock?.length ?? 0)) {
+      byId.set(f.featureId, f);
+    }
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.featureId.localeCompare(b.featureId, undefined, { numeric: true }),
+  );
+}
+
+/**
+ * Decide whether a line is a plausible feature heading. A genuine heading is
+ * either an explicit markdown heading (`#`/`##`/`###`/`####`) or a bold-
+ * wrapped feature line that STARTS with the bold marker and the feature ID,
+ * e.g. `**F-05-04: Signup — Firm Plan — CONFIRMED-PARTIAL**`. Lines like
+ * `**Note:** All features have unique IDs (F-05-01 ... F-05-21).` do not
+ * qualify — they don't start with `**F-` and they reference IDs as text
+ * inside parens / backticks.
+ */
+function isFeatureHeadingCandidate(trimmed: string): boolean {
+  if (/^#{1,4}\s+\*?\*?F-\d+-\d+/.test(trimmed)) return true;
+  if (/^\*\*F-\d+-\d+\b/.test(trimmed)) return true;
+  if (/^\*\*Feature\s*ID\s*[:\-]/i.test(trimmed)) return true;
+  return false;
 }
 
 function parseFeatureBlock(featureId: string, featureName: string, block: string): ParsedFeature {
@@ -176,11 +249,49 @@ function parseFeatureBlock(featureId: string, featureName: string, block: string
   };
 }
 
+/**
+ * Locate a labeled attribute inside a feature block and return its value.
+ *
+ * Handles both forms SKILL-01-S can emit:
+ *
+ *   1. Inline single-line:
+ *      `- **Pre-conditions:** Admin authenticated; dashboard loaded`
+ *      → value is everything after the colon on the same line.
+ *
+ *   2. Multi-line bulleted (the canonical form for conditions/criteria):
+ *      ```
+ *      - **Pre-Conditions:**
+ *        - User has received a valid password reset email.
+ *        - User accesses the reset link within its validity period.
+ *      ```
+ *      → label line carries no inline value; collect subsequent lines
+ *        until the next top-level `- **<label>:**` row or section break.
+ *        The captured value preserves the bullet structure so the
+ *        downstream MarkdownRenderer renders it as a proper list.
+ *
+ * Without form (2) support, multi-line attributes silently render as
+ * empty in FrdArtifactView and the user only sees Description / Screen
+ * Reference / Trigger.
+ */
 function extractField(block: string, labels: string[]): string {
   const lines = block.split('\n');
   const lowerLabels = labels.map((l) => l.toLowerCase());
 
-  for (const line of lines) {
+  // A "next attribute label" is a top-level (column 0–1) bullet whose
+  // text is bold-wrapped and ends in a colon. Handles both common forms:
+  //   `- **Pre-Conditions:**`  (colon inside the bold markers)
+  //   `- **Pre-Conditions**:`  (colon after the closing bold markers)
+  // Sub-bullets at indent ≥ 2 don't match — we don't want a sub-bullet
+  // like `  - **Authentication:** required` (rare but possible) to be
+  // mistaken for a top-level attribute boundary. The earlier regex used
+  // `[^*\n]+` which greedily consumed the in-bold colon, leaving nothing
+  // for the trailing `[:\-]` to match — so the boundary was never detected
+  // and `feature.preConditions` swallowed every subsequent attribute.
+  const nextLabelRe = /^\s{0,1}[-*]\s+\*{1,2}[^*\n:]+(?::\*{1,2}|\*{1,2}\s*:)/;
+  const headingRe = /^#{1,6}\s/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     // Strip markdown formatting to get clean label: value
     // Handles: "- **Feature Description:** value", "**Label:** value", "Label: value"
     const cleaned = line.replace(/^\s*[-*]*\s*/, '').replace(/\*{1,2}/g, '').trim();
@@ -190,13 +301,37 @@ function extractField(block: string, labels: string[]): string {
     const lineLabel = cleaned.substring(0, colonIdx).trim().toLowerCase();
     const lineValue = cleaned.substring(colonIdx + 1).trim();
 
-    if (!lineValue) continue;
-
+    let matched = false;
     for (const target of lowerLabels) {
       if (lineLabel === target || lineLabel.includes(target) || target.includes(lineLabel)) {
-        return lineValue;
+        matched = true;
+        break;
       }
     }
+    if (!matched) continue;
+
+    // Form 1: inline single-line value — return it directly.
+    if (lineValue) return lineValue;
+
+    // Form 2: multi-line bulleted value — collect continuation lines
+    // until the next labeled bullet, the next heading, or end of block.
+    const collected: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j];
+      if (nextLabelRe.test(next)) break;
+      if (headingRe.test(next)) break;
+      collected.push(next);
+    }
+    // Trim leading/trailing blank lines while preserving inner blank lines.
+    while (collected.length > 0 && !collected[0].trim()) collected.shift();
+    while (collected.length > 0 && !collected[collected.length - 1].trim()) collected.pop();
+    if (collected.length === 0) return '';
+
+    // Normalise indent: drop the first 2 leading spaces from each bullet
+    // so the downstream MarkdownRenderer sees the list at column 0 and
+    // formats it as a proper top-level list inside the FeatureField.
+    const normalised = collected.map((l) => (l.startsWith('  ') ? l.slice(2) : l));
+    return normalised.join('\n').trim();
   }
   return '';
 }

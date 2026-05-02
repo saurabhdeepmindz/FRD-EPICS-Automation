@@ -33,6 +33,13 @@ export function FrdArtifactView({ artifact, activeFeatureId, onUpdated }: FrdArt
     const deliverable: typeof parsed.otherSections = [];
     const internal: typeof parsed.otherSections = [];
     for (const s of parsed.otherSections) {
+      // Skip sections whose body is empty/whitespace-only — they show as
+      // empty "click to expand" headers in the UI and add nothing for the
+      // reader. Common case: SKILL-01-S emits a top-level FRD title H1
+      // ("# Functional Requirements Document (FRD) — MOD-NN ...") with no
+      // body text before the next H2; the section parser still creates a
+      // section keyed off the heading, but len === 0.
+      if (!s.content?.trim()) continue;
       (isInternalSection(s.label) ? internal : deliverable).push(s);
     }
     return { deliverableSections: deliverable, internalSections: internal };
@@ -216,71 +223,56 @@ function FeatureCard({ feature, isActive, screens }: { feature: ParsedFeature; i
         </span>
       </button>
 
-      {/* Expanded feature details — matches PRD Generator feature card layout */}
+      {/* Expanded feature details — matches PRD Generator feature card layout.
+          All 9 attributes always render so users can see the full FRD shape;
+          when an attribute genuinely has no value the field shows "Not Applicable"
+          instead of being silently hidden. */}
       {expanded && (
         <div className="border-t border-border">
           {/* Description */}
-          {feature.description && (
-            <FeatureField label="Description" value={feature.description} />
-          )}
+          <FeatureField label="Description" value={feature.description || 'Not Applicable'} />
 
           {/* Screen Reference — show SCR-XX text plus actual screen thumbnails */}
-          {feature.screenRef && (
-            <div className="px-4 py-2.5 border-t border-border/50">
-              <span className="text-xs font-semibold text-muted-foreground">Screen Reference</span>
-              <div className="mt-1 text-sm text-foreground">
-                <MarkdownRenderer content={feature.screenRef} />
-              </div>
-              {referencedScreens.length > 0 && (
-                <div className="mt-3">
-                  <ScreensGallery screens={referencedScreens} compact />
-                </div>
-              )}
+          <div className="px-4 py-2.5 border-t border-border/50">
+            <span className="text-xs font-semibold text-muted-foreground">Screen Reference</span>
+            <div className="mt-1 text-sm text-foreground">
+              <MarkdownRenderer content={feature.screenRef || 'Not Applicable'} />
             </div>
-          )}
+            {referencedScreens.length > 0 && (
+              <div className="mt-3">
+                <ScreensGallery screens={referencedScreens} compact />
+              </div>
+            )}
+          </div>
 
           {/* Trigger */}
-          {feature.trigger && (
-            <FeatureField label="Trigger" value={feature.trigger} />
-          )}
+          <FeatureField label="Trigger" value={feature.trigger || 'Not Applicable'} />
 
           {/* Pre-conditions */}
-          {feature.preConditions && (
-            <FeatureField label="Pre-conditions" value={feature.preConditions} />
-          )}
+          <FeatureField label="Pre-conditions" value={feature.preConditions || 'Not Applicable'} />
 
           {/* Post-conditions */}
-          {feature.postConditions && (
-            <FeatureField label="Post-conditions" value={feature.postConditions} />
-          )}
+          <FeatureField label="Post-conditions" value={feature.postConditions || 'Not Applicable'} />
 
           {/* Business Rules */}
-          {feature.businessRules && (
-            <FeatureField label="Business Rules" value={feature.businessRules} />
-          )}
+          <FeatureField label="Business Rules" value={feature.businessRules || 'Not Applicable'} />
 
           {/* Validations */}
-          {feature.validations && (
-            <FeatureField label="Validations" value={feature.validations} />
-          )}
+          <FeatureField label="Validations" value={feature.validations || 'Not Applicable'} />
 
-          {/* Integration Signals */}
-          {feature.integrationSignals && (
-            <div className="px-4 py-2.5 border-t border-border/50">
-              <span className="text-xs font-semibold text-muted-foreground">Integration Signals</span>
-              <div className={cn(
-                'mt-1 text-sm',
-                feature.integrationSignals.includes('TBD-Future') ? 'text-amber-700 bg-amber-50 rounded px-2 py-1' : 'text-foreground',
-              )}>
-                <MarkdownRenderer content={feature.integrationSignals} />
-              </div>
+          {/* Integration Signals — preserves TBD-Future amber highlighting */}
+          <div className="px-4 py-2.5 border-t border-border/50">
+            <span className="text-xs font-semibold text-muted-foreground">Integration Signals</span>
+            <div className={cn(
+              'mt-1 text-sm',
+              (feature.integrationSignals || '').includes('TBD-Future') ? 'text-amber-700 bg-amber-50 rounded px-2 py-1' : 'text-foreground',
+            )}>
+              <MarkdownRenderer content={feature.integrationSignals || 'Not Applicable'} />
             </div>
-          )}
+          </div>
 
           {/* Acceptance Criteria */}
-          {feature.acceptanceCriteria && (
-            <FeatureField label="Acceptance Criteria" value={feature.acceptanceCriteria} />
-          )}
+          <FeatureField label="Acceptance Criteria" value={feature.acceptanceCriteria || 'Not Applicable'} />
         </div>
       )}
     </div>
