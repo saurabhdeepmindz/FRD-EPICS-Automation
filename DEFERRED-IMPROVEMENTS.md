@@ -6,6 +6,38 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
+## 0. Harden SKILL-05 with the same 3-layer defense applied to SKILL-02-S and SKILL-04 (Option B)
+
+**Symptom:** SKILL-05 produces correct SubTasks for MOD-05 (63 stories → 276 BaSubTask, 21/21 RTM linked) and MOD-06 (in-flight at time of writing) under the current per-story append-mode loop. However, the skill is **not yet hardened** to the 3-layer defense standard now applied to SKILL-02-S (PR #3) and SKILL-04 (PR #4):
+
+| Defense layer                                     | SKILL-02-S                   | SKILL-04                                | **SKILL-05**                                  |
+| ------------------------------------------------- | ---------------------------- | --------------------------------------- | --------------------------------------------- |
+| Prompt — Forbidden Patterns + self-check          | ✅                           | ✅                                      | ❌                                            |
+| Orchestrator — focus override re-stating contract | n/a (single-shot)            | ✅ `callAiServiceSkill04PerFeature`     | ❌ per-story loop has no `wrapSkill05Prompt`  |
+| Post-emission validator (fails exec on drift)     | ✅ `validateSkill02SOutput`  | ✅ `validateSkill04Output`              | ❌ NONE                                       |
+
+**Why it matters:** Today's runs work because the LLM happens to honour the prompt's heading-depth rules. If a future run drifts — emits `###` instead of `####` for a Section 16 heading inside a SubTask body, or drops one of the 24 numbered sections — the parser would explode the SubTask into fragmented DB rows or quietly skip a section, and we'd only catch it at the checklist stage (or worse, downstream in SKILL-06-LLD / SKILL-07-FTC which read those sections).
+
+**Scope (mirror SKILL-04 PR #4):**
+
+1. **Prompt hardening** — `Screen-FRD-EPICS-Automation-Skills/FINAL-SKILL-05-create-subtasks-v2.md`
+   - Add explicit "Forbidden Patterns" block listing the simplified-narrative shape, `###`-instead-of-`####` collisions, missing numbered sections.
+   - Add "Self-check before responding" step (count `#### Section N` markers per SubTask; verify all 24 present).
+
+2. **Orchestrator wrapper** — new `wrapSkill05Prompt` invoked from `executeSkill05ForStory` (lines ~1927+ of `ba-skill-orchestrator.service.ts`). Re-states the validator contract + heading-depth + forbidden patterns at the top of each per-story call, mirroring the SKILL-04 focus override.
+
+3. **Post-emission validator** — new `validateSkill05Output` invoked from `runSkillAsync` Step 5d (after `aiResponse` is materialized but before AWAITING_REVIEW transition). For each `## ST-USNNN-TEAM-NN` block, count `#### Section N` markers 1..24 — fail the exec as `FAILED` if any SubTask is missing required sections.
+
+4. **Checklist additions** — `scripts/checklists/skill-05.ts` already covers RTM linkage and BaSubTask count. Add a per-SubTask 24-section coverage check that iterates `BaArtifactSection` rows by `sectionKey ^st_us\d{3,}_` and counts `#### Section N` in each row's content.
+
+**Acceptance criteria:** SKILL-05 cascade for MOD-04 (sync-sweep) + a fresh re-run on MOD-06 produces 7/7 + 24-section per-SubTask coverage 100%.
+
+**First seen on:** SKILL-04 hardening landed via PR #4 (2026-05-02); SKILL-05 was deliberately left as Option C (defer hardening, accept current state since both MOD-05 and MOD-06 produced clean SubTask data).
+
+**Risk:** None on current MOD-05/MOD-06 data. Hardening only blocks divergent FUTURE runs.
+
+---
+
 ## 1. Word/PDF export formatting parity with preview view
 
 **Symptom:** When a user generates a Word (.docx) or PDF export of an FRD/EPIC/User Story/SubTask artifact, the document layout differs noticeably from the in-app preview view. Cover page styling, fonts, section spacing, color theme, and overall presentation are not as polished as the preview.
