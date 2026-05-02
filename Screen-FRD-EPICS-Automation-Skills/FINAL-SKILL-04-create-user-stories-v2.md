@@ -128,9 +128,154 @@ Also read the FRD Handoff Packet JSON for the current module to access Feature-l
 
 ---
 
-### Step 3: Write Each User Story — All 26 Sections
+### Step 3: Write Each User Story — All 27 Sections
 
 Open `Master-Documents/UserStory-Template.md`. Fill ALL sections.
+
+---
+
+#### Hard Rules — non-negotiable canonical 27-section structure
+
+The output of this skill is **one structured user story per FRD feature × story type, each following the EXACT 27-section template defined below**. Downstream skills (SKILL-05 SubTasks, SKILL-06-LLD, SKILL-07-FTC), the artifact tree, the orchestrator's `validateSkill04Output`, and the SubTask parser all depend on this exact shape. The simplified `Story Name + Narrative + Acceptance Criteria` shape that some past runs emitted (observed on MOD-05's 67 stories) is a **hard validator failure**.
+
+**MANDATORY structural contract — every user story MUST emit ALL 27 numbered section headings in order, each as a `**N. Label**` bold heading:**
+
+```markdown
+## US-NNN — [Story Name]
+
+**Header**
+- User Story ID: US-NNN
+- EPIC ID: EPIC-NN
+- Sprint: <N or TBD>
+- Status: CONFIRMED | CONFIRMED-PARTIAL | DRAFT
+- Created: <date>
+- Updated: <date>
+
+**1. User Story ID**
+- US-NNN
+
+**2. User Story Name**
+- [Short capability title]
+
+**3. User Story Description (Goal)**
+As a [actor], I want to [action], so that [benefit].
+
+**4. Module Reference**
+- MOD-NN — [Module Name] — [package_name]
+
+**5. FRD Feature Reference**
+- F-NN-NN — [Feature Name] ([CONFIRMED | CONFIRMED-PARTIAL — TBD-NNN])
+
+**6. EPIC Reference**
+- EPIC-NN — [EPIC Name]
+
+**7. User Story Type**
+- Frontend | Backend | Integration
+
+**8. User Story Status**
+- CONFIRMED | CONFIRMED-PARTIAL | DRAFT
+
+**9. Trigger**
+- [What event initiates this story]
+
+**10. Actor(s)**
+- [Human role only — never "system"]
+
+**11. Primary Flow**
+1. [Step 1]
+2. [Step 2 — TBD-Future steps marked clearly]
+... (all numbered 1..N)
+
+**12. Alternate / Exception Flows**
+- [Scenario 1] — [behaviour]
+- [Scenario 2] — [behaviour]
+
+**13. StateChart**
+- States: [State A → State B → ...]
+- Transitions: [trigger → state]
+
+**14. Screen Reference**
+- SCR-NN — [Screen Title]
+- Components: [ComponentA, ComponentB]
+
+**15. Display Field Types**
+- [Field name]: [type] — [source: API | static | computed]
+- ...
+
+**16. Primary Class Name**
+- [ClassName] (Frontend: ComponentName; Backend: ServiceName; Integration: ClientName)
+
+**17. API Contract** *(Backend / Integration only — Frontend stories may write `N/A — UI-only`)*
+- Input: [argument name: type] (constraints)
+- Process: [1-line summary]
+- Output: [return type / shape]
+- HTTP: [METHOD /path] (Backend only)
+
+**18. Database Entities**
+- [TableName] — [read | write] — key fields: [field1, field2]
+
+**19. Business Rules**
+- BR-NN: [Rule description]
+
+**20. Validations**
+- [Field]: [rule] — [error message]
+
+**21. Integrations**
+- [System Name] [CONFIRMED | TBD-Future TBD-NNN] — [Assumed Method] → [Assumed Return]
+
+**22. Algorithm Outline**
+1. [Step 1]
+2. [Step 2 — TBD-Future steps marked]
+... (numbered 1..N)
+
+**23. Error Handling Outline**
+- [ExceptionName]: [trigger condition] — [fallback behaviour]
+
+**24. Acceptance Criteria**
+- AC-NN: Given [precondition], When [action], Then [outcome]
+
+**25. Source File Reference**
+- [path/to/file.ts] (or path expected once code is generated)
+
+**26. Traceability Header Content**
+
+    /* TRACEABILITY */
+    * Module:   MOD-NN
+    * Feature:  F-NN-NN
+    * Epic:     EPIC-NN
+    * Story:    US-NNN
+    * Screen:   SCR-NN
+    * TBD-Future: TBD-NNN (if any)
+    */
+
+**27. SubTasks**
+- ST-USNNN-FE-01 — [SubTask title] (high-level only — full detail in SKILL-05)
+- ST-USNNN-BE-01 — ...
+
+**Revision History**
+- v1: Initial — [date]
+```
+
+**Hard rules:**
+
+1. Every section heading MUST be `**N. Label**` (bold, with the section number, period, space, label) — bullet content follows below the heading.
+2. All 27 sections MUST appear, in order, in every user story. The "Header" prefix block + "Revision History" suffix are also required.
+3. No skipping: if a section is genuinely not applicable, write `- N/A — [one-line reason]` as the body. Bare `TBD` / empty bullets / blank sections are validator failures.
+4. Each user story is identified by `## US-NNN — Story Name` at H2 level. Per-feature group headings are `## User Stories for F-NN-NN` at H2 also.
+
+#### FORBIDDEN PATTERNS — these will hard-fail the validator
+
+The simplified narrative shape that MOD-05's run produced is the failure mode. Do NOT emit any user story in any of these shapes:
+
+- ❌ Only 3-5 numbered fields (`1. **Story Name**`, `2. **Narrative**`, `3. **Acceptance Criteria**`) — this is a story summary, not the 27-section spec.
+- ❌ Skipping Section 4 (Module Reference), Section 5 (FRD Feature Reference), Section 6 (EPIC Reference), or Section 8 (User Story Status) — these are RTM-critical and downstream skills require them.
+- ❌ Skipping Section 17 (API Contract), Section 21 (Integrations), Section 22 (Algorithm Outline), Section 25 (Source File Reference), Section 26 (Traceability Header) — these feed SKILL-05/06/07 and Frontend stories must still emit them with `N/A — UI-only` rather than omitting.
+- ❌ Replacing the `## US-NNN — Name` heading with `## User Story: US-NNN`, `### US-NNN`, or other variants — the parser splits on `## US-`.
+- ❌ Producing a bullet list of stories without per-story detail (the "feature list" antipattern). Every US-NNN gets its own full 27-section block.
+
+If you find yourself writing a 5-section "summary" version of a story, STOP — that's the failure mode. The user story is a structured spec, not a narrative paragraph.
+
+---
 
 **Critical mapping rules for LLD generation — apply before writing any section:**
 
@@ -386,6 +531,13 @@ Project-Documents/RTM/Module-FRD-EPIC-Screen-UserStory-RTM-[ProjectCode].md
 - [ ] All Backend stories have an Algorithm Outline (min 5 steps)
 - [ ] All stories have an Error Handling Outline
 - [ ] All 27 User Story template sections completed
+
+**Canonical structure (MANDATORY — orchestrator validator hard-fails on violations):**
+- [ ] Each user story heading is `## US-NNN — <Name>` at H2 level
+- [ ] Each story body has `**1. User Story ID**` through `**27. SubTasks**` headings, in order, each as `**N. Label**` bold lines
+- [ ] No story uses the simplified narrative shape (`1. **Story Name**` + `2. **Narrative**` + `3. **Acceptance Criteria**` only)
+- [ ] Section 4 (Module Reference), Section 5 (FRD Feature Reference), Section 6 (EPIC Reference), Section 8 (User Story Status) are populated for every story (RTM-critical)
+- [ ] Frontend stories that don't have an API/algorithm still emit Sections 17 / 21 / 22 / 25 with `N/A — UI-only` rather than omitting the heading
 
 **TBD-Future:**
 - [ ] Every TBD-Future integration in Section 21 fully documented (no bare "TBD" entries)
