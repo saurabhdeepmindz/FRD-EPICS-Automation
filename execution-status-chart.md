@@ -97,7 +97,7 @@ Sourced from `BaModule.moduleStatus` + APPROVED `BaSkillExecution` rows as of la
 | MOD-03     | APPROVED           | ✅       | ✅               | ✅                | ✅                    | ✅                 | ❌           | ❌           | Pre-hardening data; sync-sweep deferred                                           |
 | MOD-04     | EPICS_COMPLETE     | ✅       | ✅               | ✅                | ✅ (legacy)           | ✅ (legacy 7/15 RTM linkage) | ❌  | ❌           | SKILL-05 only 47% RTM-linked; rerun deferred for sync-sweep                       |
 | **MOD-05** | **APPROVED**       | ✅       | ✅               | ✅ (PR #3)        | ✅ (PR #4 — 63 stories, 27/27 sections each) | ✅ (276 SubTasks, 21/21 RTM) | ❌  | ❌  | Fully aligned with current hardened pipeline                                      |
-| **MOD-06** | STORIES_COMPLETE   | ✅       | ✅               | ✅ (PR #3)        | ✅ (PR #4 — 27 stories, 27/27 sections each) | (in-flight)        | ❌           | ❌           | Validation module for SKILL-04 hardening; SKILL-05 about to fire (Option C)       |
+| **MOD-06** | **APPROVED**       | ✅       | ✅               | ✅ (PR #3)        | ✅ (PR #4 — 27 stories, 27/27 sections each) | ✅ (131 SubTasks, 8/9 RTM linked) | ❌    | ❌           | Fully aligned with current hardened pipeline; validation module for SKILL-04+05  |
 
 Legend:
 
