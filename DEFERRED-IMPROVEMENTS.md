@@ -6,6 +6,31 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
+## -1. MOD-04 FTC artifact — patch OWASP coverage gap via mode-2b backfill
+
+**Symptom:** MOD-04's FTC artifact (`status=DRAFT`, 16 sections, 180 `BaTestCase` rows) was generated on 2026-04-25, **before** the per-mode SKILL-07 orchestrator (mode 2 / 2b / 2c / 3) existed. As a result it has uneven coverage:
+
+- Only **18 / 180 TCs (10%)** carry an OWASP tag — well below what mode-2b's per-category pass produces for a new module.
+- **0 `BaSkillExecution` rows** — the artifact was produced via a legacy single-shot path (or seeded), not via the current append-mode pipeline. The trace of *which mode produced what* is missing.
+- Status is **DRAFT** — never approved through `POST /api/ba/artifacts/:id/approve`.
+- Created when mode-2c (per-feature white-box) didn't exist either; the 82 white-box TCs in there came from a different code path with the same structural shape but unverified per-category coverage.
+
+**Why it matters:** When MOD-05 / MOD-06 (and any new module) run `executeSkill07Complete`, mode-2b explicitly produces 8-15 TCs per missing OWASP / UI / Performance / Accessibility category. New modules will have richer coverage matrices than MOD-04 — making MOD-04 inconsistent with the rest of the portfolio.
+
+**Scope (low-risk, additive only):**
+
+1. Run `POST /api/ba/modules/:MOD-04-id/execute/SKILL-07-FTC/category/Security` (and similarly for `UI`, `Performance`, `Accessibility`, `Smoke`, `Regression` — whichever appear in `listMissingCategoriesForCoverage(MOD-04-id)`).
+2. The orchestrator's `executeSkill07ForCategory` is idempotent — it skips any category that already has at least one TC. So categories already covered (e.g. Functional, Integration which MOD-04 has) are no-ops.
+3. After mode-2b backfill, optionally run mode 3 (`POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative`) to refresh §10 OWASP Web Coverage Matrix with the new TC IDs.
+
+**Risk:** None. All operations are additive — no existing TCs are deleted or modified. The 180 existing TCs stay as-is; only new category-prefixed TCs (TC-SEC-NNN, TC-UI-NNN, etc.) get appended.
+
+**Acceptance:** After backfill, MOD-04's `BaTestCase.owaspCategory` non-null count rises from 18 to roughly the same percentage as MOD-05/06 produce on a clean run.
+
+**First identified on:** 2026-05-04 — during the SKILL-07 alignment review prior to running the cascade for MOD-05.
+
+---
+
 ## 0. Harden SKILL-05 with the same 3-layer defense applied to SKILL-02-S and SKILL-04 (Option B)
 
 **Symptom:** SKILL-05 produces correct SubTasks for MOD-05 (63 stories → 276 BaSubTask, 21/21 RTM linked) and MOD-06 (in-flight at time of writing) under the current per-story append-mode loop. However, the skill is **not yet hardened** to the 3-layer defense standard now applied to SKILL-02-S (PR #3) and SKILL-04 (PR #4):
