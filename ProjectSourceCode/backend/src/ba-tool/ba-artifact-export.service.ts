@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
+  BorderStyle,
   Document,
   HeadingLevel,
   ImageRun,
@@ -11,7 +12,15 @@ import {
   TableRow,
   WidthType,
   AlignmentType,
+  ShadingType,
 } from 'docx';
+import {
+  COLORS,
+  DOCX_FONT_HALF_PTS,
+  DOCX_TABLE_CELL_PADDING_TWIPS,
+  buildDocxStyles,
+  statusKindFor,
+} from './templates/artifact-style';
 
 interface MermaidImage {
   buffer: Buffer;
@@ -30,6 +39,19 @@ import {
 // SVG is supported by docx but requires a PNG fallback buffer; screens are
 // always uploaded as raster, so we keep the union tight.
 type DocxImageType = 'png' | 'jpg' | 'gif' | 'bmp';
+
+// Cover-page eyebrow text per artifact type. Mirrors the
+// ARTIFACT_TYPE_LABELS map in templates/artifact-html.ts so the cover
+// reads the same on PDF and DOCX.
+const ARTIFACT_TYPE_LABELS_DOCX: Record<string, string> = {
+  FRD: 'Functional Requirements Document',
+  EPIC: 'EPIC',
+  USER_STORY: 'User Story',
+  SUBTASK: 'SubTask',
+  SCREEN_ANALYSIS: 'Screen Analysis',
+  LLD: 'Low-Level Design',
+  FTC: 'Functional Test Cases',
+};
 
 @Injectable()
 export class BaArtifactExportService {
@@ -277,36 +299,8 @@ export class BaArtifactExportService {
 
     const children: Array<Paragraph | Table> = [];
 
-    // Title page
-    const projectLabel = doc.project.productName?.trim() || doc.project.name;
-    children.push(new Paragraph({
-      text: `${projectLabel} — ${doc.artifactType.replace(/_/g, ' ')}`,
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-    }));
-    children.push(new Paragraph({ text: doc.artifactId, alignment: AlignmentType.CENTER }));
-    children.push(new Paragraph({
-      text: `Module: ${doc.module.moduleId} — ${doc.module.moduleName}`,
-      alignment: AlignmentType.CENTER,
-    }));
-    children.push(new Paragraph({
-      text: `Project: ${doc.project.projectCode}`,
-      alignment: AlignmentType.CENTER,
-    }));
-    if (doc.project.clientName) {
-      children.push(new Paragraph({
-        text: `Client: ${doc.project.clientName}`,
-        alignment: AlignmentType.CENTER,
-      }));
-    }
-    children.push(new Paragraph({ text: '' }));
-    children.push(new Paragraph({ text: '' }));
-
-    // Embed the per-module screen catalog right after the title page so the
-    // customer can correlate every SCR-NN reference in the body with the
-    // actual wireframe image. Only emitted for the artifact types where
-    // screens are meaningful (EPIC / User Story / FTC / FRD / SubTask).
-    this.appendScreensSection(children, doc);
+    // ─── Cover page (matches HTML cover via shared style tokens) ───────
+    this.appendCoverPage(children, doc);
 
     // Sort sections by displayOrder then createdAt for stable output.
     const sorted = [...doc.sections].sort((a, b) => {
@@ -315,6 +309,15 @@ export class BaArtifactExportService {
       const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return at - bt;
     });
+
+    // ─── Static Table of Contents (mirrors the HTML nested TOC) ─────────
+    this.appendTableOfContents(children, sorted);
+
+    // Embed the per-module screen catalog right after the TOC so the
+    // customer can correlate every SCR-NN reference in the body with the
+    // actual wireframe image. Only emitted for the artifact types where
+    // screens are meaningful (EPIC / User Story / FTC / FRD / SubTask).
+    this.appendScreensSection(children, doc);
 
     // Same screen list used for inline reference enrichment in the body —
     // every bare `SCR-NN` is rewritten to `SCR-NN — Title` so the Word doc
@@ -329,7 +332,14 @@ export class BaArtifactExportService {
         text: section.sectionLabel || section.sectionKey.replace(/_/g, ' '),
         heading: HeadingLevel.HEADING_1,
       }));
-      for (const node of this.markdownBlocksToDocx(body, mermaidImages)) {
+      const blocks = this.markdownBlocksToDocx(body, mermaidImages);
+      // Per-feature inline screens (DEFERRED-IMPROVEMENTS item #2): walks
+      // the markdown for `^####? F-XX-YY:` headings + `Screen Reference:
+      // SCR-NN` and splices the screen image right after each feature
+      // heading paragraph. Pure post-pass on `blocks` so the markdown
+      // converter stays simple.
+      const blocksWithScreens = this.injectFeatureScreensDocx(blocks, body, doc.module.screens ?? []);
+      for (const node of blocksWithScreens) {
         children.push(node);
       }
       children.push(new Paragraph({ text: '' }));
@@ -338,11 +348,361 @@ export class BaArtifactExportService {
     const document = new Document({
       creator: 'BA Tool',
       title: doc.artifactId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      styles: buildDocxStyles() as any,
       description: `${doc.artifactType} for module ${doc.module.moduleId}`,
       sections: [{ children }],
     });
 
     return Packer.toBuffer(document);
+  }
+
+  // ─── Document-structure helpers ────────────────────────────────────────
+
+  /**
+   * Build the cover page using a 1-cell layout table so the centered block
+   * mirrors the HTML cover's visual weight (eyebrow / title / accent rule /
+   * KV grid / status). docx headings + paragraph borders give us the brand
+   * accent line without the html-docx-js fragility we used to depend on.
+   */
+  private appendCoverPage(children: Array<Paragraph | Table>, doc: BaArtifactDoc): void {
+    const productName = doc.project.productName?.trim() || doc.project.name;
+    const typeLabel = ARTIFACT_TYPE_LABELS_DOCX[doc.artifactType] ?? doc.artifactType.replace(/_/g, ' ');
+
+    // Eyebrow (artifact type label, all-caps, muted).
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 800, after: 80 },
+      children: [
+        new TextRun({
+          text: typeLabel.toUpperCase(),
+          size: DOCX_FONT_HALF_PTS.coverEyebrow,
+          color: COLORS.muted,
+          characterSpacing: 60, // ≈ 0.18em letter spacing in docx (units = 1/20 pt)
+        }),
+      ],
+    }));
+
+    // Big title (artifact ID).
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 0, after: 80 },
+      children: [
+        new TextRun({
+          text: doc.artifactId,
+          size: DOCX_FONT_HALF_PTS.coverTitle,
+          bold: true,
+          color: COLORS.text,
+        }),
+      ],
+    }));
+
+    // Accent divider — short bottom-bordered empty paragraph mirroring
+    // the HTML cover's 72×3 px orange rule.
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 120, after: 280 },
+      border: {
+        bottom: { color: COLORS.accent, space: 1, style: BorderStyle.SINGLE, size: 18 },
+      },
+      // Extra padding so the bottom border floats clear of any text below.
+      children: [new TextRun({ text: '          ' })],
+    }));
+
+    // KV table: 2 columns, no outer border (cell borders only on bottom for
+    // a soft separator). Mirrors the <dl> grid in HTML.
+    const kvRows: Array<[string, string]> = [
+      ['Product Name', productName],
+      ['Project Code', doc.project.projectCode],
+      ['Module', `${doc.module.moduleId} — ${doc.module.moduleName}`],
+      ['Client Name', doc.project.clientName ?? '—'],
+      ['Submitted By', doc.project.submittedBy ?? '—'],
+      ['Date', this.formatHumanDate(doc.updatedAt)],
+      ['Status', doc.status.replace(/_/g, ' ')],
+    ];
+    children.push(this.buildCoverKvTable(kvRows, doc.status));
+
+    // Manual page break so the cover stays on its own page.
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 0 },
+      children: [new TextRun({ text: '', break: 1 })],
+      pageBreakBefore: false,
+    }));
+  }
+
+  private buildCoverKvTable(rows: Array<[string, string]>, status: string): Table {
+    const C = COLORS;
+    const cellPadding = { top: DOCX_TABLE_CELL_PADDING_TWIPS, bottom: DOCX_TABLE_CELL_PADDING_TWIPS, left: DOCX_TABLE_CELL_PADDING_TWIPS, right: DOCX_TABLE_CELL_PADDING_TWIPS };
+    const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' };
+    const softBottom = { style: BorderStyle.SINGLE, size: 4, color: C.borderSoft };
+    const cellBorders = { top: noBorder, left: noBorder, right: noBorder, bottom: softBottom };
+
+    const tableRows = rows.map(([k, v], idx) => {
+      const isStatus = k === 'Status';
+      const valueRuns: TextRun[] = isStatus
+        ? [new TextRun({
+            text: ` ${v} `,
+            size: DOCX_FONT_HALF_PTS.coverDl,
+            bold: true,
+            color: this.statusFg(status),
+            shading: { type: ShadingType.SOLID, color: this.statusBg(status), fill: this.statusBg(status) },
+          })]
+        : [new TextRun({
+            text: v,
+            size: DOCX_FONT_HALF_PTS.coverDl,
+            color: C.text,
+          })];
+      return new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 35, type: WidthType.PERCENTAGE },
+            margins: cellPadding,
+            borders: cellBorders,
+            children: [new Paragraph({
+              children: [new TextRun({
+                text: `${k}:`,
+                size: DOCX_FONT_HALF_PTS.coverDl,
+                color: C.muted,
+                bold: false,
+              })],
+            })],
+          }),
+          new TableCell({
+            width: { size: 65, type: WidthType.PERCENTAGE },
+            margins: cellPadding,
+            borders: cellBorders,
+            children: [new Paragraph({ children: valueRuns })],
+          }),
+        ],
+      });
+    });
+
+    return new Table({
+      width: { size: 80, type: WidthType.PERCENTAGE },
+      alignment: AlignmentType.CENTER,
+      rows: tableRows,
+    });
+  }
+
+  private statusBg(status: string): string {
+    const k = statusKindFor(status);
+    if (k === 'approved') return COLORS.statusApprovedBg;
+    if (k === 'partial') return COLORS.statusPartialBg;
+    if (k === 'confirmed') return COLORS.statusConfirmedBg;
+    return COLORS.statusDraftBg;
+  }
+  private statusFg(status: string): string {
+    const k = statusKindFor(status);
+    if (k === 'approved') return COLORS.statusApprovedFg;
+    if (k === 'partial') return COLORS.statusPartialFg;
+    if (k === 'confirmed') return COLORS.statusConfirmedFg;
+    return COLORS.statusDraftFg;
+  }
+
+  private formatHumanDate(d: string | Date | null | undefined): string {
+    if (!d) return '—';
+    const date = typeof d === 'string' ? new Date(d) : d;
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  /**
+   * Static Table of Contents — mirrors the HTML nested TOC. Each section
+   * gets a bold entry; inner headings (markdown ## / ### / #### inside
+   * the section body) are emitted as indented italic entries. We don't
+   * use docx's TableOfContents() field because that requires Word to
+   * recalculate fields on open, which not every renderer does reliably
+   * (e.g. LibreOffice / Pages).
+   */
+  private appendTableOfContents(
+    children: Array<Paragraph | Table>,
+    sortedSections: BaArtifactDoc['sections'],
+  ): void {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      text: 'Table of Contents',
+      spacing: { before: 240, after: 160 },
+    }));
+
+    sortedSections.forEach((section, idx) => {
+      // Top-level entry.
+      children.push(new Paragraph({
+        spacing: { before: 60, after: 60 },
+        children: [new TextRun({
+          text: `${idx + 1}. ${section.sectionLabel || section.sectionKey.replace(/_/g, ' ')}`,
+          bold: true,
+          size: DOCX_FONT_HALF_PTS.body,
+          color: COLORS.text,
+        })],
+      }));
+
+      // Inner headings — extract from this section's markdown body.
+      const body = (section.isHumanModified && section.editedContent) ? section.editedContent : section.content;
+      if (!body) return;
+      const inner = this.extractInnerHeadingsForToc(body);
+      for (const ih of inner) {
+        children.push(new Paragraph({
+          // Indent matches the HTML toc-child / toc-grandchild visual rhythm.
+          indent: { left: ih.depth === 2 ? 360 : 720 },
+          spacing: { before: 20, after: 20 },
+          children: [new TextRun({
+            text: ih.text,
+            size: DOCX_FONT_HALF_PTS.caption,
+            color: COLORS.muted,
+            italics: ih.depth === 3,
+          })],
+        }));
+      }
+    });
+
+    // Page break after TOC so sections start on a fresh page.
+    children.push(new Paragraph({
+      pageBreakBefore: false,
+      spacing: { before: 200, after: 0 },
+      children: [new TextRun({ text: '', break: 1 })],
+    }));
+  }
+
+  /**
+   * Mirrors the extractInnerHeadings helper in artifact-html.ts but without
+   * generating slugs (DOCX TOC entries don't hyperlink — they're informational).
+   * Skips headings inside fenced code blocks; normalises depth so the
+   * shallowest heading depth in a section becomes "depth 2".
+   */
+  private extractInnerHeadingsForToc(md: string): Array<{ text: string; depth: 2 | 3 }> {
+    const lines = md.split(/\r?\n/);
+    let inFence = false;
+    const collected: Array<{ text: string; rawLevel: number }> = [];
+    for (const raw of lines) {
+      const t = raw.trim();
+      if (/^```/.test(t)) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      const m = /^(#{1,6})\s+(.*)$/.exec(t);
+      if (!m) continue;
+      collected.push({ text: m[2].trim(), rawLevel: m[1].length });
+    }
+    if (collected.length === 0) return [];
+    const minRaw = Math.min(...collected.map((c) => c.rawLevel));
+    return collected
+      .map((c) => ({ text: c.text, depth: (c.rawLevel === minRaw ? 2 : 3) as 2 | 3 }))
+      .slice(0, 50);
+  }
+
+  /**
+   * After markdownBlocksToDocx renders a section into Paragraph/Table blocks,
+   * walk the markdown source for `^####? F-XX-YY:` feature headings + their
+   * `Screen Reference: SCR-NN` line, and splice the screen image right after
+   * the matching heading paragraph in the blocks array.
+   *
+   * Matching strategy: find the index of the paragraph whose plain text
+   * starts with `F-XX-YY:` (heading paragraphs from markdown headings carry
+   * the heading text as their first run). For each match insert an
+   * ImageRun-bearing paragraph immediately after.
+   */
+  private injectFeatureScreensDocx(
+    blocks: Array<Paragraph | Table>,
+    rawMarkdown: string,
+    screens: Array<{ screenId: string; screenTitle: string; screenType: string | null; fileData: string }>,
+  ): Array<Paragraph | Table> {
+    if (screens.length === 0 || !rawMarkdown) return blocks;
+    const screenById = new Map(screens.map((s) => [s.screenId, s]));
+
+    // Walk the markdown source to learn which feature ID maps to which screen.
+    const lines = rawMarkdown.split(/\r?\n/);
+    const featureToScreen = new Map<string, string>();
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^#{2,4}\s+(F-\d+-\d+):/i.exec(lines[i].trim());
+      if (!m) continue;
+      const featureId = m[1].toUpperCase();
+      const startDepth = (lines[i].match(/^#+/) ?? [''])[0].length;
+      for (let j = i + 1; j < Math.min(lines.length, i + 60); j++) {
+        const nextHash = /^(#{1,6})\s/.exec(lines[j].trim());
+        if (nextHash && nextHash[1].length <= startDepth) break;
+        const sm = /Screen\s+Reference[\s*_:]*\s*(SCR-\d+)/i.exec(lines[j]);
+        if (sm) {
+          featureToScreen.set(featureId, sm[1].toUpperCase());
+          break;
+        }
+      }
+    }
+
+    if (featureToScreen.size === 0) return blocks;
+
+    const out: Array<Paragraph | Table> = [];
+    for (const block of blocks) {
+      out.push(block);
+      const headingFid = this.extractFeatureIdFromHeadingBlock(block);
+      if (!headingFid) continue;
+      const screenId = featureToScreen.get(headingFid);
+      if (!screenId) continue;
+      const screen = screenById.get(screenId);
+      if (!screen) continue;
+      // Caption (e.g. SCR-01 — Order Document List), then the image itself.
+      out.push(new Paragraph({
+        spacing: { before: 80, after: 40 },
+        children: [
+          new TextRun({
+            text: `${screen.screenId} — ${screen.screenTitle}`,
+            size: DOCX_FONT_HALF_PTS.caption,
+            font: 'Consolas',
+            color: COLORS.idRefFg,
+            shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+          }),
+        ],
+      }));
+      const decoded = this.decodeScreenImage(screen.fileData);
+      if (decoded) {
+        try {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 160 },
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 460),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed inline screen embed ${screen.screenId}: ${(err as Error).message}`);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Inspect a Paragraph block produced by markdownBlocksToDocx and decide
+   * whether it's a heading whose first text starts with an `F-XX-YY:`
+   * feature ID. Returns the upper-cased feature ID or null.
+   *
+   * Tables can never be feature headings, so they're skipped.
+   */
+  private extractFeatureIdFromHeadingBlock(block: Paragraph | Table): string | null {
+    if (block instanceof Table) return null;
+    // The Paragraph instance doesn't expose its run text via public API in
+    // docx 9.x. Read the JSON-serialised representation; OOXML attribute
+    // names are stable across versions.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json = (block as any)?.options ?? (block as any)?.root ?? null;
+    // Fast-path: most heading blocks pass the `text` shorthand at construction.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const directText: string | undefined = (block as any)?.options?.text ?? (block as any)?.text;
+    if (typeof directText === 'string') {
+      const m = /^(F-\d+-\d+):/i.exec(directText.trim());
+      if (m) return m[1].toUpperCase();
+    }
+    if (json && Array.isArray(json)) {
+      for (const child of json) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const t: string | undefined = (child as any)?.options?.text ?? (child as any)?.text;
+        if (typeof t === 'string') {
+          const m = /^(F-\d+-\d+):/i.exec(t.trim());
+          if (m) return m[1].toUpperCase();
+        }
+      }
+    }
+    return null;
   }
 
   /**
