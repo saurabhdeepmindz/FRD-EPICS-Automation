@@ -19,6 +19,7 @@
  * consume it — the shape mirrors `PrdAuditLog` deliberately.
  */
 import { buildArtifactCss, statusKindFor } from './artifact-style';
+import { restructureFrdDoc } from './frd-restructure';
 
 export interface BaSectionLite {
   id: string;
@@ -636,7 +637,12 @@ function injectFeatureScreens(
 
 // ─── Top-level renderer ─────────────────────────────────────────────────────
 
-export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
+export function generateBaArtifactHtml(input: BaArtifactDoc): string {
+  // FRD pilot (`feat/export-parity-frd-pilot`): rewrite FRD section content
+  // into the canonical Editor-shape before rendering so the TOC nests under
+  // `<artifactId> — <moduleName>` and per-feature screen thumbnails resolve
+  // reliably. No-op for all other artifact types.
+  const doc = restructureFrdDoc(input);
   const typeLabel = ARTIFACT_TYPE_LABELS[doc.artifactType] ?? doc.artifactType;
   const productName = doc.project.productName || doc.project.name;
   const sections = [...doc.sections].sort((a, b) => a.displayOrder - b.displayOrder);
@@ -680,8 +686,12 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
     })
     .join('\n');
 
-  // Document history: one row per section showing last update + AI/Human flag
-  const historyRows = sections
+  // Document history: one row per section showing last update + AI/Human flag.
+  // FRD pilot: source from the *original* sections so the history reflects
+  // the audit trail of every authored section rather than the synthetic
+  // canonical parent (which collapses every feature into one row).
+  const historySectionsSource = input.sections.length > 0 ? input.sections : sections;
+  const historyRows = historySectionsSource
     .filter((s) => s.isHumanModified || s.aiGenerated)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 50)

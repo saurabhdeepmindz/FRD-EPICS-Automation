@@ -13,6 +13,8 @@ import {
   WidthType,
   AlignmentType,
   ShadingType,
+  Bookmark,
+  InternalHyperlink,
 } from 'docx';
 import {
   COLORS,
@@ -34,6 +36,9 @@ import {
   enrichScreenReferences,
   type BaArtifactDoc,
 } from './templates/artifact-html';
+import { restructureFrdDoc } from './templates/frd-restructure';
+import { parseFrdContent, type ParsedFeature } from './templates/frd-parser';
+import { extractScreenIds } from './templates/screen-utils';
 
 // docx@9 ImageRun accepts these raster `type` values without a fallback.
 // SVG is supported by docx but requires a PNG fallback buffer; screens are
@@ -290,7 +295,19 @@ export class BaArtifactExportService {
    * as paragraphs + tables. Avoids html-docx-js' known failures on large
    * artifacts (150 KB+ of User Story content) and embedded base64 images.
    */
-  private async buildDocxFromDoc(doc: BaArtifactDoc): Promise<Buffer> {
+  private async buildDocxFromDoc(input: BaArtifactDoc): Promise<Buffer> {
+    // FRD pilot: parse features from the *original* input before
+    // restructuring so the dedicated per-feature renderer can emit
+    // bookmarked headings + inline screen images directly. Empty for
+    // non-FRD artifacts — those go through the generic markdown→DOCX
+    // path unchanged.
+    const frdFeatures = input.artifactType === 'FRD' ? this.parseFrdFeaturesFromDoc(input) : null;
+
+    // Same canonical restructure as the HTML/PDF path so the DOCX TOC,
+    // section headings, and standalone-section ordering stay aligned with
+    // PDF and the editor tree. No-op for non-FRD artifact types.
+    const doc = restructureFrdDoc(input);
+
     // Render any Mermaid diagrams to PNG up front so the DOCX shows real
     // swim-lane visuals instead of the source code. One Chromium instance is
     // reused across diagrams. If puppeteer is unavailable or rendering
@@ -310,8 +327,15 @@ export class BaArtifactExportService {
       return at - bt;
     });
 
-    // ─── Static Table of Contents (mirrors the HTML nested TOC) ─────────
-    this.appendTableOfContents(children, sorted);
+    // ─── Document History (own page, mirrors the HTML history block) ───
+    // Use the *original* sections — `restructureFrdDoc` collapses every
+    // FRD feature into a synthetic parent section, which would reduce the
+    // history to a single row. The original sections still carry the per-
+    // section edit timestamps + AI/Human flags the audit trail needs.
+    this.appendDocumentHistory(children, input.sections);
+
+    // ─── Table of Contents (own page, hyperlinks to bookmarked headings)
+    this.appendTableOfContents(children, sorted, frdFeatures);
 
     // Embed the per-module screen catalog right after the TOC so the
     // customer can correlate every SCR-NN reference in the body with the
@@ -324,20 +348,45 @@ export class BaArtifactExportService {
     // reads fluently without forcing a flip back to the screen catalog.
     const screensForEnrichment = doc.module.screens ?? [];
 
+    let isFirstSection = true;
     for (const section of sorted) {
       const rawBody = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
       if (!rawBody || !rawBody.trim()) continue;
+
+      // Bookmarked section heading — TOC entries above hyperlink into
+      // these IDs. First body section forces a page break so it doesn't
+      // start mid-page right after the screens catalog.
+      const sectionLabel = section.sectionLabel || section.sectionKey.replace(/_/g, ' ');
+      const sectionBookmarkId = this.bookmarkIdFor(`sec_${section.sectionKey || section.id}`);
+      children.push(this.buildBookmarkedHeading(
+        sectionLabel,
+        sectionBookmarkId,
+        HeadingLevel.HEADING_1,
+        { pageBreakBefore: isFirstSection },
+      ));
+      isFirstSection = false;
+
+      // FRD canonical parent section: bypass the markdown→DOCX path and
+      // render features directly so bookmarks + per-feature screen
+      // thumbnails are guaranteed (the post-pass `injectFeatureScreensDocx`
+      // can't reliably read heading text out of docx@9 Paragraph instances,
+      // so we never depend on it for the FRD pilot).
+      if (frdFeatures && section.sectionKey === 'frd_features') {
+        const featBlocks = this.buildFrdFeatureBlocks(
+          frdFeatures,
+          doc.module.screens ?? [],
+          mermaidImages,
+        );
+        for (const node of featBlocks) children.push(node);
+        children.push(new Paragraph({ text: '' }));
+        continue;
+      }
+
+      // Generic path — unchanged for non-FRD types and for FRD
+      // standalone sections (Business Rules, Validations, TBD-Future
+      // Registry, "other" deliverable sections).
       const body = enrichScreenReferences(rawBody, screensForEnrichment);
-      children.push(new Paragraph({
-        text: section.sectionLabel || section.sectionKey.replace(/_/g, ' '),
-        heading: HeadingLevel.HEADING_1,
-      }));
       const blocks = this.markdownBlocksToDocx(body, mermaidImages);
-      // Per-feature inline screens (DEFERRED-IMPROVEMENTS item #2): walks
-      // the markdown for `^####? F-XX-YY:` headings + `Screen Reference:
-      // SCR-NN` and splices the screen image right after each feature
-      // heading paragraph. Pure post-pass on `blocks` so the markdown
-      // converter stays simple.
       const blocksWithScreens = this.injectFeatureScreensDocx(blocks, body, doc.module.screens ?? []);
       for (const node of blocksWithScreens) {
         children.push(node);
@@ -355,6 +404,233 @@ export class BaArtifactExportService {
     });
 
     return Packer.toBuffer(document);
+  }
+
+  /**
+   * Server-side mirror of `parseFrdContent` for the DOCX path. Returns the
+   * parsed features (sorted by ID) or null when the artifact isn't an FRD or
+   * has no features. The caller uses the result to drive
+   * `buildFrdFeatureBlocks` and the FRD-aware TOC nesting.
+   */
+  private parseFrdFeaturesFromDoc(input: BaArtifactDoc): ParsedFeature[] | null {
+    if (input.artifactType !== 'FRD') return null;
+    const sections = [...input.sections].sort((a, b) => a.displayOrder - b.displayOrder);
+    const parsed = parseFrdContent(sections.map((s) => ({
+      sectionKey: s.sectionKey,
+      sectionLabel: s.sectionLabel,
+      content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+    })));
+    return parsed.features.length > 0 ? parsed.features : null;
+  }
+
+  /**
+   * Build a stable Word bookmark ID from an arbitrary stem. Word constraints:
+   * starts with a letter, only letters/digits/underscores, max 40 chars.
+   * The same `stem` always produces the same ID so the TOC's
+   * `InternalHyperlink({ anchor })` and the body's `Bookmark({ id })` line
+   * up.
+   */
+  private bookmarkIdFor(stem: string): string {
+    const sanitised = stem.replace(/[^a-zA-Z0-9_]/g, '_');
+    const withLeadingLetter = /^[a-zA-Z]/.test(sanitised) ? sanitised : `b_${sanitised}`;
+    return withLeadingLetter.slice(0, 40);
+  }
+
+  /**
+   * Heading paragraph whose text is wrapped in a `Bookmark`. Every body
+   * heading callable from the TOC goes through this helper so the TOC
+   * hyperlinks always have a matching anchor.
+   */
+  private buildBookmarkedHeading(
+    text: string,
+    bookmarkId: string,
+    level: (typeof HeadingLevel)[keyof typeof HeadingLevel],
+    options: { pageBreakBefore?: boolean } = {},
+  ): Paragraph {
+    return new Paragraph({
+      heading: level,
+      pageBreakBefore: options.pageBreakBefore === true,
+      children: [
+        new Bookmark({
+          id: bookmarkId,
+          children: [new TextRun({ text })],
+        }),
+      ],
+    });
+  }
+
+  /**
+   * Document History block — own page, table with Date / Section / Action /
+   * By columns. Mirrors the HTML history block so PDF and DOCX show the
+   * same audit trail. Falls back to a single italic line when no sections
+   * carry AI-generated or human-edited markers.
+   */
+  private appendDocumentHistory(
+    children: Array<Paragraph | Table>,
+    sortedSections: BaArtifactDoc['sections'],
+  ): void {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
+      text: 'Document History',
+    }));
+
+    const rows = [...sortedSections]
+      .filter((s) => s.isHumanModified || s.aiGenerated)
+      .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
+      .slice(0, 50);
+
+    if (rows.length === 0) {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: 'No edits or AI generations recorded.',
+          italics: true,
+          size: DOCX_FONT_HALF_PTS.body,
+          color: COLORS.muted,
+        })],
+      }));
+      return;
+    }
+
+    const headerCell = (label: string): TableCell => new TableCell({
+      shading: { type: ShadingType.SOLID, color: COLORS.surfaceMuted, fill: COLORS.surfaceMuted },
+      children: [new Paragraph({
+        children: [new TextRun({
+          text: label,
+          bold: true,
+          size: DOCX_FONT_HALF_PTS.body,
+          color: COLORS.text,
+        })],
+      })],
+    });
+    const dataCell = (text: string): TableCell => new TableCell({
+      children: [new Paragraph({
+        children: [new TextRun({ text, size: DOCX_FONT_HALF_PTS.body, color: COLORS.text })],
+      })],
+    });
+
+    const headerRow = new TableRow({
+      tableHeader: true,
+      children: ['Date', 'Section', 'Action', 'By'].map(headerCell),
+    });
+
+    const dataRows = rows.map((s) => {
+      const who = s.isHumanModified ? 'Human' : s.aiGenerated ? 'AI' : '—';
+      const action = s.isHumanModified ? 'Edited' : 'Generated';
+      return new TableRow({
+        children: [
+          dataCell(this.formatHumanDate(s.updatedAt)),
+          dataCell(s.sectionLabel),
+          dataCell(action),
+          dataCell(who),
+        ],
+      });
+    });
+
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [headerRow, ...dataRows],
+    }));
+  }
+
+  /**
+   * Format a feature's labelled fields (Description / Priority / Status /
+   * Trigger / Pre- / Post- / Business Rules / Validations / Integration
+   * Signals / Acceptance Criteria) as deterministic markdown. Multi-line
+   * fields keep their bullet structure so `markdownBlocksToDocx` renders
+   * them as proper Word lists. Description appears first; the screen card
+   * is spliced in BEFORE the Description by the caller so PDF and DOCX
+   * read top-to-bottom in the same order.
+   */
+  private formatFeatureFieldsAsMarkdown(f: ParsedFeature): string {
+    const lines: string[] = [];
+    if (f.description) { lines.push(`**Description:** ${f.description}`); lines.push(''); }
+    if (f.priority) { lines.push(`**Priority:** ${f.priority}`); lines.push(''); }
+    if (f.status) { lines.push(`**Status:** ${f.status}`); lines.push(''); }
+    if (f.trigger) { lines.push(`**Trigger:** ${f.trigger}`); lines.push(''); }
+    if (f.preConditions) { lines.push(`**Pre-conditions:**`); lines.push(''); lines.push(f.preConditions); lines.push(''); }
+    if (f.postConditions) { lines.push(`**Post-conditions:**`); lines.push(''); lines.push(f.postConditions); lines.push(''); }
+    if (f.businessRules) { lines.push(`**Business Rules:**`); lines.push(''); lines.push(f.businessRules); lines.push(''); }
+    if (f.validations) { lines.push(`**Validations:**`); lines.push(''); lines.push(f.validations); lines.push(''); }
+    if (f.integrationSignals) { lines.push(`**Integration Signals:**`); lines.push(''); lines.push(f.integrationSignals); lines.push(''); }
+    if (f.acceptanceCriteria) { lines.push(`**Acceptance Criteria:**`); lines.push(''); lines.push(f.acceptanceCriteria); lines.push(''); }
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  /**
+   * FRD-only per-feature renderer. Emits — for every parsed feature — a
+   * bookmarked H2 heading, then the feature's referenced wireframe
+   * (caption + image), then the labelled body fields as Word paragraphs.
+   * The bookmark IDs match what `appendTableOfContents` hyperlinks to so
+   * clicking a feature in the TOC jumps to the corresponding heading.
+   *
+   * Replaces the `injectFeatureScreensDocx` post-pass for FRD content —
+   * that pass relied on `Paragraph.options.text` which docx@9 doesn't
+   * expose, silently dropping every per-feature thumbnail.
+   */
+  private buildFrdFeatureBlocks(
+    features: ParsedFeature[],
+    screens: BaArtifactDoc['module']['screens'],
+    mermaidImages: Map<string, MermaidImage>,
+  ): Array<Paragraph | Table> {
+    const out: Array<Paragraph | Table> = [];
+    const screenList = screens ?? [];
+    const screenById = new Map(screenList.map((s) => [s.screenId, s]));
+
+    for (const f of features) {
+      const featBookmarkId = this.bookmarkIdFor(`feat_${f.featureId}`);
+      out.push(this.buildBookmarkedHeading(
+        `${f.featureId}: ${f.featureName}`,
+        featBookmarkId,
+        HeadingLevel.HEADING_2,
+      ));
+
+      // Inline screen card — rendered immediately under the heading so
+      // the layout matches the PDF (image at the top, prose below).
+      const screenIds = extractScreenIds(f.screenRef);
+      for (const sid of screenIds) {
+        const screen = screenById.get(sid);
+        if (!screen) continue;
+        out.push(new Paragraph({
+          spacing: { before: 80, after: 40 },
+          children: [
+            new TextRun({
+              text: `${screen.screenId} — ${screen.screenTitle}`,
+              size: DOCX_FONT_HALF_PTS.caption,
+              font: 'Consolas',
+              color: COLORS.idRefFg,
+              shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+            }),
+          ],
+        }));
+        const decoded = this.decodeScreenImage(screen.fileData);
+        if (!decoded) continue;
+        try {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 160 },
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 460),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed inline screen embed ${screen.screenId}: ${(err as Error).message}`);
+        }
+      }
+
+      // Body fields. We delegate to the existing markdown converter so
+      // bullet lists / inline `**bold**` etc. render the same way as
+      // every other section.
+      const fieldMd = this.formatFeatureFieldsAsMarkdown(f);
+      if (fieldMd) {
+        const blocks = this.markdownBlocksToDocx(fieldMd, mermaidImages);
+        for (const b of blocks) out.push(b);
+      }
+    }
+    return out;
   }
 
   // ─── Document-structure helpers ────────────────────────────────────────
@@ -421,13 +697,10 @@ export class BaArtifactExportService {
       ['Status', doc.status.replace(/_/g, ' ')],
     ];
     children.push(this.buildCoverKvTable(kvRows, doc.status));
-
-    // Manual page break so the cover stays on its own page.
-    children.push(new Paragraph({
-      spacing: { before: 200, after: 0 },
-      children: [new TextRun({ text: '', break: 1 })],
-      pageBreakBefore: false,
-    }));
+    // No trailing break paragraph — Document History / TOC / Screens / first
+    // body section each set `pageBreakBefore: true` on their leading
+    // paragraph, which keeps the cover on its own page without an extra
+    // blank line at the bottom of every export.
   }
 
   private buildCoverKvTable(rows: Array<[string, string]>, status: string): Table {
@@ -517,32 +790,74 @@ export class BaArtifactExportService {
   private appendTableOfContents(
     children: Array<Paragraph | Table>,
     sortedSections: BaArtifactDoc['sections'],
+    frdFeatures: ParsedFeature[] | null,
   ): void {
     children.push(new Paragraph({
       heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
       text: 'Table of Contents',
-      spacing: { before: 240, after: 160 },
+      spacing: { before: 0, after: 160 },
     }));
 
     sortedSections.forEach((section, idx) => {
-      // Top-level entry.
+      const sectionLabel = section.sectionLabel || section.sectionKey.replace(/_/g, ' ');
+      const sectionBookmarkId = this.bookmarkIdFor(`sec_${section.sectionKey || section.id}`);
+
+      // Top-level entry — clickable hyperlink into the matching body
+      // bookmark. Word renders `InternalHyperlink` with the default
+      // hyperlink character style (blue + underlined) when the document
+      // styles include one; we bold it here for visual hierarchy.
       children.push(new Paragraph({
         spacing: { before: 60, after: 60 },
-        children: [new TextRun({
-          text: `${idx + 1}. ${section.sectionLabel || section.sectionKey.replace(/_/g, ' ')}`,
-          bold: true,
-          size: DOCX_FONT_HALF_PTS.body,
-          color: COLORS.text,
-        })],
+        children: [
+          new InternalHyperlink({
+            anchor: sectionBookmarkId,
+            children: [new TextRun({
+              text: `${idx + 1}. ${sectionLabel}`,
+              bold: true,
+              size: DOCX_FONT_HALF_PTS.body,
+              color: COLORS.text,
+              style: 'Hyperlink',
+            })],
+          }),
+        ],
       }));
 
-      // Inner headings — extract from this section's markdown body.
+      // FRD canonical parent: emit each parsed feature as a nested
+      // hyperlink so the TOC mirrors the editor tree
+      // (FRD-MOD-XX → F-XX-YY). Bookmarks are created in
+      // `buildFrdFeatureBlocks` with the same `feat_<featureId>` stem.
+      if (frdFeatures && section.sectionKey === 'frd_features') {
+        frdFeatures.forEach((f) => {
+          const featBookmarkId = this.bookmarkIdFor(`feat_${f.featureId}`);
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            spacing: { before: 20, after: 20 },
+            children: [
+              new InternalHyperlink({
+                anchor: featBookmarkId,
+                children: [new TextRun({
+                  text: `${f.featureId} — ${f.featureName}`,
+                  size: DOCX_FONT_HALF_PTS.caption,
+                  color: COLORS.muted,
+                  style: 'Hyperlink',
+                })],
+              }),
+            ],
+          }));
+        });
+        return;
+      }
+
+      // Non-FRD inner headings stay as informational indented text. We
+      // don't bookmark inner markdown headings (no stable anchor target),
+      // so making them hyperlinks would lead nowhere. Section-level
+      // hyperlinks above are sufficient for navigation.
       const body = (section.isHumanModified && section.editedContent) ? section.editedContent : section.content;
       if (!body) return;
       const inner = this.extractInnerHeadingsForToc(body);
       for (const ih of inner) {
         children.push(new Paragraph({
-          // Indent matches the HTML toc-child / toc-grandchild visual rhythm.
           indent: { left: ih.depth === 2 ? 360 : 720 },
           spacing: { before: 20, after: 20 },
           children: [new TextRun({
@@ -554,13 +869,6 @@ export class BaArtifactExportService {
         }));
       }
     });
-
-    // Page break after TOC so sections start on a fresh page.
-    children.push(new Paragraph({
-      pageBreakBefore: false,
-      spacing: { before: 200, after: 0 },
-      children: [new TextRun({ text: '', break: 1 })],
-    }));
   }
 
   /**
@@ -1232,6 +1540,7 @@ export class BaArtifactExportService {
     children.push(new Paragraph({
       text: `Referenced Screens (${screens.length})`,
       heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
     }));
     children.push(new Paragraph({
       children: [new TextRun({
