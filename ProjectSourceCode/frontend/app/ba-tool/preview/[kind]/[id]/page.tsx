@@ -12,6 +12,7 @@ import {
   getBaSubTask,
   updateBaProject,
   listPseudoFilesByArtifact,
+  listTestCasesByArtifact,
   downloadPseudoFile,
   downloadPseudoFilesZip,
   downloadProjectStructureZip,
@@ -20,7 +21,9 @@ import {
   type BaSubTask,
   type BaProject,
   type BaPseudoFile,
+  type BaTestCase,
 } from '@/lib/ba-api';
+import { buildFtcStructure, formatTestCaseBodyMarkdown } from '@/lib/ftc-structure';
 import { MarkdownRenderer } from '@/components/ba-tool/MarkdownRenderer';
 import { ScreensGallery, filterReferencedScreens, extractScreenIds } from '@/components/ba-tool/ScreensGallery';
 import { parseFrdContent, type ParsedFeature } from '@/lib/frd-parser';
@@ -184,6 +187,7 @@ export default function BaPreviewPage() {
   const [downloading, setDownloading] = useState<'pdf' | 'docx' | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [pseudoFiles, setPseudoFiles] = useState<BaPseudoFile[]>([]);
+  const [testCases, setTestCases] = useState<BaTestCase[]>([]);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -193,6 +197,7 @@ export default function BaPreviewPage() {
         const st = await getBaSubTask(id);
         setDoc(normalizeSubTask(st));
         setPseudoFiles([]);
+        setTestCases([]);
       } else {
         const a = await getArtifact(id);
         setDoc(normalizeArtifact(a));
@@ -202,6 +207,21 @@ export default function BaPreviewPage() {
           setPseudoFiles(files);
         } else {
           setPseudoFiles([]);
+        }
+        // For FTC artifacts, fetch the structured BaTestCase rows so the
+        // preview can mirror the editor tree's category → feature → TC
+        // hierarchy (server-rendered PDF/DOCX get the same data via
+        // `loadFtcExtras`). Skipped silently on fetch failure — the
+        // preview still renders the canonical text sections.
+        if (a.artifactType === 'FTC') {
+          try {
+            const tcs = await listTestCasesByArtifact(id);
+            setTestCases(tcs);
+          } catch {
+            setTestCases([]);
+          }
+        } else {
+          setTestCases([]);
         }
       }
     } catch {
@@ -557,47 +577,88 @@ export default function BaPreviewPage() {
       }
     }
 
-    // ── FTC: sort by canonical section order (matches FINAL-SKILL-07
-    //    §3 / BaFtcParserService.CANONICAL_SECTIONS). Without this the
-    //    TOC shows sections in DB insertion order — per-feature mode 2
-    //    inserts test_case_appendix first, narrative pass inserts
-    //    Summary/Strategy/etc. later, so the appendix appears at the
-    //    top and Summary in the middle. Sorting by canonical order
-    //    matches the structure of single-shot mode 1 modules.
+    // ── FTC: canonical text sections (Summary, Test Strategy, …)
+    //    followed by per-category, per-feature, per-test-case entries.
+    //    Matches the editor tree's three-level hierarchy
+    //    (`Functional Test Cases → F-XX-YY → TC-…`) and the same shape
+    //    the PDF/DOCX exporters emit. Hidden sections
+    //    (`functional_test_cases` etc.) are dropped because the
+    //    structured `BaTestCase` rows carry the same data without the
+    //    AI-emitted markdown noise.
     if (doc.artifactType === 'FTC') {
-      const FTC_SECTION_ORDER = [
-        'summary',
-        'test_strategy',
-        'test_environment',
-        'master_data_setup',
+      const FTC_HIDDEN_SECTION_KEYS = new Set([
         'test_cases_index',
         'functional_test_cases',
         'integration_test_cases',
         'white_box_test_cases',
+        'test_case_appendix',
+      ]);
+      const FTC_TEXT_SECTION_ORDER = [
+        'summary',
+        'test_strategy',
+        'test_environment',
+        'master_data_setup',
         'owasp_web_coverage',
         'owasp_llm_coverage',
         'data_cleanup',
         'playwright_readiness',
-        'ac_coverage_verification',
         'traceability_summary',
         'open_questions_tbd',
         'applied_defaults',
-        'test_case_appendix',
+        'ac_coverage_verification',
       ];
       const orderIndex = (key: string): number => {
-        const i = FTC_SECTION_ORDER.indexOf(key);
-        return i === -1 ? FTC_SECTION_ORDER.length : i;
+        const i = FTC_TEXT_SECTION_ORDER.indexOf(key);
+        return i === -1 ? FTC_TEXT_SECTION_ORDER.length : i;
       };
-      return [...raw]
-        .sort((a, b) => orderIndex(a.sectionKey) - orderIndex(b.sectionKey))
-        .map((s) => ({
+
+      const out: PreviewSection[] = [];
+
+      // Phase 1 — canonical text sections, in fixed order, dropping the
+      // hidden ones (their content is duplicated in BaTestCase rows).
+      const textSections = [...raw]
+        .filter((s) => !FTC_HIDDEN_SECTION_KEYS.has(s.sectionKey))
+        .sort((a, b) => orderIndex(a.sectionKey) - orderIndex(b.sectionKey));
+      for (const s of textSections) {
+        const content = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+        if (!content?.trim()) continue;
+        out.push({
           id: s.id,
           label: s.sectionLabel,
           sectionKey: s.sectionKey,
-          content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+          content,
           isAi: s.aiGenerated && !s.isHumanModified,
           isEdited: s.isHumanModified,
-        }));
+        });
+      }
+
+      // Phase 2 — per-category / per-feature / per-test-case entries.
+      // Each TC becomes its own preview section with `groupLabel` set to
+      // `<Category Label> · <Feature Label>` so the inline TOC renders a
+      // nested header per (category, feature) pair with TC items
+      // underneath. The body markdown is built by `formatTestCaseBodyMarkdown`
+      // — same shape the DOCX renderer emits.
+      if (testCases.length > 0) {
+        const structure = buildFtcStructure(testCases);
+        for (const group of structure) {
+          for (const fb of group.featureBuckets) {
+            const groupLabel = `${group.label} · ${fb.featureLabel}`;
+            for (const tc of fb.testCases) {
+              out.push({
+                id: `tc-${tc.id}`,
+                label: `${tc.testCaseId} — ${tc.title}`,
+                idRef: tc.testCaseId,
+                content: formatTestCaseBodyMarkdown(tc),
+                groupLabel,
+                hasTbd: false,
+                isAi: !tc.isHumanModified,
+                isEdited: tc.isHumanModified,
+              });
+            }
+          }
+        }
+      }
+      return out;
     }
 
     // ── SubTask / Screen Analysis / LLD / other: raw sections 1:1 ─────
@@ -609,7 +670,7 @@ export default function BaPreviewPage() {
       isAi: s.aiGenerated && !s.isHumanModified,
       isEdited: s.isHumanModified,
     }));
-  }, [doc]);
+  }, [doc, testCases]);
 
   // Derived data
   const history = useMemo(() => {

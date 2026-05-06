@@ -20,6 +20,7 @@
  */
 import { buildArtifactCss, statusKindFor } from './artifact-style';
 import { restructureFrdDoc } from './frd-restructure';
+import { restructureFtcDoc } from './ftc-restructure';
 
 export interface BaSectionLite {
   id: string;
@@ -34,9 +35,45 @@ export interface BaSectionLite {
   updatedAt: string | Date;
 }
 
+/**
+ * Subset of `BaTestCase` carried into the export pipeline. The FTC pilot
+ * uses these to build the per-category / per-feature / per-TC structure
+ * that mirrors the editor tree. Only the fields the renderers consume are
+ * included so the loader can avoid pulling fields that bloat the payload
+ * (e.g. supportingDocs binary refs).
+ */
+export interface BaTestCaseLite {
+  id: string;
+  testCaseId: string;          // human-readable: TC-001, Neg_TC-005
+  title: string;
+  category: string | null;     // Functional | Integration | Security | UI | Data | Performance | Accessibility | API | null
+  scope: string;               // black_box | white_box
+  testKind: string;            // positive | negative | edge
+  priority: string | null;     // P0 | P1 | P2
+  isIntegrationTest: boolean;
+  owaspCategory: string | null;
+  scenarioGroup: string | null;
+  testData: string | null;
+  e2eFlow: string | null;
+  preconditions: string | null;
+  steps: string;
+  expected: string;
+  postValidation: string | null;
+  sqlSetup: string | null;
+  sqlVerify: string | null;
+  playwrightHint: string | null;
+  developerHints: string | null;
+  parentTestCaseId: string | null;
+  linkedFeatureIds: string[];
+  linkedEpicIds: string[];
+  linkedStoryIds: string[];
+  linkedSubtaskIds: string[];
+  isHumanModified: boolean;
+}
+
 export interface BaArtifactDoc {
   artifactId: string;         // e.g. FRD-MOD-01
-  artifactType: string;       // FRD | EPIC | USER_STORY | SUBTASK | SCREEN_ANALYSIS
+  artifactType: string;       // FRD | EPIC | USER_STORY | SUBTASK | SCREEN_ANALYSIS | FTC | LLD
   status: string;             // DRAFT | CONFIRMED | APPROVED | CONFIRMED_PARTIAL
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -55,6 +92,18 @@ export interface BaArtifactDoc {
     submittedBy: string | null;
     clientLogo: string | null;
   };
+  /**
+   * Populated only for FTC artifacts. Each test case carries its full body
+   * (steps, expected, preconditions, etc.) so the renderer can emit a
+   * complete per-TC card without making additional DB queries.
+   */
+  testCases?: BaTestCaseLite[];
+  /**
+   * Populated only for FTC artifacts when the same module also has an FRD.
+   * Maps `F-XX-YY` to its human-readable feature name so the FTC TOC can
+   * render `F-05-01 — Reset Password` instead of the bare ID.
+   */
+  frdFeatureNames?: Record<string, string>;
 }
 
 // v4: LLD artifacts are distinct from the other types — they carry their own
@@ -546,9 +595,12 @@ function extractInnerHeadings(md: string, parentSlug: string): InnerHeading[] {
       const depth: 2 | 3 = c.rawLevel === minRaw ? 2 : 3;
       return { text: c.text, slug: `${parentSlug}__${finalSlug}`, depth };
     })
-    // Cap to first 50 inner entries per section — beyond that the TOC
-    // becomes noise. Real-world FRD sections cap around ~15 features.
-    .slice(0, 50);
+    // Cap to first 500 inner entries per section. Bumped from 50 for the
+    // FTC pilot — the "Functional Test Cases" category alone can carry
+    // ~90+ feature buckets and ~100+ TCs, far past the FRD-era assumption.
+    // 500 is large enough for any real-world deliverable while still
+    // protecting against runaway AI output.
+    .slice(0, 500);
 }
 
 function buildNestedTocHtml(
@@ -638,11 +690,13 @@ function injectFeatureScreens(
 // ─── Top-level renderer ─────────────────────────────────────────────────────
 
 export function generateBaArtifactHtml(input: BaArtifactDoc): string {
-  // FRD pilot (`feat/export-parity-frd-pilot`): rewrite FRD section content
-  // into the canonical Editor-shape before rendering so the TOC nests under
-  // `<artifactId> — <moduleName>` and per-feature screen thumbnails resolve
-  // reliably. No-op for all other artifact types.
-  const doc = restructureFrdDoc(input);
+  // Pilot restructurers — chained but each is a no-op outside its own
+  // artifact type, so the order is irrelevant. FRD: nest features under
+  // `<artifactId> — <moduleName>`. FTC: drop AI markdown duplicates of the
+  // structured TC data and append per-category synthetic sections so the
+  // editor's three-level category → feature → TC tree shows up in the
+  // exported TOC.
+  const doc = restructureFtcDoc(restructureFrdDoc(input));
   const typeLabel = ARTIFACT_TYPE_LABELS[doc.artifactType] ?? doc.artifactType;
   const productName = doc.project.productName || doc.project.name;
   const sections = [...doc.sections].sort((a, b) => a.displayOrder - b.displayOrder);

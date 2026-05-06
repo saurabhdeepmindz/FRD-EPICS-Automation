@@ -37,8 +37,11 @@ import {
   type BaArtifactDoc,
 } from './templates/artifact-html';
 import { restructureFrdDoc } from './templates/frd-restructure';
+import { restructureFtcDoc } from './templates/ftc-restructure';
 import { parseFrdContent, type ParsedFeature } from './templates/frd-parser';
 import { extractScreenIds } from './templates/screen-utils';
+import { buildFtcStructure, type FtcCategoryGroup } from './templates/ftc-structure';
+import type { BaTestCaseLite } from './templates/artifact-html';
 
 // docx@9 ImageRun accepts these raster `type` values without a fallback.
 // SVG is supported by docx but requires a PNG fallback buffer; screens are
@@ -87,6 +90,12 @@ export class BaArtifactExportService {
       productName: string | null; clientName: string | null; submittedBy: string | null; clientLogo: string | null;
     };
 
+    // FTC pilot: load the structured test-case data and the same-module
+    // FRD feature names so the renderers can emit the editor tree's
+    // category → feature → TC hierarchy with human-readable feature
+    // labels. Both are no-ops when this isn't an FTC artifact.
+    const { testCases, frdFeatureNames } = await this.loadFtcExtras(artifact.id, artifact.artifactType, artifact.module.id);
+
     return {
       artifactId: artifact.artifactId,
       artifactType: artifact.artifactType,
@@ -119,7 +128,88 @@ export class BaArtifactExportService {
         submittedBy: p.submittedBy ?? null,
         clientLogo: p.clientLogo ?? null,
       },
+      ...(testCases ? { testCases } : {}),
+      ...(frdFeatureNames ? { frdFeatureNames } : {}),
     };
+  }
+
+  /**
+   * Returns FTC-only sidecar data: the structured `BaTestCase` rows for the
+   * artifact, plus a `featureId → featureName` map sourced from the same
+   * module's FRD artifact (when present). Both are `undefined` for non-FTC
+   * artifact types so the loader's spread doesn't pollute non-FTC docs.
+   *
+   * Mirrors the runtime lookup `FtcArtifactView` does on the client — the
+   * editor tree shows `F-05-01 — Reset Password` because it parses the
+   * sibling FRD's features. Doing the same on the server keeps the
+   * exported PDF/DOCX TOC + body labels consistent with the editor.
+   */
+  private async loadFtcExtras(
+    artifactDbId: string,
+    artifactType: string,
+    moduleDbId: string,
+  ): Promise<{ testCases?: BaArtifactDoc['testCases']; frdFeatureNames?: BaArtifactDoc['frdFeatureNames'] }> {
+    if (artifactType !== 'FTC') return {};
+
+    const tcs = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId },
+      orderBy: [{ category: 'asc' }, { testCaseId: 'asc' }],
+    });
+    const testCases: BaArtifactDoc['testCases'] = tcs.map((t) => ({
+      id: t.id,
+      testCaseId: t.testCaseId,
+      title: t.title,
+      category: t.category ?? null,
+      scope: t.scope,
+      testKind: t.testKind,
+      priority: t.priority ?? null,
+      isIntegrationTest: t.isIntegrationTest,
+      owaspCategory: t.owaspCategory ?? null,
+      scenarioGroup: t.scenarioGroup ?? null,
+      testData: t.testData ?? null,
+      e2eFlow: t.e2eFlow ?? null,
+      preconditions: t.preconditions ?? null,
+      steps: t.steps,
+      expected: t.expected,
+      postValidation: t.postValidation ?? null,
+      sqlSetup: t.sqlSetup ?? null,
+      sqlVerify: t.sqlVerify ?? null,
+      playwrightHint: t.playwrightHint ?? null,
+      developerHints: t.developerHints ?? null,
+      parentTestCaseId: t.parentTestCaseId ?? null,
+      linkedFeatureIds: t.linkedFeatureIds,
+      linkedEpicIds: t.linkedEpicIds,
+      linkedStoryIds: t.linkedStoryIds,
+      linkedSubtaskIds: t.linkedSubtaskIds,
+      isHumanModified: t.isHumanModified,
+    }));
+
+    // Look up the same-module FRD artifact's parsed features. Skipped
+    // silently when there's no FRD — the renderers fall back to bare
+    // `F-XX-YY` IDs in that case. Schema FK is `moduleDbId`, not
+    // `moduleId` (which is the human-readable string column).
+    const frd = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: 'FRD' },
+      include: { sections: { orderBy: { createdAt: 'asc' } } },
+    });
+    let frdFeatureNames: BaArtifactDoc['frdFeatureNames'];
+    if (frd) {
+      try {
+        const parsed = parseFrdContent(frd.sections.map((s: { sectionKey: string; sectionLabel: string; content: string; isHumanModified: boolean; editedContent: string | null }) => ({
+          sectionKey: s.sectionKey,
+          sectionLabel: s.sectionLabel,
+          content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+        })));
+        frdFeatureNames = {};
+        for (const f of parsed.features) {
+          if (f.featureId) frdFeatureNames[f.featureId] = f.featureName ?? f.featureId;
+        }
+      } catch {
+        // FRD parse failed — fall back to bare IDs (frdFeatureNames stays undefined).
+      }
+    }
+
+    return { testCases, frdFeatureNames };
   }
 
   async renderHtml(artifactId: string): Promise<{ html: string; fileStem: string; typeLabel: string }> {
@@ -303,10 +393,18 @@ export class BaArtifactExportService {
     // path unchanged.
     const frdFeatures = input.artifactType === 'FRD' ? this.parseFrdFeaturesFromDoc(input) : null;
 
+    // FTC pilot: build the same category → feature → TC structure the
+    // HTML restructurer emits and keep it in scope so the body renderer
+    // can emit bookmarked TC headings (which the post-restructure
+    // markdown round-trip would lose). `null` for non-FTC types.
+    const ftcStructure: FtcCategoryGroup[] | null = input.artifactType === 'FTC' && input.testCases
+      ? buildFtcStructure(input.testCases, input.frdFeatureNames ?? {})
+      : null;
+
     // Same canonical restructure as the HTML/PDF path so the DOCX TOC,
     // section headings, and standalone-section ordering stay aligned with
-    // PDF and the editor tree. No-op for non-FRD artifact types.
-    const doc = restructureFrdDoc(input);
+    // PDF and the editor tree. No-op for unrelated artifact types.
+    const doc = restructureFtcDoc(restructureFrdDoc(input));
 
     // Render any Mermaid diagrams to PNG up front so the DOCX shows real
     // swim-lane visuals instead of the source code. One Chromium instance is
@@ -335,7 +433,7 @@ export class BaArtifactExportService {
     this.appendDocumentHistory(children, input.sections);
 
     // ─── Table of Contents (own page, hyperlinks to bookmarked headings)
-    this.appendTableOfContents(children, sorted, frdFeatures);
+    this.appendTableOfContents(children, sorted, frdFeatures, ftcStructure);
 
     // Embed the per-module screen catalog right after the TOC so the
     // customer can correlate every SCR-NN reference in the body with the
@@ -382,6 +480,21 @@ export class BaArtifactExportService {
         continue;
       }
 
+      // FTC canonical category section: bypass markdown→DOCX so we can
+      // emit bookmarks per feature bucket AND per individual TC. The
+      // restructurer named these sections `ftc_<categoryKey>` (e.g.
+      // `ftc_functional`); match by prefix to find the matching group in
+      // `ftcStructure`.
+      if (ftcStructure && section.sectionKey.startsWith('ftc_')) {
+        const group = this.findFtcGroupForSection(section.sectionKey, ftcStructure);
+        if (group) {
+          const blocks = this.buildFtcCategoryBlocks(group);
+          for (const node of blocks) children.push(node);
+          children.push(new Paragraph({ text: '' }));
+          continue;
+        }
+      }
+
       // Generic path — unchanged for non-FRD types and for FRD
       // standalone sections (Business Rules, Validations, TBD-Future
       // Registry, "other" deliverable sections).
@@ -404,6 +517,146 @@ export class BaArtifactExportService {
     });
 
     return Packer.toBuffer(document);
+  }
+
+  /**
+   * Match an FTC synthetic section's `sectionKey` (e.g. `ftc_functional`,
+   * `ftc_white_box`) back to the matching `FtcCategoryGroup`. The
+   * restructurer derives sectionKeys by lowercasing + sanitising the
+   * group's `key`; we apply the same transform here so the lookup is a
+   * straightforward equality check rather than a fuzzy match.
+   */
+  private findFtcGroupForSection(
+    sectionKey: string,
+    structure: FtcCategoryGroup[],
+  ): FtcCategoryGroup | undefined {
+    const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const target = sectionKey.replace(/^ftc_/, '');
+    return structure.find((g) => normalize(g.key) === target);
+  }
+
+  /**
+   * Render one FTC category group as bookmarked DOCX blocks. Emits, per
+   * feature bucket: a bookmarked H2 feature heading, then per test case a
+   * bookmarked H3 TC heading + a one-line metadata run + the body fields
+   * (preconditions, test data, steps, expected, post-validation, etc.).
+   *
+   * Bookmark IDs match `appendTableOfContents`'s anchors so clicking a
+   * feature or TC entry in the TOC jumps to the matching block in the
+   * body. Empty fields are skipped to keep the page count tractable on
+   * 150+ test-case artifacts.
+   */
+  private buildFtcCategoryBlocks(group: FtcCategoryGroup): Array<Paragraph | Table> {
+    const out: Array<Paragraph | Table> = [];
+
+    for (const fb of group.featureBuckets) {
+      const featBookmarkId = this.bookmarkIdFor(`ftc_feat_${group.key}_${fb.featureId}`);
+      out.push(this.buildBookmarkedHeading(
+        fb.featureLabel,
+        featBookmarkId,
+        HeadingLevel.HEADING_2,
+      ));
+
+      for (const tc of fb.testCases) {
+        const tcBookmarkId = this.bookmarkIdFor(`ftc_tc_${tc.id}`);
+        out.push(this.buildBookmarkedHeading(
+          `${tc.testCaseId}: ${tc.title}`,
+          tcBookmarkId,
+          HeadingLevel.HEADING_3,
+        ));
+
+        // Compact metadata run — Type · Priority · Integration · OWASP · Scenario.
+        const metaParts: string[] = [];
+        metaParts.push(`Type: ${tc.testKind.charAt(0).toUpperCase()}${tc.testKind.slice(1)}`);
+        if (tc.priority) metaParts.push(`Priority: ${tc.priority}`);
+        if (tc.isIntegrationTest) metaParts.push('Integration');
+        if (tc.owaspCategory) metaParts.push(`OWASP: ${tc.owaspCategory}`);
+        if (tc.scenarioGroup) metaParts.push(`Scenario: ${tc.scenarioGroup}`);
+        out.push(new Paragraph({
+          spacing: { before: 40, after: 40 },
+          children: [new TextRun({
+            text: metaParts.join('  ·  '),
+            italics: true,
+            color: COLORS.muted,
+            size: DOCX_FONT_HALF_PTS.caption,
+          })],
+        }));
+
+        // Traceability — only when something is actually linked.
+        const traceParts: string[] = [];
+        if (tc.linkedFeatureIds.length > 0) traceParts.push(`Feature: ${tc.linkedFeatureIds.join(', ')}`);
+        if (tc.linkedEpicIds.length > 0) traceParts.push(`EPIC: ${tc.linkedEpicIds.join(', ')}`);
+        if (tc.linkedStoryIds.length > 0) traceParts.push(`Story: ${tc.linkedStoryIds.join(', ')}`);
+        if (tc.linkedSubtaskIds.length > 0) traceParts.push(`SubTask: ${tc.linkedSubtaskIds.join(', ')}`);
+        if (traceParts.length > 0) {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 80 },
+            children: [new TextRun({
+              text: traceParts.join('  ·  '),
+              color: COLORS.idRefFg,
+              size: DOCX_FONT_HALF_PTS.caption,
+            })],
+          }));
+        }
+
+        // Body fields — flow through `markdownBlocksToDocx` so bullets /
+        // bolds / SQL fences render as proper Word constructs. Skipping
+        // empty fields keeps the per-TC footprint compact.
+        const fieldMd = this.formatTestCaseFieldsAsMarkdown(tc);
+        if (fieldMd) {
+          const blocks = this.markdownBlocksToDocx(fieldMd);
+          for (const b of blocks) out.push(b);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Format a TC's body fields (preconditions / test data / e2e flow /
+   * steps / expected / post-validation / SQL / Playwright / dev hints) as
+   * markdown. Empty fields are dropped so a sparse TC produces a sparse
+   * page rather than a wall of empty labels.
+   *
+   * Companion to `formatTestCaseBlock` in `ftc-structure.ts` — that one
+   * builds the entire markdown block (heading + meta + body) for the
+   * HTML/PDF path; this one only emits the body fields because the
+   * DOCX feature renderer already laid down the heading + meta line as
+   * bookmarked paragraphs.
+   */
+  private formatTestCaseFieldsAsMarkdown(tc: BaTestCaseLite): string {
+    const lines: string[] = [];
+    if (tc.preconditions?.trim()) {
+      lines.push('**Pre-conditions:**', '', tc.preconditions.trim(), '');
+    }
+    if (tc.testData?.trim()) {
+      lines.push('**Test Data:**', '', tc.testData.trim(), '');
+    }
+    if (tc.e2eFlow?.trim()) {
+      lines.push(`**E2E Flow:** ${tc.e2eFlow.trim()}`, '');
+    }
+    if (tc.steps?.trim()) {
+      lines.push('**Steps:**', '', tc.steps.trim(), '');
+    }
+    if (tc.expected?.trim()) {
+      lines.push('**Expected:**', '', tc.expected.trim(), '');
+    }
+    if (tc.postValidation?.trim()) {
+      lines.push('**Post-validation:**', '', tc.postValidation.trim(), '');
+    }
+    if (tc.sqlSetup?.trim()) {
+      lines.push('**SQL Setup:**', '', '```sql', tc.sqlSetup.trim(), '```', '');
+    }
+    if (tc.sqlVerify?.trim()) {
+      lines.push('**SQL Verify:**', '', '```sql', tc.sqlVerify.trim(), '```', '');
+    }
+    if (tc.playwrightHint?.trim()) {
+      lines.push(`**Playwright Hint:** ${tc.playwrightHint.trim()}`, '');
+    }
+    if (tc.developerHints?.trim()) {
+      lines.push(`**Developer Hints:** ${tc.developerHints.trim()}`, '');
+    }
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
   }
 
   /**
@@ -791,6 +1044,7 @@ export class BaArtifactExportService {
     children: Array<Paragraph | Table>,
     sortedSections: BaArtifactDoc['sections'],
     frdFeatures: ParsedFeature[] | null,
+    ftcStructure: FtcCategoryGroup[] | null,
   ): void {
     children.push(new Paragraph({
       heading: HeadingLevel.HEADING_1,
@@ -849,6 +1103,56 @@ export class BaArtifactExportService {
         return;
       }
 
+      // FTC canonical category section: emit nested feature buckets and
+      // per-test-case entries. Bookmarks match the IDs created in
+      // `buildFtcCategoryBlocks` (`ftc_feat_<cat>_<fid>` and
+      // `ftc_tc_<tcDbId>`). Two indent levels (360 / 720 twips) line up
+      // with the editor tree's three-level nesting.
+      if (ftcStructure && section.sectionKey.startsWith('ftc_')) {
+        const group = this.findFtcGroupForSection(section.sectionKey, ftcStructure);
+        if (group) {
+          for (const fb of group.featureBuckets) {
+            const featBookmarkId = this.bookmarkIdFor(`ftc_feat_${group.key}_${fb.featureId}`);
+            children.push(new Paragraph({
+              indent: { left: 360 },
+              spacing: { before: 30, after: 20 },
+              children: [
+                new InternalHyperlink({
+                  anchor: featBookmarkId,
+                  children: [new TextRun({
+                    text: fb.featureLabel,
+                    bold: true,
+                    size: DOCX_FONT_HALF_PTS.caption,
+                    color: COLORS.text,
+                    style: 'Hyperlink',
+                  })],
+                }),
+              ],
+            }));
+            for (const tc of fb.testCases) {
+              const tcBookmarkId = this.bookmarkIdFor(`ftc_tc_${tc.id}`);
+              children.push(new Paragraph({
+                indent: { left: 720 },
+                spacing: { before: 10, after: 10 },
+                children: [
+                  new InternalHyperlink({
+                    anchor: tcBookmarkId,
+                    children: [new TextRun({
+                      text: `${tc.testCaseId} — ${tc.title}`,
+                      size: DOCX_FONT_HALF_PTS.caption,
+                      color: COLORS.muted,
+                      italics: tc.testKind === 'negative',
+                      style: 'Hyperlink',
+                    })],
+                  }),
+                ],
+              }));
+            }
+          }
+          return;
+        }
+      }
+
       // Non-FRD inner headings stay as informational indented text. We
       // don't bookmark inner markdown headings (no stable anchor target),
       // so making them hyperlinks would lead nowhere. Section-level
@@ -893,7 +1197,9 @@ export class BaArtifactExportService {
     const minRaw = Math.min(...collected.map((c) => c.rawLevel));
     return collected
       .map((c) => ({ text: c.text, depth: (c.rawLevel === minRaw ? 2 : 3) as 2 | 3 }))
-      .slice(0, 50);
+      // Bumped from 50 for the FTC pilot — see the matching comment in
+      // `templates/artifact-html.ts::extractInnerHeadings`.
+      .slice(0, 500);
   }
 
   /**
