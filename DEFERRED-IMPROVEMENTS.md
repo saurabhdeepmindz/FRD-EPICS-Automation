@@ -65,6 +65,8 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ## 1. Word/PDF export formatting parity with preview view
 
+**Status (2026-05-06):** In flight on branch `feat/export-parity-frd-pilot`. Rollback anchor tag `pre-export-pilot-v1`. Pre/post checklist now exists at `scripts/checklists/export-artifact.ts` and is wired into `run-cascade.ts` via `--validateExports=FRD,EPIC,USER_STORY,SUBTASK`.
+
 **Symptom:** When a user generates a Word (.docx) or PDF export of an FRD/EPIC/User Story/SubTask artifact, the document layout differs noticeably from the in-app preview view. Cover page styling, fonts, section spacing, color theme, and overall presentation are not as polished as the preview.
 
 **Why it matters:** The preview is what stakeholders see during review; the export is what they share/print/sign. They should be visually equivalent so the user doesn't have to apologize for "the export looks different."
