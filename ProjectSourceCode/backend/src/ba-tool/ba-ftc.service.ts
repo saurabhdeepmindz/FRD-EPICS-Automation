@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseFrdContent } from './templates/frd-parser';
+import { extractScreenIds } from './templates/screen-utils';
 
 export interface FtcConfigPayload {
   /** Multi-select since v4.3. See `testingFramework` for the legacy singular shape. */
@@ -121,6 +123,71 @@ export class BaFtcService {
       where: { artifactDbId },
       orderBy: [{ parentTestCaseId: 'asc' }, { testCaseId: 'asc' }],
     });
+  }
+
+  /**
+   * Parse the same-module FRD's features and return two enrichment maps
+   * the FTC preview uses for Gap A:
+   *   - `featureNames`: featureId → human-readable feature name
+   *   - `featureScreenRefs`: featureId → array of `SCR-NN` IDs the feature
+   *     references via its `Screen Reference:` line
+   *
+   * Both maps are empty when the artifact isn't FTC, has no module, has
+   * no sibling FRD, or the FRD parser returns no features. The method
+   * never throws — degraded inputs result in empty payloads so the
+   * preview falls back to bare IDs without an error toast.
+   */
+  async getSiblingFrdFeatures(artifactDbId: string): Promise<{
+    featureNames: Record<string, string>;
+    featureScreenRefs: Record<string, string[]>;
+  }> {
+    const empty = { featureNames: {}, featureScreenRefs: {} };
+
+    const artifact = await this.prisma.baArtifact.findUnique({
+      where: { id: artifactDbId },
+      select: { artifactType: true, moduleDbId: true },
+    });
+    if (!artifact || artifact.artifactType !== 'FTC') return empty;
+
+    // A module can carry several FRD artifacts (legacy/superseded versions
+    // alongside the current one). BaModule has no canonical `frdArtifactId`
+    // pointer like it does for LLD/FTC, so we have to enumerate. Try them
+    // in approval/recency order and return the first parse that yields
+    // features — that's the one the editor's tree currently displays.
+    const candidates = await this.prisma.baArtifact.findMany({
+      where: { moduleDbId: artifact.moduleDbId, artifactType: 'FRD' },
+      include: { sections: { orderBy: { createdAt: 'asc' } } },
+      orderBy: [
+        { status: 'desc' },     // APPROVED > CONFIRMED > CONFIRMED_PARTIAL > DRAFT (alphabetical desc by enum string)
+        { approvedAt: 'desc' }, // Nulls trail by default in Prisma's desc order
+        { updatedAt: 'desc' },
+      ],
+    });
+    if (candidates.length === 0) return empty;
+
+    for (const frd of candidates) {
+      try {
+        const parsed = parseFrdContent(frd.sections.map((s) => ({
+          sectionKey: s.sectionKey,
+          sectionLabel: s.sectionLabel,
+          content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+        })));
+        if (parsed.features.length === 0) continue;
+
+        const featureNames: Record<string, string> = {};
+        const featureScreenRefs: Record<string, string[]> = {};
+        for (const f of parsed.features) {
+          if (!f.featureId) continue;
+          featureNames[f.featureId] = f.featureName ?? f.featureId;
+          const ids = extractScreenIds(f.screenRef);
+          if (ids.length > 0) featureScreenRefs[f.featureId] = ids;
+        }
+        return { featureNames, featureScreenRefs };
+      } catch {
+        // Try the next candidate.
+      }
+    }
+    return empty;
   }
 
   async getTestCase(id: string) {

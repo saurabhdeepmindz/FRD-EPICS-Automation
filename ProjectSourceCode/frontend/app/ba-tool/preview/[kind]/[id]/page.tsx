@@ -13,6 +13,7 @@ import {
   updateBaProject,
   listPseudoFilesByArtifact,
   listTestCasesByArtifact,
+  getFtcSiblingFrdFeatures,
   downloadPseudoFile,
   downloadPseudoFilesZip,
   downloadProjectStructureZip,
@@ -188,6 +189,12 @@ export default function BaPreviewPage() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [pseudoFiles, setPseudoFiles] = useState<BaPseudoFile[]>([]);
   const [testCases, setTestCases] = useState<BaTestCase[]>([]);
+  /**
+   * FTC pilot Gap A — `featureId → SCR-NN[]` map sourced from the same
+   * module's FRD. Empty for non-FTC artifacts or when there's no sibling
+   * FRD with parseable features.
+   */
+  const [featureScreenRefs, setFeatureScreenRefs] = useState<Record<string, string[]>>({});
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -215,13 +222,19 @@ export default function BaPreviewPage() {
         // preview still renders the canonical text sections.
         if (a.artifactType === 'FTC') {
           try {
-            const tcs = await listTestCasesByArtifact(id);
+            const [tcs, frdSibling] = await Promise.all([
+              listTestCasesByArtifact(id),
+              getFtcSiblingFrdFeatures(id),
+            ]);
             setTestCases(tcs);
+            setFeatureScreenRefs(frdSibling.featureScreenRefs);
           } catch {
             setTestCases([]);
+            setFeatureScreenRefs({});
           }
         } else {
           setTestCases([]);
+          setFeatureScreenRefs({});
         }
       }
     } catch {
@@ -643,6 +656,13 @@ export default function BaPreviewPage() {
         for (const group of structure) {
           for (const fb of group.featureBuckets) {
             const groupLabel = `${group.label} · ${fb.featureLabel}`;
+            // FTC Gap A — resolve the bucket's feature ID to one or more
+            // `SCR-NN`s via the sibling-FRD map. Every TC in the bucket
+            // shares the bucket's `linkedFeatureIds[0]` (the bucket key),
+            // so the same screen IDs apply to all of them. Empty when
+            // there's no sibling FRD or the feature has no Screen
+            // Reference line.
+            const bucketScreenIds = featureScreenRefs[fb.featureId] ?? [];
             for (const tc of fb.testCases) {
               out.push({
                 id: `tc-${tc.id}`,
@@ -653,6 +673,7 @@ export default function BaPreviewPage() {
                 hasTbd: false,
                 isAi: !tc.isHumanModified,
                 isEdited: tc.isHumanModified,
+                inlineScreenIds: bucketScreenIds.length > 0 ? bucketScreenIds : undefined,
               });
             }
           }
@@ -670,7 +691,7 @@ export default function BaPreviewPage() {
       isAi: s.aiGenerated && !s.isHumanModified,
       isEdited: s.isHumanModified,
     }));
-  }, [doc, testCases]);
+  }, [doc, testCases, featureScreenRefs]);
 
   // Derived data
   const history = useMemo(() => {

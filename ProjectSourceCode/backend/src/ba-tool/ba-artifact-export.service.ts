@@ -94,7 +94,7 @@ export class BaArtifactExportService {
     // FRD feature names so the renderers can emit the editor tree's
     // category → feature → TC hierarchy with human-readable feature
     // labels. Both are no-ops when this isn't an FTC artifact.
-    const { testCases, frdFeatureNames } = await this.loadFtcExtras(artifact.id, artifact.artifactType, artifact.module.id);
+    const { testCases, frdFeatureNames, frdFeatureScreenRefs } = await this.loadFtcExtras(artifact.id, artifact.artifactType, artifact.module.id);
 
     return {
       artifactId: artifact.artifactId,
@@ -130,6 +130,7 @@ export class BaArtifactExportService {
       },
       ...(testCases ? { testCases } : {}),
       ...(frdFeatureNames ? { frdFeatureNames } : {}),
+      ...(frdFeatureScreenRefs ? { frdFeatureScreenRefs } : {}),
     };
   }
 
@@ -148,7 +149,11 @@ export class BaArtifactExportService {
     artifactDbId: string,
     artifactType: string,
     moduleDbId: string,
-  ): Promise<{ testCases?: BaArtifactDoc['testCases']; frdFeatureNames?: BaArtifactDoc['frdFeatureNames'] }> {
+  ): Promise<{
+    testCases?: BaArtifactDoc['testCases'];
+    frdFeatureNames?: BaArtifactDoc['frdFeatureNames'];
+    frdFeatureScreenRefs?: BaArtifactDoc['frdFeatureScreenRefs'];
+  }> {
     if (artifactType !== 'FTC') return {};
 
     const tcs = await this.prisma.baTestCase.findMany({
@@ -184,32 +189,50 @@ export class BaArtifactExportService {
       isHumanModified: t.isHumanModified,
     }));
 
-    // Look up the same-module FRD artifact's parsed features. Skipped
-    // silently when there's no FRD — the renderers fall back to bare
-    // `F-XX-YY` IDs in that case. Schema FK is `moduleDbId`, not
-    // `moduleId` (which is the human-readable string column).
-    const frd = await this.prisma.baArtifact.findFirst({
+    // Look up the same-module FRD's parsed features. The module can hold
+    // several FRD artifacts (legacy + current) and BaModule has no
+    // canonical `frdArtifactId` pointer, so enumerate them in
+    // status/recency order and use the first one whose parser actually
+    // returns features. Schema FK is `moduleDbId`, not `moduleId` (which
+    // is the human-readable string column).
+    const frdCandidates = await this.prisma.baArtifact.findMany({
       where: { moduleDbId, artifactType: 'FRD' },
       include: { sections: { orderBy: { createdAt: 'asc' } } },
+      orderBy: [
+        { status: 'desc' },
+        { approvedAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
     });
     let frdFeatureNames: BaArtifactDoc['frdFeatureNames'];
-    if (frd) {
+    let frdFeatureScreenRefs: BaArtifactDoc['frdFeatureScreenRefs'];
+    for (const frd of frdCandidates) {
       try {
         const parsed = parseFrdContent(frd.sections.map((s: { sectionKey: string; sectionLabel: string; content: string; isHumanModified: boolean; editedContent: string | null }) => ({
           sectionKey: s.sectionKey,
           sectionLabel: s.sectionLabel,
           content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
         })));
+        if (parsed.features.length === 0) continue;
         frdFeatureNames = {};
+        frdFeatureScreenRefs = {};
         for (const f of parsed.features) {
-          if (f.featureId) frdFeatureNames[f.featureId] = f.featureName ?? f.featureId;
+          if (!f.featureId) continue;
+          frdFeatureNames[f.featureId] = f.featureName ?? f.featureId;
+          // The FRD parser stores the raw "Screen Reference:" value as
+          // free text (e.g. "SCR-28 — Reset Password" or "SCR-30, SCR-31").
+          // Pluck out the SCR-NN tokens so the renderers can resolve them
+          // to the module's `BaScreen` rows by ID.
+          const ids = extractScreenIds(f.screenRef);
+          if (ids.length > 0) frdFeatureScreenRefs[f.featureId] = ids;
         }
+        break;
       } catch {
-        // FRD parse failed — fall back to bare IDs (frdFeatureNames stays undefined).
+        // Try the next candidate.
       }
     }
 
-    return { testCases, frdFeatureNames };
+    return { testCases, frdFeatureNames, frdFeatureScreenRefs };
   }
 
   async renderHtml(artifactId: string): Promise<{ html: string; fileStem: string; typeLabel: string }> {
@@ -488,7 +511,11 @@ export class BaArtifactExportService {
       if (ftcStructure && section.sectionKey.startsWith('ftc_')) {
         const group = this.findFtcGroupForSection(section.sectionKey, ftcStructure);
         if (group) {
-          const blocks = this.buildFtcCategoryBlocks(group);
+          const blocks = this.buildFtcCategoryBlocks(
+            group,
+            doc.frdFeatureScreenRefs ?? {},
+            doc.module.screens ?? [],
+          );
           for (const node of blocks) children.push(node);
           children.push(new Paragraph({ text: '' }));
           continue;
@@ -546,8 +573,14 @@ export class BaArtifactExportService {
    * body. Empty fields are skipped to keep the page count tractable on
    * 150+ test-case artifacts.
    */
-  private buildFtcCategoryBlocks(group: FtcCategoryGroup): Array<Paragraph | Table> {
+  private buildFtcCategoryBlocks(
+    group: FtcCategoryGroup,
+    featureScreenRefs: Record<string, string[]>,
+    screens: BaArtifactDoc['module']['screens'],
+  ): Array<Paragraph | Table> {
     const out: Array<Paragraph | Table> = [];
+    const screenList = screens ?? [];
+    const screenById = new Map(screenList.map((s) => [s.screenId, s] as const));
 
     for (const fb of group.featureBuckets) {
       const featBookmarkId = this.bookmarkIdFor(`ftc_feat_${group.key}_${fb.featureId}`);
@@ -556,6 +589,15 @@ export class BaArtifactExportService {
         featBookmarkId,
         HeadingLevel.HEADING_2,
       ));
+
+      // Resolve this feature's screenRefs once per bucket — every TC in
+      // the bucket maps to the same feature, and most map to the same
+      // first-feature screen. Skipped silently when the FTC has no
+      // sibling FRD or the feature has no `Screen Reference:` line.
+      const featScreenIds = featureScreenRefs[fb.featureId] ?? [];
+      const featScreens = featScreenIds
+        .map((sid) => screenById.get(sid))
+        .filter((s): s is NonNullable<typeof s> => Boolean(s));
 
       for (const tc of fb.testCases) {
         const tcBookmarkId = this.bookmarkIdFor(`ftc_tc_${tc.id}`);
@@ -597,6 +639,42 @@ export class BaArtifactExportService {
               size: DOCX_FONT_HALF_PTS.caption,
             })],
           }));
+        }
+
+        // FTC Gap A — inline screen card for this TC. Resolution path:
+        //   tc.linkedFeatureIds[0] → frdFeatureScreenRefs[fid] → BaScreen rows.
+        // Reuses the per-feature bucket's resolved screens because every TC
+        // in the bucket shares the same `linkedFeatureIds[0]` (the bucket
+        // key). Skipped silently when nothing resolves.
+        for (const screen of featScreens) {
+          out.push(new Paragraph({
+            spacing: { before: 80, after: 40 },
+            children: [
+              new TextRun({
+                text: `${screen.screenId} — ${screen.screenTitle}`,
+                size: DOCX_FONT_HALF_PTS.caption,
+                font: 'Consolas',
+                color: COLORS.idRefFg,
+                shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+              }),
+            ],
+          }));
+          const decoded = this.decodeScreenImage(screen.fileData);
+          if (!decoded) continue;
+          try {
+            out.push(new Paragraph({
+              spacing: { before: 0, after: 120 },
+              children: [
+                new ImageRun({
+                  data: decoded.buffer,
+                  transformation: this.scaleImageForDocx(decoded.width, decoded.height, 420),
+                  type: decoded.type,
+                }),
+              ],
+            }));
+          } catch (err) {
+            this.logger.warn(`Failed inline TC screen embed ${screen.screenId} for ${tc.testCaseId}: ${(err as Error).message}`);
+          }
         }
 
         // Body fields — flow through `markdownBlocksToDocx` so bullets /

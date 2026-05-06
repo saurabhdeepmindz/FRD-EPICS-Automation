@@ -104,6 +104,15 @@ export interface BaArtifactDoc {
    * render `F-05-01 — Reset Password` instead of the bare ID.
    */
   frdFeatureNames?: Record<string, string>;
+  /**
+   * Populated only for FTC artifacts when the same module also has an FRD.
+   * Maps `F-XX-YY` to the screen IDs (`SCR-NN`) that feature references
+   * via its FRD `Screen Reference:` line. Drives Gap A — per-TC inline
+   * screen cards: each TC's `linkedFeatureIds[0]` resolves to a feature,
+   * which resolves to one or more screens, which the renderer splices in
+   * directly under the TC heading.
+   */
+  frdFeatureScreenRefs?: Record<string, string[]>;
 }
 
 // v4: LLD artifacts are distinct from the other types — they carry their own
@@ -687,6 +696,89 @@ function injectFeatureScreens(
   return result;
 }
 
+/**
+ * FTC Gap A — splice a screen thumbnail directly under each `### TC-…`
+ * heading in a rendered FTC category section.
+ *
+ * Walks the markdown source so we can track which feature each TC belongs
+ * to (the H2 above it), then resolves that feature ID through
+ * `frdFeatureScreenRefs` to one or more `SCR-NN` IDs, then to the actual
+ * `BaScreen` rows. The same slugifier that `renderMarkdown` uses gives us
+ * the heading anchor IDs, so we splice the markup in by anchor (robust
+ * against whatever `renderInline` did to the heading text).
+ *
+ * Falls through silently when:
+ *   - the FTC artifact has no sibling FRD (no screenRefs map);
+ *   - the section's markdown has no recognisable feature/TC heading
+ *     pattern (a degraded restructure shouldn't produce broken markup);
+ *   - a referenced screen ID isn't present in `module.screens` (SCR-NN
+ *     points at a screen that was never uploaded).
+ */
+function injectFtcTcScreens(
+  html: string,
+  rawMarkdown: string,
+  parentSlug: string,
+  featureScreenRefs: Record<string, string[]>,
+  screens: Array<{ screenId: string; screenTitle: string; fileData: string }>,
+): string {
+  if (!html || !rawMarkdown || !parentSlug) return html;
+  if (screens.length === 0) return html;
+  if (Object.keys(featureScreenRefs).length === 0) return html;
+
+  const screenById = new Map(screens.map((s) => [s.screenId, s] as const));
+
+  // Pre-walk the markdown source so we know which TC heading belongs to
+  // which feature (the most recent H2 above it). The anchor IDs use the
+  // same slugifier `renderMarkdown` produces, so the regex match by `id="…"`
+  // is exact.
+  const lines = rawMarkdown.split(/\r?\n/);
+  const tcAnchorToScreenIds = new Map<string, string[]>();
+  let currentFeatureId: string | null = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // H2 feature heading — accepts `## F-XX-YY` or `## F-XX-YY — Name` or
+    // `## F-XX-YY: Name`. The restructurer emits the em-dash form, but
+    // be lenient.
+    const featMatch = /^##\s+(F-\d+-\d+)\b/i.exec(trimmed);
+    if (featMatch) {
+      currentFeatureId = featMatch[1].toUpperCase();
+      continue;
+    }
+    // H3 TC heading — anything starting with TC-…, Neg_TC-…, etc. We don't
+    // try to match the test ID format too tightly because the AI varies
+    // (e.g. `Neg_TC-05-01-002`, `TC-05-01-001`, `TC-05-01-INT-01`).
+    const tcMatch = /^###\s+(.+)$/.exec(trimmed);
+    if (tcMatch && currentFeatureId) {
+      const screenIds = featureScreenRefs[currentFeatureId];
+      if (screenIds && screenIds.length > 0) {
+        const tcAnchor = `${parentSlug}__${slug(tcMatch[1]) || 'heading'}`;
+        tcAnchorToScreenIds.set(tcAnchor, screenIds);
+      }
+    }
+  }
+  if (tcAnchorToScreenIds.size === 0) return html;
+
+  let result = html;
+  for (const [anchor, screenIds] of tcAnchorToScreenIds) {
+    const tiles = screenIds
+      .map((sid) => {
+        const screen = screenById.get(sid);
+        if (!screen) return '';
+        return `<div class="feature-screen-inline">
+          <div class="fs-caption">${esc(screen.screenId)} — ${esc(screen.screenTitle)}</div>
+          <img src="${esc(screen.fileData)}" alt="${esc(screen.screenTitle)}"/>
+        </div>`;
+      })
+      .filter((t) => t.length > 0)
+      .join('');
+    if (!tiles) continue;
+    const reAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(<h[1-6][^>]*\\sid="${reAnchor}"[^>]*>[\\s\\S]*?<\\/h[1-6]>)`, 'i');
+    result = result.replace(re, `$1${tiles}`);
+  }
+  return result;
+}
+
 // ─── Top-level renderer ─────────────────────────────────────────────────────
 
 export function generateBaArtifactHtml(input: BaArtifactDoc): string {
@@ -726,13 +818,31 @@ export function generateBaArtifactHtml(input: BaArtifactDoc): string {
     })),
   );
 
+  // FTC Gap A — sibling-FRD feature → screen-IDs map. Empty for non-FTC
+  // artifacts; `injectFtcTcScreens` no-ops in that case.
+  const ftcFeatureScreenRefs = doc.frdFeatureScreenRefs ?? {};
+
   const sectionHtml = enriched
     .map(({ section: s, idx, slug: sectionSlug, content }) => {
       const badges: string[] = [];
       if (s.aiGenerated && !s.isHumanModified) badges.push('<span class="badge badge-ai">AI</span>');
       if (s.isHumanModified) badges.push('<span class="badge badge-edited">Edited</span>');
       const renderedBody = renderMarkdown(content, sectionSlug);
-      const bodyWithScreens = injectFeatureScreens(renderedBody, content, sectionSlug, screensForEnrichment);
+      let bodyWithScreens = injectFeatureScreens(renderedBody, content, sectionSlug, screensForEnrichment);
+      // FTC synthetic category sections (sectionKey starts with `ftc_`)
+      // get the per-TC inline screen card spliced under each `### TC-…`
+      // heading. The post-pass walks the source markdown to learn which
+      // feature each TC belongs to, then resolves the feature's
+      // screenRefs to actual BaScreen rows.
+      if (doc.artifactType === 'FTC' && s.sectionKey.startsWith('ftc_')) {
+        bodyWithScreens = injectFtcTcScreens(
+          bodyWithScreens,
+          content,
+          sectionSlug,
+          ftcFeatureScreenRefs,
+          screensForEnrichment,
+        );
+      }
       return `<section id="sec-${sectionSlug}" class="doc-section">
         <h2>${idx + 1}. ${esc(s.sectionLabel || s.sectionKey)} ${badges.join(' ')}</h2>
         <div class="section-body">${bodyWithScreens}</div>
