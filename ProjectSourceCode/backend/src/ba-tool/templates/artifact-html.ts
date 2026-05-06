@@ -2,10 +2,15 @@
  * Generic HTML renderer for BA Tool artifacts (FRD, EPIC, User Story, SubTask).
  * Produces a self-contained HTML document with:
  *   - Cover page (project productName / client / submittedBy / date / status)
- *   - Table of Contents
- *   - Sections
+ *   - Nested Table of Contents (mirrors the preview tree depth: section →
+ *     subsection → feature)
+ *   - Sections (with per-feature inline screen thumbnails when feature
+ *     headings carry a `Screen Reference: SCR-NN` line)
  *   - Document History (derived from section timestamps)
  *   - Revision appendix
+ *
+ * Styling is consumed from `./artifact-style.ts` so the DOCX side and this
+ * template stay visually aligned (single source of truth for tokens).
  *
  * Design note: BA artifacts don't yet have a dedicated audit-log table, so the
  * "Document History" is a best-effort reconstruction from each section's
@@ -13,6 +18,7 @@
  * `BaArtifactAuditLog` model is added, this template can be extended to
  * consume it — the shape mirrors `PrdAuditLog` deliberately.
  */
+import { buildArtifactCss, statusKindFor } from './artifact-style';
 
 export interface BaSectionLite {
   id: string;
@@ -114,8 +120,12 @@ export function enrichScreenReferences(
 // ─── Minimal markdown → HTML renderer ───────────────────────────────────────
 // Handles headings, lists, tables (pipe-syntax), code fences, bold/italic/inline
 // code, horizontal rules, blockquotes and paragraphs. No external deps.
+//
+// `parentSlug` (optional): when provided, every emitted heading gets an
+// `id="parentSlug__<heading-slug>"` attribute so the nested TOC can deep-link
+// into specific sub-features. Pass an empty string to disable anchor IDs.
 
-export function renderMarkdown(md: string): string {
+export function renderMarkdown(md: string, parentSlug = ''): string {
   const lines = md.split(/\r?\n/);
   const out: string[] = [];
   let i = 0;
@@ -226,7 +236,9 @@ export function renderMarkdown(md: string): string {
     const hMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
     if (hMatch) {
       const level = hMatch[1].length;
-      out.push(`<h${level + 2}>${renderInline(hMatch[2])}</h${level + 2}>`);
+      const headingText = hMatch[2];
+      const anchor = parentSlug ? ` id="${parentSlug}__${slug(headingText)}"` : '';
+      out.push(`<h${level + 2}${anchor}>${renderInline(headingText)}</h${level + 2}>`);
       i++; continue;
     }
 
@@ -486,6 +498,142 @@ function renderInline(text: string): string {
   return s;
 }
 
+// ─── Nested TOC + per-feature inline screens ────────────────────────────────
+
+interface InnerHeading {
+  text: string;
+  slug: string;       // namespaced slug ready for an href
+  // Normalised TOC depth: 2 = first inner level, 3 = second inner level.
+  // Derived from the shallowest markdown heading depth seen in the section,
+  // so a section emitting only `####` headings still renders its first
+  // level as TOC depth 2 (immediately under the section's depth-1 entry).
+  depth: 2 | 3;
+}
+
+/**
+ * Pre-walk a section's markdown body to extract inner headings, normalising
+ * their depth so the TOC indents look uniform regardless of which heading
+ * level the LLM happened to pick.
+ *
+ * Headings inside fenced code blocks are skipped — they're code, not nav.
+ */
+function extractInnerHeadings(md: string, parentSlug: string): InnerHeading[] {
+  const lines = md.split(/\r?\n/);
+  let inFence = false;
+  const collected: Array<{ text: string; rawLevel: number }> = [];
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (/^```/.test(t)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = /^(#{1,6})\s+(.*)$/.exec(t);
+    if (!m) continue;
+    collected.push({ text: m[2].trim(), rawLevel: m[1].length });
+  }
+  if (collected.length === 0) return [];
+  // Find the shallowest depth — that becomes "depth 2" in TOC.
+  const minRaw = Math.min(...collected.map((c) => c.rawLevel));
+  const seenSlugs = new Map<string, number>();
+  return collected
+    .map((c) => {
+      const baseSlug = slug(c.text) || 'heading';
+      const dupeIdx = (seenSlugs.get(baseSlug) ?? 0) + 1;
+      seenSlugs.set(baseSlug, dupeIdx);
+      const finalSlug = dupeIdx === 1 ? baseSlug : `${baseSlug}-${dupeIdx}`;
+      const depth: 2 | 3 = c.rawLevel === minRaw ? 2 : 3;
+      return { text: c.text, slug: `${parentSlug}__${finalSlug}`, depth };
+    })
+    // Cap to first 50 inner entries per section — beyond that the TOC
+    // becomes noise. Real-world FRD sections cap around ~15 features.
+    .slice(0, 50);
+}
+
+function buildNestedTocHtml(
+  sections: Array<{ slug: string; label: string; idx: number; inner: InnerHeading[] }>,
+): string {
+  const lis: string[] = [];
+  for (const s of sections) {
+    lis.push(`<li><a href="#sec-${s.slug}">${s.idx + 1}. ${esc(s.label)}</a></li>`);
+    for (const ih of s.inner) {
+      const cls = ih.depth === 2 ? 'toc-child' : 'toc-grandchild';
+      lis.push(`<li class="${cls}"><a href="#${ih.slug}">${esc(ih.text)}</a></li>`);
+    }
+  }
+  return `<ul>${lis.join('')}</ul>`;
+}
+
+/**
+ * After a section body is rendered to HTML, find feature headings of the
+ * form `<hN>F-XX-YY: Title</hN>` and inject an inline screen thumbnail
+ * directly after the heading. The thumbnail is resolved from the markdown
+ * source's `Screen Reference: SCR-NN` line associated with that feature.
+ *
+ * This implements DEFERRED-IMPROVEMENTS.md item #2 (per-feature inline
+ * screens). The standalone "Referenced Screens" appendix is kept at the
+ * top of the doc so readers can still see the full screen catalog at a
+ * glance — but the per-feature thumbnails make the body self-contained
+ * for someone reading feature-by-feature.
+ */
+function injectFeatureScreens(
+  html: string,
+  rawMarkdown: string,
+  parentSlug: string,
+  screens: Array<{ screenId: string; screenTitle: string; fileData: string }>,
+): string {
+  if (!html || !rawMarkdown || screens.length === 0 || !parentSlug) return html;
+  const screenById = new Map(screens.map((s) => [s.screenId, s]));
+
+  // Walk the markdown source, and for every `^####? F-XX-YY: ...` heading
+  // within ~60 lines find the associated `Screen Reference: SCR-NN` line.
+  // The same slugifier renderMarkdown uses gives us the heading's anchor
+  // id, so we can splice the thumbnail in by anchor — robust against
+  // renderInline wrapping the F-XX-YY in a `<span class="idref">`.
+  const lines = rawMarkdown.split(/\r?\n/);
+  const anchorToScreenId = new Map<string, string>();
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^#{2,4}\s+(F-\d+-\d+):\s*(.*)$/i.exec(lines[i].trim());
+    if (!m) continue;
+    const headingText = `${m[1]}:${m[2] ? ` ${m[2]}` : ''}`;
+    const anchor = `${parentSlug}__${slug(headingText) || 'heading'}`;
+    const startDepth = (lines[i].match(/^#+/) ?? [''])[0].length;
+    for (let j = i + 1; j < Math.min(lines.length, i + 60); j++) {
+      const nextHash = /^(#{1,6})\s/.exec(lines[j].trim());
+      if (nextHash && nextHash[1].length <= startDepth) break;
+      // Tolerates markdown emphasis around the label:
+      //   `Screen Reference: SCR-01`
+      //   `**Screen Reference:** SCR-01`
+      //   `_Screen Reference_: SCR-01`
+      const sm = /Screen\s+Reference[\s*_:]*\s*(SCR-\d+)/i.exec(lines[j]);
+      if (sm) {
+        anchorToScreenId.set(anchor, sm[1].toUpperCase());
+        break;
+      }
+    }
+  }
+
+  if (anchorToScreenId.size === 0) return html;
+
+  // Insert the thumbnail right AFTER the closing `</hN>` for each anchor.
+  // Matching by id makes us tolerant to whatever `renderInline` did to the
+  // heading text (idref spans, `<strong>`, etc.).
+  let result = html;
+  for (const [anchor, screenId] of anchorToScreenId) {
+    const screen = screenById.get(screenId);
+    if (!screen) continue;
+    const tile = `<div class="feature-screen-inline">
+      <div class="fs-caption">${esc(screenId)} — ${esc(screen.screenTitle)}</div>
+      <img src="${esc(screen.fileData)}" alt="${esc(screen.screenTitle)}"/>
+    </div>`;
+    // Anchor must match exactly. Escape regex meta characters in the slug.
+    const reAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(<h[1-6][^>]*\\sid="${reAnchor}"[^>]*>[\\s\\S]*?<\\/h[1-6]>)`, 'i');
+    result = result.replace(re, `$1${tile}`);
+  }
+  return result;
+}
+
 // ─── Top-level renderer ─────────────────────────────────────────────────────
 
 export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
@@ -493,29 +641,41 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
   const productName = doc.project.productName || doc.project.name;
   const sections = [...doc.sections].sort((a, b) => a.displayOrder - b.displayOrder);
 
-  const toc = sections
-    .map(
-      (s, idx) =>
-        `<li><a href="#sec-${slug(s.sectionKey || s.sectionLabel || String(idx))}">${idx + 1}. ${esc(s.sectionLabel || s.sectionKey)}</a></li>`,
-    )
-    .join('');
-
   // Customer-facing deliverables read better when bare SCR-NN references in
   // the section body carry the human screen title (e.g. `SCR-01 — Login`).
   // Enrichment is idempotent so manually-edited sections that already
   // include the title aren't double-stamped.
   const screensForEnrichment = doc.module.screens ?? [];
 
-  const sectionHtml = sections
-    .map((s, idx) => {
-      const rawContent = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
-      const content = enrichScreenReferences(rawContent || '', screensForEnrichment);
+  // Pre-compute slugs + inner headings per section so the nested TOC and
+  // the body anchor IDs stay in lockstep (same slug used for both).
+  const enriched = sections.map((s, idx) => {
+    const sectionSlug = slug(s.sectionKey || s.sectionLabel || String(idx));
+    const rawContent = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+    const content = enrichScreenReferences(rawContent || '', screensForEnrichment);
+    const inner = extractInnerHeadings(content || '', sectionSlug);
+    return { section: s, idx, slug: sectionSlug, content: content || '', inner };
+  });
+
+  const tocHtml = buildNestedTocHtml(
+    enriched.map((e) => ({
+      slug: e.slug,
+      label: e.section.sectionLabel || e.section.sectionKey,
+      idx: e.idx,
+      inner: e.inner,
+    })),
+  );
+
+  const sectionHtml = enriched
+    .map(({ section: s, idx, slug: sectionSlug, content }) => {
       const badges: string[] = [];
       if (s.aiGenerated && !s.isHumanModified) badges.push('<span class="badge badge-ai">AI</span>');
       if (s.isHumanModified) badges.push('<span class="badge badge-edited">Edited</span>');
-      return `<section id="sec-${slug(s.sectionKey || s.sectionLabel || String(idx))}" class="doc-section">
+      const renderedBody = renderMarkdown(content, sectionSlug);
+      const bodyWithScreens = injectFeatureScreens(renderedBody, content, sectionSlug, screensForEnrichment);
+      return `<section id="sec-${sectionSlug}" class="doc-section">
         <h2>${idx + 1}. ${esc(s.sectionLabel || s.sectionKey)} ${badges.join(' ')}</h2>
-        <div class="section-body">${renderMarkdown(content)}</div>
+        <div class="section-body">${bodyWithScreens}</div>
       </section>`;
     })
     .join('\n');
@@ -542,65 +702,7 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
 <head>
 <meta charset="UTF-8"/>
 <title>${esc(doc.artifactId)} — ${esc(typeLabel)}</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color: #0f172a; font-size: 11pt; line-height: 1.55; margin: 0; padding: 0; }
-  .container { max-width: 900px; margin: 0 auto; padding: 24px 32px; }
-  .cover { min-height: 900px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 80px 40px; page-break-after: always; }
-  .cover .eyebrow { letter-spacing: 0.18em; color: #64748b; font-size: 10pt; text-transform: uppercase; margin-bottom: 18px; }
-  .cover h1 { font-size: 26pt; margin: 0 0 8px; color: #0f172a; font-weight: 700; }
-  .cover .divider { width: 72px; height: 3px; background: #f97316; margin: 18px auto 28px; }
-  .cover dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 24px; margin-top: 32px; text-align: left; font-size: 11pt; }
-  .cover dt { color: #64748b; font-weight: 500; }
-  .cover dd { margin: 0; color: #0f172a; font-weight: 500; }
-  .history { page-break-after: always; padding: 40px 0 60px; }
-  .history h2 { font-size: 18pt; margin: 0 0 18px; }
-  table { width: 100%; border-collapse: collapse; margin: 10px 0 20px; font-size: 10pt; }
-  th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
-  th { background: #f8fafc; font-weight: 600; }
-  .toc { page-break-after: always; padding: 40px 0; }
-  .toc h2 { font-size: 18pt; margin: 0 0 14px; }
-  .toc ol { list-style: none; padding-left: 0; }
-  .toc li { padding: 4px 0; border-bottom: 1px dotted #e2e8f0; }
-  .toc a { color: #0f172a; text-decoration: none; }
-  .doc-section { margin: 28px 0; page-break-inside: avoid; }
-  .doc-section h2 { font-size: 14pt; color: #0f172a; margin: 0 0 10px; border-bottom: 2px solid #f97316; padding-bottom: 6px; }
-  .doc-section h3 { font-size: 12pt; color: #1e293b; margin: 18px 0 8px; }
-  .doc-section h4 { font-size: 11pt; color: #1e293b; margin: 12px 0 6px; font-weight: 600; }
-  .section-body p { margin: 6px 0; }
-  .section-body ul, .section-body ol { margin: 6px 0; padding-left: 22px; }
-  .section-body li { margin: 3px 0; }
-  .md-table { font-size: 9.5pt; }
-  .md-table th { background: #f1f5f9; }
-  .md-table tr:nth-child(even) td { background: #fafbfc; }
-  .badge { display: inline-block; font-size: 8pt; padding: 2px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; font-weight: 500; }
-  .badge-ai { background: #dbeafe; color: #1d4ed8; }
-  .badge-edited { background: #fef3c7; color: #b45309; }
-  .tbd { background: #fef3c7; color: #92400e; padding: 0 3px; border-radius: 3px; }
-  .idref { background: #ede9fe; color: #5b21b6; padding: 0 3px; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9.5pt; }
-  code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9.5pt; }
-  pre.code { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 9.5pt; }
-  pre.code code { background: none; padding: 0; }
-  blockquote { margin: 10px 0; padding: 8px 14px; border-left: 3px solid #cbd5e1; color: #475569; background: #f8fafc; }
-  hr { border: none; border-top: 1px solid #e2e8f0; margin: 18px 0; }
-  a { color: #2563eb; }
-  .status-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 9pt; font-weight: 500; }
-  .status-draft { background: #f1f5f9; color: #475569; }
-  .status-confirmed { background: #dbeafe; color: #1d4ed8; }
-  .status-approved { background: #dcfce7; color: #166534; }
-  .status-partial { background: #fef3c7; color: #b45309; }
-  .mermaid { background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 12px 0; overflow-x: auto; text-align: center; }
-  .mermaid svg { max-width: 100%; height: auto; }
-  .kv-block { margin: 10px 0 16px; }
-  .kv-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-  .kv-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
-  .kv-table th.kv-key { width: 30%; background: #f8fafc; font-weight: 600; text-align: left; vertical-align: top; padding: 6px 10px; border: 1px solid #e2e8f0; }
-  .kv-table td.kv-val { padding: 6px 10px; border: 1px solid #e2e8f0; vertical-align: top; }
-  .kv-table tr:nth-child(even) td.kv-val { background: #fafbfc; }
-  .tree-block { margin: 10px 0 16px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
-  .tree-block .tree-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; padding: 6px 10px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
-  .tree-block pre { margin: 0; padding: 10px 12px; background: #fafbfc; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9pt; white-space: pre; overflow-x: auto; }
-</style>
+<style>${buildArtifactCss()}</style>
 <!-- Mermaid script for UML diagrams. Rendered client-side in the browser
      and also during PDF capture inside Puppeteer. Loaded from CDN for
      zero-config; falls back gracefully (fenced source block visible) if
@@ -630,7 +732,7 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
       <dt>Client Name:</dt><dd>${esc(doc.project.clientName ?? '—')}</dd>
       <dt>Submitted By:</dt><dd>${esc(doc.project.submittedBy ?? '—')}</dd>
       <dt>Date:</dt><dd>${formatDate(doc.updatedAt)}</dd>
-      <dt>Status:</dt><dd><span class="status-chip status-${statusClass(doc.status)}">${esc(doc.status.replace(/_/g, ' '))}</span></dd>
+      <dt>Status:</dt><dd><span class="status-chip status-${statusKindFor(doc.status)}">${esc(doc.status.replace(/_/g, ' '))}</span></dd>
     </dl>
   </div>
 
@@ -642,10 +744,10 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
       : '<p><em>No edits or AI generations recorded.</em></p>'}
   </div>
 
-  <!-- Table of Contents -->
+  <!-- Table of Contents (nested: section → inner heading → feature) -->
   <div class="toc">
     <h2>Table of Contents</h2>
-    <ol>${toc}</ol>
+    ${tocHtml}
   </div>
 
   ${renderScreensBlock(doc)}
@@ -687,30 +789,12 @@ function renderScreensBlock(doc: BaArtifactDoc): string {
         <div class="screen-title">${esc(s.screenTitle)}</div>
       </div>
     </div>`).join('');
+  // Cover-grid catalog of every screen (kept as appendix for full inventory).
+  // CSS for .screens / .screen-tile / .screen-grid lives in artifact-style.ts
+  // so this stays a pure markup function.
   return `
   <div class="screens">
     <h2>Referenced Screens <span class="count">(${screens.length})</span></h2>
     <div class="screen-grid">${tiles}</div>
-  </div>
-  <style>
-    .screens { page-break-inside: avoid; padding: 30px 0 10px; }
-    .screens h2 { font-size: 14pt; border-bottom: 2px solid #f97316; padding-bottom: 6px; margin-bottom: 14px; }
-    .screens h2 .count { font-size: 9pt; color: #94a3b8; font-weight: normal; margin-left: 6px; }
-    .screen-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .screen-tile { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; background: #fff; page-break-inside: avoid; }
-    .screen-img { background: #f8fafc; height: 220px; display: flex; align-items: center; justify-content: center; }
-    .screen-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .screen-meta { padding: 8px 10px; border-top: 1px solid #e2e8f0; }
-    .screen-meta .screen-id { display: inline-block; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9pt; background: #ede9fe; color: #5b21b6; padding: 1px 6px; border-radius: 3px; }
-    .screen-meta .screen-type { font-size: 9pt; color: #64748b; margin-left: 6px; }
-    .screen-title { font-size: 10pt; color: #0f172a; font-weight: 500; margin-top: 4px; }
-  </style>`;
-}
-
-function statusClass(status: string): string {
-  const s = status.toLowerCase();
-  if (s.includes('approved')) return 'approved';
-  if (s.includes('partial')) return 'partial';
-  if (s.includes('confirmed')) return 'confirmed';
-  return 'draft';
+  </div>`;
 }
