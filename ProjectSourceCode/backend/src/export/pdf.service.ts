@@ -38,7 +38,13 @@ export class PdfService {
     });
     try {
       const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'networkidle0' });
+      // Default 30s page navigation timeout is too tight for large FTC
+      // exports that embed 150+ inline screen images. Bump for both the
+      // setContent stage and the page-default. A 5-minute ceiling is
+      // generous but still much shorter than the express request timeout.
+      page.setDefaultNavigationTimeout(300_000);
+      page.setDefaultTimeout(300_000);
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 300_000 });
 
       // If the page has Mermaid diagrams, wait for them to finish rendering
       // so the PDF captures the SVG output, not the raw code blocks.
@@ -66,6 +72,7 @@ export class PdfService {
         printBackground: true,
         margin: { top: '25mm', right: '15mm', bottom: '20mm', left: '15mm' },
         displayHeaderFooter: true,
+        timeout: 300_000,
         headerTemplate:
           `<div style="font-size:9px;text-align:center;width:100%;color:#94a3b8;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">${escapeHtml(headerLabel)}</div>`,
         footerTemplate:
@@ -73,7 +80,19 @@ export class PdfService {
       });
       return Buffer.from(pdfBuffer);
     } finally {
-      await browser.close();
+      // Windows-only puppeteer race: Chrome holds a lockfile inside its
+      // auto-generated temp profile (e.g. `first_party_sets.db`) for a
+      // few hundred ms after the browser exits, and `browser.close()`
+      // tries to delete the directory immediately and throws EBUSY. The
+      // PDF buffer is already produced by the time we hit `finally`, so
+      // letting the close error surface would discard a successful
+      // export. Swallow + log instead. The orphaned temp dir is cleaned
+      // up by Windows TempFileCleaner / next reboot.
+      try {
+        await browser.close();
+      } catch (err) {
+        this.logger.warn(`puppeteer cleanup failed (non-fatal, PDF already generated): ${(err as Error).message}`);
+      }
     }
   }
 }

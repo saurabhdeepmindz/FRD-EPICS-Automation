@@ -697,24 +697,28 @@ function injectFeatureScreens(
 }
 
 /**
- * FTC Gap A — splice a screen thumbnail directly under each `### TC-…`
+ * FTC Gap A — splice a screen thumbnail under each `## F-XX-YY` feature
  * heading in a rendered FTC category section.
  *
- * Walks the markdown source so we can track which feature each TC belongs
- * to (the H2 above it), then resolves that feature ID through
- * `frdFeatureScreenRefs` to one or more `SCR-NN` IDs, then to the actual
- * `BaScreen` rows. The same slugifier that `renderMarkdown` uses gives us
- * the heading anchor IDs, so we splice the markup in by anchor (robust
- * against whatever `renderInline` did to the heading text).
+ * Originally this fired per `### TC-…` heading (one tile per test case).
+ * For a 156-TC module that meant ~150 inline base64 images in a single
+ * HTML payload — Chrome (via Puppeteer) crashed with `TargetCloseError`
+ * on the PDF render path because the input HTML hit the renderer's
+ * memory ceiling. The screen card is the same for every TC in a feature
+ * bucket (they all share `linkedFeatureIds[0]`), so attaching the card
+ * to the parent feature heading once gives the testing team the same
+ * information at ~3-4× lower image count and keeps the PDF render
+ * within Chrome's memory envelope. Each TC reads in the context of its
+ * parent feature heading, which already shows the screen.
  *
  * Falls through silently when:
  *   - the FTC artifact has no sibling FRD (no screenRefs map);
- *   - the section's markdown has no recognisable feature/TC heading
+ *   - the section's markdown has no recognisable feature heading
  *     pattern (a degraded restructure shouldn't produce broken markup);
  *   - a referenced screen ID isn't present in `module.screens` (SCR-NN
  *     points at a screen that was never uploaded).
  */
-function injectFtcTcScreens(
+function injectFtcFeatureScreens(
   html: string,
   rawMarkdown: string,
   parentSlug: string,
@@ -727,39 +731,28 @@ function injectFtcTcScreens(
 
   const screenById = new Map(screens.map((s) => [s.screenId, s] as const));
 
-  // Pre-walk the markdown source so we know which TC heading belongs to
-  // which feature (the most recent H2 above it). The anchor IDs use the
-  // same slugifier `renderMarkdown` produces, so the regex match by `id="…"`
-  // is exact.
+  // Walk the markdown source for `## F-XX-YY …` feature headings. The
+  // anchor IDs use the same slugifier `renderMarkdown` produces, so the
+  // regex match by `id="…"` is exact.
   const lines = rawMarkdown.split(/\r?\n/);
-  const tcAnchorToScreenIds = new Map<string, string[]>();
-  let currentFeatureId: string | null = null;
+  const featAnchorToScreenIds = new Map<string, string[]>();
   for (const line of lines) {
     const trimmed = line.trim();
-    // H2 feature heading — accepts `## F-XX-YY` or `## F-XX-YY — Name` or
-    // `## F-XX-YY: Name`. The restructurer emits the em-dash form, but
-    // be lenient.
     const featMatch = /^##\s+(F-\d+-\d+)\b/i.exec(trimmed);
-    if (featMatch) {
-      currentFeatureId = featMatch[1].toUpperCase();
-      continue;
-    }
-    // H3 TC heading — anything starting with TC-…, Neg_TC-…, etc. We don't
-    // try to match the test ID format too tightly because the AI varies
-    // (e.g. `Neg_TC-05-01-002`, `TC-05-01-001`, `TC-05-01-INT-01`).
-    const tcMatch = /^###\s+(.+)$/.exec(trimmed);
-    if (tcMatch && currentFeatureId) {
-      const screenIds = featureScreenRefs[currentFeatureId];
-      if (screenIds && screenIds.length > 0) {
-        const tcAnchor = `${parentSlug}__${slug(tcMatch[1]) || 'heading'}`;
-        tcAnchorToScreenIds.set(tcAnchor, screenIds);
-      }
-    }
+    if (!featMatch) continue;
+    // After the `##` strip, recover the heading text the slugifier saw —
+    // that's everything after the `## ` prefix on the same line.
+    const headingText = trimmed.replace(/^##\s+/, '');
+    const featureId = featMatch[1].toUpperCase();
+    const screenIds = featureScreenRefs[featureId];
+    if (!screenIds || screenIds.length === 0) continue;
+    const featAnchor = `${parentSlug}__${slug(headingText) || 'heading'}`;
+    featAnchorToScreenIds.set(featAnchor, screenIds);
   }
-  if (tcAnchorToScreenIds.size === 0) return html;
+  if (featAnchorToScreenIds.size === 0) return html;
 
   let result = html;
-  for (const [anchor, screenIds] of tcAnchorToScreenIds) {
+  for (const [anchor, screenIds] of featAnchorToScreenIds) {
     const tiles = screenIds
       .map((sid) => {
         const screen = screenById.get(sid);
@@ -830,12 +823,14 @@ export function generateBaArtifactHtml(input: BaArtifactDoc): string {
       const renderedBody = renderMarkdown(content, sectionSlug);
       let bodyWithScreens = injectFeatureScreens(renderedBody, content, sectionSlug, screensForEnrichment);
       // FTC synthetic category sections (sectionKey starts with `ftc_`)
-      // get the per-TC inline screen card spliced under each `### TC-…`
-      // heading. The post-pass walks the source markdown to learn which
-      // feature each TC belongs to, then resolves the feature's
-      // screenRefs to actual BaScreen rows.
+      // get an inline screen card spliced under each `## F-XX-YY` feature
+      // heading. Same screen applies to every TC inside the bucket, so
+      // attaching it to the parent feature heading is both visually
+      // sufficient and keeps the inline-image count tractable for the
+      // Puppeteer-driven PDF renderer (per-TC produced ~150 inline images
+      // and crashed Chrome with a memory error).
       if (doc.artifactType === 'FTC' && s.sectionKey.startsWith('ftc_')) {
-        bodyWithScreens = injectFtcTcScreens(
+        bodyWithScreens = injectFtcFeatureScreens(
           bodyWithScreens,
           content,
           sectionSlug,

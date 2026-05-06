@@ -42,6 +42,7 @@ import { parseFrdContent, type ParsedFeature } from './templates/frd-parser';
 import { extractScreenIds } from './templates/screen-utils';
 import { buildFtcStructure, type FtcCategoryGroup } from './templates/ftc-structure';
 import type { BaTestCaseLite } from './templates/artifact-html';
+import { compressScreensForHtml } from './templates/image-compress';
 
 // docx@9 ImageRun accepts these raster `type` values without a fallback.
 // SVG is supported by docx but requires a PNG fallback buffer; screens are
@@ -237,7 +238,20 @@ export class BaArtifactExportService {
 
   async renderHtml(artifactId: string): Promise<{ html: string; fileStem: string; typeLabel: string }> {
     const doc = await this.loadArtifactDoc(artifactId);
-    let html = generateBaArtifactHtml(doc);
+    // Compress screen images before they hit the HTML renderer. A fresh
+    // upload from `BaScreen.fileData` is ~1.5 MB; FTC artifacts can
+    // reference 60+ screens (one per feature bucket plus the catalog),
+    // and Chrome's PDF pipeline OOMs on 100+ MB HTML payloads. This
+    // resizes to ~600 px JPEG q72 — visually identical for catalog
+    // thumbnails, ~30× smaller. No-op when `sharp` is unavailable.
+    const compressedScreens = doc.module.screens
+      ? await compressScreensForHtml(doc.module.screens)
+      : doc.module.screens;
+    const docForHtml = {
+      ...doc,
+      module: { ...doc.module, screens: compressedScreens },
+    };
+    let html = generateBaArtifactHtml(docForHtml);
     // v4: for LLD artifacts, append the pseudo-file tree as a final appendix
     if (doc.artifactType === 'LLD') {
       const pseudoAppendix = await this.renderPseudoFilesAppendix(artifactId);
@@ -591,13 +605,47 @@ export class BaArtifactExportService {
       ));
 
       // Resolve this feature's screenRefs once per bucket — every TC in
-      // the bucket maps to the same feature, and most map to the same
-      // first-feature screen. Skipped silently when the FTC has no
-      // sibling FRD or the feature has no `Screen Reference:` line.
+      // the bucket maps to the same feature, so emit the screen card
+      // ONCE under the feature heading and let every TC below inherit
+      // the visual context. Avoids 150+ duplicated images that bloat
+      // the DOCX file and overwhelm Chrome on the PDF render path.
+      // Skipped silently when the FTC has no sibling FRD or the feature
+      // has no `Screen Reference:` line.
       const featScreenIds = featureScreenRefs[fb.featureId] ?? [];
       const featScreens = featScreenIds
         .map((sid) => screenById.get(sid))
         .filter((s): s is NonNullable<typeof s> => Boolean(s));
+
+      for (const screen of featScreens) {
+        out.push(new Paragraph({
+          spacing: { before: 80, after: 40 },
+          children: [
+            new TextRun({
+              text: `${screen.screenId} — ${screen.screenTitle}`,
+              size: DOCX_FONT_HALF_PTS.caption,
+              font: 'Consolas',
+              color: COLORS.idRefFg,
+              shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+            }),
+          ],
+        }));
+        const decoded = this.decodeScreenImage(screen.fileData);
+        if (!decoded) continue;
+        try {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 160 },
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 460),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed inline feature screen embed ${screen.screenId} in ${group.key}/${fb.featureId}: ${(err as Error).message}`);
+        }
+      }
 
       for (const tc of fb.testCases) {
         const tcBookmarkId = this.bookmarkIdFor(`ftc_tc_${tc.id}`);
@@ -641,41 +689,10 @@ export class BaArtifactExportService {
           }));
         }
 
-        // FTC Gap A — inline screen card for this TC. Resolution path:
-        //   tc.linkedFeatureIds[0] → frdFeatureScreenRefs[fid] → BaScreen rows.
-        // Reuses the per-feature bucket's resolved screens because every TC
-        // in the bucket shares the same `linkedFeatureIds[0]` (the bucket
-        // key). Skipped silently when nothing resolves.
-        for (const screen of featScreens) {
-          out.push(new Paragraph({
-            spacing: { before: 80, after: 40 },
-            children: [
-              new TextRun({
-                text: `${screen.screenId} — ${screen.screenTitle}`,
-                size: DOCX_FONT_HALF_PTS.caption,
-                font: 'Consolas',
-                color: COLORS.idRefFg,
-                shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
-              }),
-            ],
-          }));
-          const decoded = this.decodeScreenImage(screen.fileData);
-          if (!decoded) continue;
-          try {
-            out.push(new Paragraph({
-              spacing: { before: 0, after: 120 },
-              children: [
-                new ImageRun({
-                  data: decoded.buffer,
-                  transformation: this.scaleImageForDocx(decoded.width, decoded.height, 420),
-                  type: decoded.type,
-                }),
-              ],
-            }));
-          } catch (err) {
-            this.logger.warn(`Failed inline TC screen embed ${screen.screenId} for ${tc.testCaseId}: ${(err as Error).message}`);
-          }
-        }
+        // Note: the screen card was emitted once per feature bucket above
+        // (not once per TC). The screen applies to every TC in the bucket,
+        // so the per-feature emission is sufficient and keeps the file
+        // size + render time tractable on 150+ TC modules.
 
         // Body fields — flow through `markdownBlocksToDocx` so bullets /
         // bolds / SQL fences render as proper Word constructs. Skipping

@@ -658,12 +658,14 @@ export default function BaPreviewPage() {
             const groupLabel = `${group.label} · ${fb.featureLabel}`;
             // FTC Gap A — resolve the bucket's feature ID to one or more
             // `SCR-NN`s via the sibling-FRD map. Every TC in the bucket
-            // shares the bucket's `linkedFeatureIds[0]` (the bucket key),
-            // so the same screen IDs apply to all of them. Empty when
-            // there's no sibling FRD or the feature has no Screen
-            // Reference line.
+            // shares `linkedFeatureIds[0]` (the bucket key), so attach
+            // the screen card ONLY to the first TC. The remaining TCs
+            // sit immediately below and inherit the screen visually.
+            // Avoids the 150+ duplicated thumbnails that overwhelmed
+            // Chrome on the PDF render path; same approach in DOCX +
+            // HTML.
             const bucketScreenIds = featureScreenRefs[fb.featureId] ?? [];
-            for (const tc of fb.testCases) {
+            fb.testCases.forEach((tc, idx) => {
               out.push({
                 id: `tc-${tc.id}`,
                 label: `${tc.testCaseId} — ${tc.title}`,
@@ -673,9 +675,9 @@ export default function BaPreviewPage() {
                 hasTbd: false,
                 isAi: !tc.isHumanModified,
                 isEdited: tc.isHumanModified,
-                inlineScreenIds: bucketScreenIds.length > 0 ? bucketScreenIds : undefined,
+                inlineScreenIds: idx === 0 && bucketScreenIds.length > 0 ? bucketScreenIds : undefined,
               });
-            }
+            });
           }
         }
       }
