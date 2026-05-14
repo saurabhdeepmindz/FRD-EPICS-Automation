@@ -227,13 +227,42 @@ Open these files side-by-side in browser (HTML/PDF) and Word (DOCX):
 |---|---|---|---|---|
 | SKILL-00 | partial | n/a | — | OK |
 | **SKILL-01-S** | ✅ | ✅ `wrapSkill01SPrompt` | ✅ `validateSkill01SOutput` (9-attribute contract) | **Hardened** |
-| **SKILL-02-S** | ✅ | ✅ | ✅ `validateSkill02SOutput` (17-section EPIC) | **Hardened** |
-| **SKILL-04** | ✅ | ✅ | ✅ `validateSkill04Output` (27-section user story) | **Hardened** |
-| SKILL-05 | ❌ | ❌ | ❌ | **Deferred** — see DEFERRED-IMPROVEMENTS.md §0 |
+| **SKILL-02-S** | ✅ | ✅ `wrapSkill02SPrompt` | ✅ `validateSkill02SOutput` (17-section EPIC) | **Hardened** |
+| **SKILL-04** | ✅ | ✅ `callAiServiceSkill04PerFeature` focus override | ✅ `validateSkill04Output` (27-section user story) | **Hardened** |
+| **SKILL-05** | ✅ | ✅ `executeSkill05ForStory` focused prompt | ✅ `validateSkill05Output` (25-section SubTask) | **Hardened** |
 | SKILL-06-LLD | partial | — | — | LLD not yet in delivery scope |
 | SKILL-07-FTC | partial | n/a (per-mode orchestrator) | — | Mode-2b idempotency provides indirect defense |
 
-If a new module hits a SKILL-05 contract drift, follow DEFERRED §0 — that workstream lands SKILL-05's 3-layer defense. Until then, manual section-shape review of SubTask sections is recommended for any new module.
+Every LLM-driven skill in the customer-delivery path (SKILL-01-S → SKILL-05) now has the 3-layer contract enforcement at generation time. LLD (SKILL-06) and FTC (SKILL-07-FTC) remain partial — out of current delivery scope.
+
+## Render-side canonical restructurers (workstream A)
+
+Defense-in-depth complementary to the generation-time validators above. Even if the LLM's output drifts in shape, the render pipeline re-shapes the artifact into canonical form before PDF/DOCX emission. The export is therefore stable across LLM versions and prompt drift.
+
+| Artifact | Restructurer file | Canonical shape |
+|---|---|---|
+| FRD | `templates/frd-restructure.ts` | Features nested under canonical root + Business Rules / Validations / TBD-Future sibling sections |
+| **EPIC** | `templates/epic-restructure.ts` | 19 top-level sections (EPIC Header + FRD Feature IDs + Sections 1–17) — split from monolithic Introduction body |
+| **USER_STORY** | `templates/user-story-restructure.ts` | One section per US-NNN, sorted numerically, empty feature-group markers dropped, story names extracted where present |
+| **SUBTASK** | `templates/subtask-restructure.ts` | One section per ST-USNNN-TEAM-NN, grouped by story, sorted (story → team alpha → seq), story captions preserved |
+| FTC | `templates/ftc-restructure.ts` + `templates/ftc-structure.ts` | 16 canonical text sections + 6 synthetic category appendices synthesised from BaTestCase rows |
+| LLD | partial (`pseudoFiles` appendix) | Narrative through generic render + BaPseudoFile rows as appendix |
+
+The restructurers chain in `generateBaArtifactHtml`:
+
+```
+restructureFtcDoc(
+  restructureFrdDoc(
+    restructureEpicDoc(
+      restructureUserStoryDoc(
+        restructureSubtaskDoc(input)
+      )
+    )
+  )
+)
+```
+
+Each is a no-op when `artifactType` doesn't match — so callers chain unconditionally and only the relevant transformer runs.
 
 ---
 

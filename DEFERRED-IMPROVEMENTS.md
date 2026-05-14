@@ -31,7 +31,19 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
-## 0. Harden SKILL-05 with the same 3-layer defense applied to SKILL-02-S and SKILL-04 (Option B)
+## 0. ~~Harden SKILL-05 with the same 3-layer defense applied to SKILL-02-S and SKILL-04~~ — ✅ RESOLVED 2026-05-14
+
+**Status (2026-05-14):** Resolved on branch `feat/export-parity-frd-pilot`, commit `e147845`. All three layers in place:
+
+- **Layer 1 (prompt):** Forbidden Patterns + Self-check sections added to `Screen-FRD-EPICS-Automation-Skills/FINAL-SKILL-05-create-subtasks-v2.md`.
+- **Layer 2 (orchestrator):** `executeSkill05ForStory`'s `focusedPrompt` now carries the Forbidden Patterns + Self-check blocks inline so the contract is re-stated at the top of every per-story call.
+- **Layer 3 (validator):** New `validateSkill05Output()` invoked from `runSkillAsync` Step 5d. Splits humanDocument on `## ST-USNNN-TEAM-NN` headings, counts `#### Section N` markers (N=1..25) per SubTask, fails the exec on any incomplete coverage.
+
+Defense applies to all future SKILL-05 runs (MOD-06 onwards). Existing MOD-04 / MOD-05 SubTask data is NOT being re-generated — the current data was approved manually and is preserved. Should a future re-run be needed, the validator will catch any drift from the canonical 25-section template.
+
+---
+
+### Original problem (preserved for context)
 
 **Symptom:** SKILL-05 produces correct SubTasks for MOD-05 (63 stories → 276 BaSubTask, 21/21 RTM linked) and MOD-06 (in-flight at time of writing) under the current per-story append-mode loop. However, the skill is **not yet hardened** to the 3-layer defense standard now applied to SKILL-02-S (PR #3) and SKILL-04 (PR #4):
 
@@ -63,15 +75,33 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
-## 1. Word/PDF export formatting parity with preview view
+## 1. ~~Word/PDF export formatting parity with preview view~~ — ✅ RESOLVED (workstream A complete) 2026-05-14
 
-**Status (2026-05-14):** Pilot landed for FRD + FTC on branch `feat/export-parity-frd-pilot`. EPIC / USER_STORY / SUBTASK render through generic pipeline (shared style tokens, nested TOC, internal-section filter). MOD-04 + MOD-05 validated. Pre/post checklist at `scripts/checklists/export-artifact.ts`; module-level delivery runbook at `MODULE-DELIVERY-CHECKLIST.md`. Rollback anchor `pre-export-pilot-v1`; DB snapshot `backups/db-backup/prd_generator-pre-canonical-20260514-141231.sql`.
+**Status (2026-05-14):** All 5 customer-facing artifact types now have render-side canonical-shape restructurers PLUS upstream generation-time validators. Pilot landed on branch `feat/export-parity-frd-pilot`. MOD-04 + MOD-05 verified end-to-end. Module-level delivery runbook at `MODULE-DELIVERY-CHECKLIST.md`.
+
+**Per-type canonicalization status:**
+
+| Artifact | Render-side restructurer | Generation-side validator | Commit |
+|---|---|---|---|
+| FRD | `frd-restructure.ts` (pre-existing) | `validateSkill01SOutput` (pre-existing) | (existing) |
+| EPIC | `epic-restructure.ts` | `validateSkill02SOutput` (pre-existing) | `b81bc1c` |
+| USER_STORY | `user-story-restructure.ts` | `validateSkill04Output` (pre-existing) | `4f91724` |
+| SUBTASK | `subtask-restructure.ts` | `validateSkill05Output` (this session) | `4e83aee` + `e147845` |
+| FTC | `ftc-restructure.ts` (pre-existing) | mode-2b idempotency | (existing) |
+
+Rollback anchor `pre-export-pilot-v1`; DB snapshot `backups/db-backup/prd_generator-pre-canonical-20260514-141231.sql`.
 
 **Resolved gaps surfaced during MOD-04 review (2026-05-14):**
 
 - **Gap A — MOD-04 FRD weak feature content.** Old FRD had 9 features but only 1 Screen Reference; rest were placeholder "Not applicable". Re-running SKILL-01-S with the hardened prompt produced 9 features × 9 screen-refs, feature IDs F-04-01..09 stable. No downstream re-cascade needed.
 - **Gap B — Internal-processing leaks in PDF/DOCX exports.** Frontend `INTERNAL_SECTION_REGEX` was not mirrored on the export side. Fixed via shared `templates/artifact-internal-filter.ts` consumed by both renderers (commit `4ac27d6`).
 - **Gap C — FTC missing per-feature inline screen cards (MOD-04).** Downstream of Gap A — the FTC injector reads `Screen Reference` lines from the sibling FRD's features. Fixing Gap A automatically populated MOD-04 FTC with 81 per-feature screen cards across the 6 category appendix sections.
+- **Gap D — EPIC body stripped by the internal-section filter regression.** Step 1's filter applied to ALL artifact types stripped EPIC's monolithic "Introduction" section (matched the FRD-derived regex). Fixed via artifact-type-aware filter (commit `44b56db`); regex only applies to FRD now.
+- **Gap E — Long-term EPIC/USER_STORY/SUBTASK render-side canonicalization.** These previously relied entirely on upstream skill validators. Now have per-type render-side restructurers (commits `b81bc1c`, `4f91724`, `4e83aee`) so the export is canonical regardless of LLM output drift.
+
+---
+
+### Original problem (preserved for context)
 
 **Symptom:** When a user generates a Word (.docx) or PDF export of an FRD/EPIC/User Story/SubTask artifact, the document layout differs noticeably from the in-app preview view. Cover page styling, fonts, section spacing, color theme, and overall presentation are not as polished as the preview.
 
