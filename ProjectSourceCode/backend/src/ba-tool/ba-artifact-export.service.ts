@@ -23,6 +23,7 @@ import {
   buildDocxStyles,
   statusKindFor,
 } from './templates/artifact-style';
+import { shouldOmitFromExport } from './templates/artifact-internal-filter';
 
 interface MermaidImage {
   buffer: Buffer;
@@ -454,13 +455,18 @@ export class BaArtifactExportService {
     // ─── Cover page (matches HTML cover via shared style tokens) ───────
     this.appendCoverPage(children, doc);
 
-    // Sort sections by displayOrder then createdAt for stable output.
-    const sorted = [...doc.sections].sort((a, b) => {
-      if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
-      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return at - bt;
-    });
+    // Sort sections by displayOrder then createdAt for stable output, then
+    // filter out internal-processing + preamble-only sections via the
+    // shared predicate. Mirrors the HTML/PDF pipeline so PDF and DOCX are
+    // never out of step on what reaches the customer. (Gap B fix.)
+    const sorted = [...doc.sections]
+      .sort((a, b) => {
+        if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
+        const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return at - bt;
+      })
+      .filter((s) => !shouldOmitFromExport(s));
 
     // ─── Document History (own page, mirrors the HTML history block) ───
     // Use the *original* sections — `restructureFrdDoc` collapses every

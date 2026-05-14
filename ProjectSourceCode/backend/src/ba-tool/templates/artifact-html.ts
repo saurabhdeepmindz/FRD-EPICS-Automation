@@ -19,6 +19,7 @@
  * consume it — the shape mirrors `PrdAuditLog` deliberately.
  */
 import { buildArtifactCss, statusKindFor } from './artifact-style';
+import { shouldOmitFromExport } from './artifact-internal-filter';
 import { restructureFrdDoc } from './frd-restructure';
 import { restructureFtcDoc } from './ftc-restructure';
 
@@ -784,7 +785,12 @@ export function generateBaArtifactHtml(input: BaArtifactDoc): string {
   const doc = restructureFtcDoc(restructureFrdDoc(input));
   const typeLabel = ARTIFACT_TYPE_LABELS[doc.artifactType] ?? doc.artifactType;
   const productName = doc.project.productName || doc.project.name;
-  const sections = [...doc.sections].sort((a, b) => a.displayOrder - b.displayOrder);
+  // Filter internal-processing sections + preamble-only noise BEFORE TOC
+  // and body rendering. Single shared predicate used by HTML/PDF and
+  // DOCX builders so the two surfaces stay in lockstep. (Gap B fix.)
+  const sections = [...doc.sections]
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .filter((s) => !shouldOmitFromExport(s));
 
   // Customer-facing deliverables read better when bare SCR-NN references in
   // the section body carry the human screen title (e.g. `SCR-01 — Login`).
