@@ -322,6 +322,48 @@ export class BaSkillOrchestratorService {
         this.logger.log(`SKILL-04 validation passed for module ${moduleDbId}: ${v.summary}`);
       }
 
+      // 5d. SKILL-05 contract enforcement: every SubTask MUST follow the
+      // canonical 25-section template. Mirrors the SKILL-04 defense (5c).
+      // Closes DEFERRED-IMPROVEMENTS §0 — without this guard, future LLM
+      // drift could produce SubTask blocks missing critical sections
+      // (e.g. Section 22 Integration Flow, Section 17 API Contract) that
+      // SKILL-06-LLD and SKILL-07-FTC rely on. The per-story focus
+      // override now also carries the Forbidden Patterns + Self-check
+      // blocks (see executeSkill05ForStory's focusedPrompt) so the
+      // contract is enforced at BOTH generation and emission time.
+      if (skillName === 'SKILL-05') {
+        const v = this.validateSkill05Output(humanDocument);
+        if (!v.ok) {
+          const detailLines: string[] = [v.summary];
+          if (v.missingSubtasks.length > 0) {
+            detailLines.push(`SubTasks whose body has no per-section markers: ${v.missingSubtasks.join(', ')}`);
+          }
+          if (v.partialSubtasks.length > 0) {
+            detailLines.push('SubTasks with incomplete 25-section coverage:');
+            for (const p of v.partialSubtasks.slice(0, 5)) {
+              detailLines.push(`  - ${p.subtaskId}: missing [${p.missingSections.join(', ')}]`);
+            }
+            if (v.partialSubtasks.length > 5) detailLines.push(`  ... and ${v.partialSubtasks.length - 5} more`);
+          }
+          detailLines.push('Re-run SKILL-05; the prompt + per-story focus override now require the canonical 25-section template per SubTask.');
+          const errorMessage = detailLines.join('\n');
+          await this.prisma.baSkillExecution.update({
+            where: { id: executionId },
+            data: {
+              status: BaExecutionStatus.FAILED,
+              rawOutput: aiResponse,
+              humanDocument,
+              handoffPacket: handoffPacket as object | undefined,
+              completedAt: new Date(),
+              errorMessage,
+            },
+          });
+          this.logger.error(`SKILL-05 validation failed for module ${moduleDbId}: ${v.summary}`);
+          return;
+        }
+        this.logger.log(`SKILL-05 validation passed for module ${moduleDbId}: ${v.summary}`);
+      }
+
       await this.prisma.baSkillExecution.update({
         where: { id: executionId },
         data: {
@@ -2137,6 +2179,31 @@ export class BaSkillOrchestratorService {
       'Pure presentational SubTasks — UI layout / styling / static rendering',
       'with no async work — may omit Mermaid. When in doubt, INCLUDE it.',
       '',
+      '### Forbidden patterns — these WILL hard-fail the validator',
+      '',
+      'DO NOT emit any of the following. The backend will run a post-emission validator (`validateSkill05Output`) that splits the markdown on `## ST-USNNN-TEAM-NN` headings and counts `#### Section N` markers per block. The execution will be marked FAILED if any of these are detected:',
+      '',
+      '1. A SubTask block missing one or more of Sections 1–25. Count them yourself before responding — there must be EXACTLY 25 `#### Section N — <Label>` headings under each `## ST-USNNN-TEAM-NN` block.',
+      '',
+      '2. A simplified narrative shape: `**1. SubTask Description**:`, bullet points instead of section headings, or bare numbered text without the `####` prefix. The canonical template REQUIRES `#### Section N — <Label>` headings at H4.',
+      '',
+      '3. Improvised section labels: "SubTask Description" instead of "Description"; "Algorithm Outline" instead of "Algorithm"; collapsing Section 22 (End-to-End Integration Flow) into Section 14 (Algorithm). Use the EXACT labels from the canonical template above — they MUST match character-for-character.',
+      '',
+      '4. A SubTask in a CONFIRMED-PARTIAL story whose Section 19 says `* None for this SubTask.` — that silently drops cross-module TBD-Future dependency tracking.',
+      '',
+      '5. Missing the `## ST-USNNN-TEAM-NN` heading altogether — every SubTask MUST be introduced with that exact H2 shape (not `### ST-...`, not `## SubTask: ST-...`, not bold-text-only).',
+      '',
+      '### Self-check before responding',
+      '',
+      'Before emitting your response, walk your draft and verify:',
+      '',
+      `- For each \`## ST-${storyId.replace(/^US-/, 'US')}-<TEAM>-NN\` block, count the \`#### Section N\` headings. There must be EXACTLY 25, one for each section in the canonical template (Section 1 through Section 25).`,
+      '- Each Section heading uses the EXACT canonical label (Description, not "SubTask Description"; Algorithm, not "Algorithm Outline"; End-to-End Integration Flow, not "Integration Flow").',
+      '- Section 22 is present in EVERY SubTask with all three parts (Part A — Flow Chain; Part B — Dependency Table; Part C — Sprint Sequencing).',
+      `- If the parent story \`${storyId}\` is CONFIRMED-PARTIAL, every SubTask\'s Section 19 carries real TBD-NNN entries (not the bare-stub "None" placeholder).`,
+      '',
+      'If any check fails, fix the draft BEFORE responding. The validator does not negotiate.',
+      '',
       '### What to SKIP',
       '',
       '- Do NOT write SubTasks for ANY other user story (other stories are processed in their own sub-calls)',
@@ -2144,7 +2211,7 @@ export class BaSkillOrchestratorService {
       '',
       '---',
       '',
-      '## Original Skill Definition (follow all rules below — especially the canonical 24-section template, Heading Hierarchy Rules, and the Section 19/20/21 field formats)',
+      '## Original Skill Definition (follow all rules below — especially the canonical 25-section template, Heading Hierarchy Rules, and the Section 19/20/21 field formats)',
       '',
       skillPrompt,
     ].join('\n');
@@ -5040,6 +5107,96 @@ export class BaSkillOrchestratorService {
       ? `All ${blocks.length} stories carry the canonical 27-section template.`
       : `SKILL-04 canonical 27-section contract violation. ${missingStories.length} story/stories with no section markers; ${partialStories.length} stories with incomplete coverage out of ${blocks.length} total.`;
     return { ok, missingStories, partialStories, summary };
+  }
+
+  /**
+   * SKILL-05 post-emission validator — DEFERRED-IMPROVEMENTS.md §0
+   * resolution. Mirrors validateSkill04Output but operates on SubTask
+   * blocks (`## ST-USNNN-TEAM-NN — <Title>`) and counts the 25
+   * canonical `#### Section N` markers per block.
+   *
+   * Runs against the per-story-loop's concatenated humanDocument AFTER
+   * runSkill05PerStoryLoop has merged all per-story outputs. If any
+   * SubTask block is missing section markers OR shows incomplete
+   * coverage of Sections 1-25, the orchestrator marks the execution
+   * FAILED so a developer / re-run can correct the drift before
+   * downstream skills (SKILL-06-LLD, SKILL-07-FTC) consume it.
+   *
+   * Validation is permissive about Section-N LABEL text (matching
+   * "Description" vs "SubTask Description" exactly would force the
+   * validator to know every canonical label spelling). Instead we
+   * count the NUMBERS 1..25 that appear after `#### Section ` at any
+   * line position — same approach as validateSkill04Output.
+   */
+  private validateSkill05Output(
+    humanDocument: string,
+  ): { ok: boolean; missingSubtasks: string[]; partialSubtasks: { subtaskId: string; missingSections: number[] }[]; summary: string } {
+    const lines = humanDocument.split('\n');
+    const subtaskHeadingRe = /^##\s+\*?\*?\s*(ST-US\d{3,}-[A-Z]{2,4}-\d{2,})\b/;
+    const stopRe = /^##\s/; // any H2 ends the prior SubTask block
+    const blocks: { subtaskId: string; body: string }[] = [];
+    let curId: string | null = null;
+    let buf: string[] = [];
+    const flush = (): void => {
+      if (curId) blocks.push({ subtaskId: curId, body: buf.join('\n') });
+      buf = [];
+    };
+    for (const line of lines) {
+      const m = line.match(subtaskHeadingRe);
+      if (m) {
+        flush();
+        curId = m[1];
+        buf = [line];
+        continue;
+      }
+      if (curId && stopRe.test(line)) {
+        flush();
+        curId = null;
+        continue;
+      }
+      if (curId) buf.push(line);
+    }
+    flush();
+
+    if (blocks.length === 0) {
+      return {
+        ok: false,
+        missingSubtasks: [],
+        partialSubtasks: [],
+        summary: 'No `## ST-USNNN-TEAM-NN` headings detected. SKILL-05 output is empty or uses a non-canonical heading shape (e.g. `### ST-...`, `## SubTask: ST-...`).',
+      };
+    }
+
+    const partialSubtasks: { subtaskId: string; missingSections: number[] }[] = [];
+    const missingSubtasks: string[] = [];
+    for (const b of blocks) {
+      const present = new Set<number>();
+      // Match `#### Section N — Label` (canonical) OR `#### Section N:` /
+      // `#### Section N.` as defensive fallbacks. The number is what
+      // matters for coverage counting; label drift is rejected
+      // separately by the prompt's Forbidden-Patterns block.
+      const sectionRe = /^####\s+\*?\*?\s*Section\s+(\d+)\b/gm;
+      let m: RegExpExecArray | null;
+      while ((m = sectionRe.exec(b.body)) !== null) {
+        const n = parseInt(m[1], 10);
+        if (n >= 1 && n <= 25) present.add(n);
+      }
+      const missing: number[] = [];
+      for (let n = 1; n <= 25; n++) {
+        if (!present.has(n)) missing.push(n);
+      }
+      if (present.size === 0) {
+        missingSubtasks.push(b.subtaskId);
+      } else if (missing.length > 0) {
+        partialSubtasks.push({ subtaskId: b.subtaskId, missingSections: missing });
+      }
+    }
+
+    const ok = missingSubtasks.length === 0 && partialSubtasks.length === 0;
+    const summary = ok
+      ? `All ${blocks.length} SubTasks carry the canonical 25-section template.`
+      : `SKILL-05 canonical 25-section contract violation. ${missingSubtasks.length} SubTask(s) with no section markers; ${partialSubtasks.length} SubTask(s) with incomplete coverage out of ${blocks.length} total.`;
+    return { ok, missingSubtasks, partialSubtasks, summary };
   }
 
   // ─── Artifact creation ─────────────────────────────────────────────────
