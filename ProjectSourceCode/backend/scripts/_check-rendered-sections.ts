@@ -38,7 +38,9 @@ async function main(): Promise<void> {
     while ((m = re.exec(html)) !== null) {
       labels.push(m[1].trim());
     }
-    console.log(`\n══ ${moduleId} ${artifactType} ══ (${labels.length} top-level sections)`);
+    // Count feature-screen-inline injections (per-feature card under H2 F-XX-YY)
+    const inlineScreens = (html.match(/class="feature-screen-inline"/g) ?? []).length;
+    console.log(`\n══ ${moduleId} ${artifactType} ══ (${labels.length} top-level sections; ${inlineScreens} feature-screen-inline cards)`);
     for (const l of labels) {
       const hit = INTERNAL_PATTERNS.find((p) => p.test(l));
       const tag = hit ? '!! LEAK' : '  ok  ';

@@ -22,8 +22,11 @@ async function main(): Promise<void> {
     await prisma.$disconnect();
     process.exit(1);
   }
+  // Always render the LATEST artifact of this type — matches what the
+  // export endpoint serves (orderBy createdAt desc).
   const a = await prisma.baArtifact.findFirst({
     where: { moduleDbId: mod.id, artifactType: typeArg as never },
+    orderBy: { createdAt: 'desc' },
     include: {
       sections: { orderBy: { createdAt: 'asc' } },
       module: {
