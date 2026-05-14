@@ -459,6 +459,9 @@ export class BaArtifactExportService {
     // filter out internal-processing + preamble-only sections via the
     // shared predicate. Mirrors the HTML/PDF pipeline so PDF and DOCX are
     // never out of step on what reaches the customer. (Gap B fix.)
+    // Artifact type is passed so the FRD-specific Step N / Output
+    // Checklist / Sign-Off label regex doesn't strip legitimate EPIC body
+    // (its monolithic deliverable section is labelled "Introduction").
     const sorted = [...doc.sections]
       .sort((a, b) => {
         if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
@@ -466,7 +469,7 @@ export class BaArtifactExportService {
         const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return at - bt;
       })
-      .filter((s) => !shouldOmitFromExport(s));
+      .filter((s) => !shouldOmitFromExport(s, doc.artifactType));
 
     // ─── Document History (own page, mirrors the HTML history block) ───
     // Use the *original* sections — `restructureFrdDoc` collapses every

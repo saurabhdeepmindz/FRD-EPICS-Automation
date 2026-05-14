@@ -209,6 +209,16 @@ Open these files side-by-side in browser (HTML/PDF) and Word (DOCX):
 
 **Fix**: optional. Manually update `BaModule.moduleStatus` to `APPROVED` once you're satisfied with deliverables. The exports don't care.
 
+### Recipe F — EPIC PDF/DOCX renders cover + empty TOC + screen catalog only (no body)
+
+**Symptom**: The exported EPIC has cover, document history, an empty "Table of Contents" page, and the Referenced Screens appendix — but no actual EPIC body content (no Module Overview, Feature List, Feature Summaries, Integration Signals, etc.).
+
+**Root cause**: The shared internal-section filter (`shouldOmitFromExport`) was applied artifact-agnostic in the original Step 1 fix. EPIC stores its entire deliverable as a single monolithic section labelled "Introduction" — that label matches the FRD-derived `INTERNAL_SECTION_REGEX` and was being stripped.
+
+**Fix**: Already landed — `shouldOmitFromExport` now takes the artifact type as a second argument and only applies the internal-section label regex when `artifactType === 'FRD'`. Empty-body and preamble-only checks remain artifact-agnostic.
+
+**Verification**: After re-rendering, the EPIC TOC must contain entries derived from the markdown headings inside the body section (Module Overview, Feature List, etc.). An empty TOC indicates this regression is back — check the call sites in `templates/artifact-html.ts` and `ba-artifact-export.service.ts` are passing `doc.artifactType` to the predicate.
+
 ---
 
 ## Skill defense status (workstream B)

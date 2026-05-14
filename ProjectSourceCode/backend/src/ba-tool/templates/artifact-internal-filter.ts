@@ -96,19 +96,36 @@ export function effectiveBody(section: Readonly<SectionLikeForFilter>): string {
  * Top-level predicate consumed by `generateBaArtifactHtml` and
  * `buildDocxFromDoc`. A section is OMITTED from exports when ANY of:
  *   - the body is empty/whitespace-only,
- *   - the label matches an internal-processing pattern,
- *   - the body is a redundant title preamble.
+ *   - the body is a redundant title preamble,
+ *   - the label matches an internal-processing pattern **and** the
+ *     artifact is an FRD.
+ *
+ * The internal-section regex was derived from FRD process-step labels
+ * (Step 1: Confirm Module Identity, Output Checklist, Validate the FRD,
+ * Customer Sign-Off, etc.). Applying it to other artifact types causes
+ * collateral damage — most notably EPIC, where the entire deliverable
+ * is stored as a single monolithic section labelled "Introduction".
+ * Without the type guard, that section would be filtered out and the
+ * EPIC export would render as cover + empty TOC + screen catalog.
+ *
+ * Empty-body and preamble-only checks remain artifact-agnostic — those
+ * are safe across types.
  *
  * Returning true means "drop this section". The export pipeline still
  * iterates over the unfiltered list when building things like the
  * Document History audit table (so process-step timestamps remain
  * visible for traceability without polluting the body).
  */
-export function shouldOmitFromExport(section: Readonly<SectionLikeForFilter>): boolean {
-  const label = section.sectionLabel || section.sectionKey || '';
-  if (isInternalSection(label)) return true;
+export function shouldOmitFromExport(
+  section: Readonly<SectionLikeForFilter>,
+  artifactType?: string,
+): boolean {
   const body = effectiveBody(section);
   if (!body.trim()) return true;
   if (isPreambleOnlySection(body)) return true;
+  if (artifactType === 'FRD') {
+    const label = section.sectionLabel || section.sectionKey || '';
+    if (isInternalSection(label)) return true;
+  }
   return false;
 }

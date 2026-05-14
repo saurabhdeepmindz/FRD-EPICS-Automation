@@ -788,9 +788,12 @@ export function generateBaArtifactHtml(input: BaArtifactDoc): string {
   // Filter internal-processing sections + preamble-only noise BEFORE TOC
   // and body rendering. Single shared predicate used by HTML/PDF and
   // DOCX builders so the two surfaces stay in lockstep. (Gap B fix.)
+  // Pass the artifact type so the FRD-specific Step N / Output Checklist /
+  // Sign-Off label regex doesn't strip legitimate EPIC content
+  // (EPIC's monolithic body section is labelled "Introduction").
   const sections = [...doc.sections]
     .sort((a, b) => a.displayOrder - b.displayOrder)
-    .filter((s) => !shouldOmitFromExport(s));
+    .filter((s) => !shouldOmitFromExport(s, doc.artifactType));
 
   // Customer-facing deliverables read better when bare SCR-NN references in
   // the section body carry the human screen title (e.g. `SCR-01 — Login`).
