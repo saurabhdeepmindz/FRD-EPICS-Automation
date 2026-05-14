@@ -23,6 +23,7 @@ import { shouldOmitFromExport } from './artifact-internal-filter';
 import { restructureEpicDoc } from './epic-restructure';
 import { restructureFrdDoc } from './frd-restructure';
 import { restructureFtcDoc } from './ftc-restructure';
+import { restructureUserStoryDoc } from './user-story-restructure';
 
 export interface BaSectionLite {
   id: string;
@@ -783,7 +784,7 @@ export function generateBaArtifactHtml(input: BaArtifactDoc): string {
   // structured TC data and append per-category synthetic sections so the
   // editor's three-level category → feature → TC tree shows up in the
   // exported TOC.
-  const doc = restructureFtcDoc(restructureFrdDoc(restructureEpicDoc(input)));
+  const doc = restructureFtcDoc(restructureFrdDoc(restructureEpicDoc(restructureUserStoryDoc(input))));
   const typeLabel = ARTIFACT_TYPE_LABELS[doc.artifactType] ?? doc.artifactType;
   const productName = doc.project.productName || doc.project.name;
   // Filter internal-processing sections + preamble-only noise BEFORE TOC
