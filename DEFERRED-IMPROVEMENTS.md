@@ -65,7 +65,13 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ## 1. Word/PDF export formatting parity with preview view
 
-**Status (2026-05-06):** In flight on branch `feat/export-parity-frd-pilot`. Rollback anchor tag `pre-export-pilot-v1`. Pre/post checklist now exists at `scripts/checklists/export-artifact.ts` and is wired into `run-cascade.ts` via `--validateExports=FRD,EPIC,USER_STORY,SUBTASK`.
+**Status (2026-05-14):** Pilot landed for FRD + FTC on branch `feat/export-parity-frd-pilot`. EPIC / USER_STORY / SUBTASK render through generic pipeline (shared style tokens, nested TOC, internal-section filter). MOD-04 + MOD-05 validated. Pre/post checklist at `scripts/checklists/export-artifact.ts`; module-level delivery runbook at `MODULE-DELIVERY-CHECKLIST.md`. Rollback anchor `pre-export-pilot-v1`; DB snapshot `backups/db-backup/prd_generator-pre-canonical-20260514-141231.sql`.
+
+**Resolved gaps surfaced during MOD-04 review (2026-05-14):**
+
+- **Gap A — MOD-04 FRD weak feature content.** Old FRD had 9 features but only 1 Screen Reference; rest were placeholder "Not applicable". Re-running SKILL-01-S with the hardened prompt produced 9 features × 9 screen-refs, feature IDs F-04-01..09 stable. No downstream re-cascade needed.
+- **Gap B — Internal-processing leaks in PDF/DOCX exports.** Frontend `INTERNAL_SECTION_REGEX` was not mirrored on the export side. Fixed via shared `templates/artifact-internal-filter.ts` consumed by both renderers (commit `4ac27d6`).
+- **Gap C — FTC missing per-feature inline screen cards (MOD-04).** Downstream of Gap A — the FTC injector reads `Screen Reference` lines from the sibling FRD's features. Fixing Gap A automatically populated MOD-04 FTC with 81 per-feature screen cards across the 6 category appendix sections.
 
 **Symptom:** When a user generates a Word (.docx) or PDF export of an FRD/EPIC/User Story/SubTask artifact, the document layout differs noticeably from the in-app preview view. Cover page styling, fonts, section spacing, color theme, and overall presentation are not as polished as the preview.
 
