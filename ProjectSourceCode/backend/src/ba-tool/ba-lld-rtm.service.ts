@@ -99,6 +99,12 @@ function inferLanguageFromExtension(p: string): string {
   if (lower.endsWith('.sql')) return 'sql';
   if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return 'yaml';
   if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'markdown';
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
+  if (lower.endsWith('.css')) return 'css';
+  if (lower.endsWith('.scss') || lower.endsWith('.sass')) return 'scss';
+  if (lower.endsWith('.sh') || lower.endsWith('.bash')) return 'bash';
+  if (lower.endsWith('.txt')) return 'text';
   return 'unknown';
 }
 
