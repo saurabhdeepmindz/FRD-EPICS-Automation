@@ -25,10 +25,10 @@
  *                in the explorer view only)
  *   - WIP/Failed reserved for the impl-status CSV companion
  */
-import { Injectable, NotFoundException, BadRequestException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import * as AdmZip from 'adm-zip';
+import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
-import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
 
 // ─── Fixed folder taxonomy (the column set) ─────────────────────────────
 
@@ -160,11 +160,6 @@ export class BaLldRtmService {
 
   constructor(
     private readonly prisma: PrismaService,
-    // forwardRef avoids the circular import problem if the orchestrator
-    // ever needs to inject this service. Today it's one-way only but the
-    // guard is cheap insurance.
-    @Inject(forwardRef(() => BaSkillOrchestratorService))
-    private readonly orchestrator: BaSkillOrchestratorService,
   ) {}
 
   /**
@@ -549,9 +544,8 @@ export class BaLldRtmService {
     filePath: string;
   }): Promise<{
     requested: { subtaskId: string; filePath: string };
-    delegated: { featureId: string; pseudoFilesAdded: number; skipped: boolean; reason?: string };
-    matched: boolean;
-    matchedPath?: string;
+    featureAnchor: { featureId: string | null; source: 'subtask' | 'user_story_section' | 'none' };
+    generated: { path: string; language: string; bytes: number; pseudoFileId: string };
     note: string;
   }> {
     const subtaskId = (input.subtaskId ?? '').trim();
@@ -574,7 +568,10 @@ export class BaLldRtmService {
 
     const st = await this.prisma.baSubTask.findFirst({
       where: { moduleDbId: lld.moduleDbId, subtaskId: subtaskId.toUpperCase() },
-      select: { subtaskId: true, featureId: true, userStoryId: true, subtaskName: true },
+      select: {
+        subtaskId: true, featureId: true, userStoryId: true, subtaskName: true, team: true,
+        className: true, methodName: true, sourceFileName: true,
+      },
     });
     if (!st) {
       throw new BadRequestException(
@@ -582,14 +579,14 @@ export class BaLldRtmService {
       );
     }
 
-    // Resolve the feature anchor for executeSkill06ForFeature.
-    // BaSubTask.featureId is the primary source. When it's null (~30% of
-    // MOD-06 SubTasks have this gap because SKILL-04 didn't populate the
-    // back-reference), fall back to the USER_STORY artifact's section
-    // body — SKILL-04 always writes the FRD Feature Reference inside
-    // each story's section, so a `F-XX-YY` regex finds the link.
-    let featureId = st.featureId ?? null;
-    let featureSource: 'subtask' | 'user_story_section' = 'subtask';
+    // Resolve the feature anchor. BaSubTask.featureId first; if null, derive
+    // from the USER_STORY artifact's section body (SKILL-04 writes "FRD
+    // Feature Reference" inside every story). Feature anchor is OPTIONAL
+    // here — when missing, the file still generates with a "(unspecified)"
+    // marker in the header. Better to produce a file the dev can refine
+    // than to fail closed.
+    let featureId: string | null = st.featureId ?? null;
+    let featureSource: 'subtask' | 'user_story_section' | 'none' = featureId ? 'subtask' : 'none';
     if (!featureId && st.userStoryId) {
       const derived = await this.deriveFeatureFromUserStory(lld.moduleDbId, st.userStoryId);
       if (derived) {
@@ -597,48 +594,261 @@ export class BaLldRtmService {
         featureSource = 'user_story_section';
       }
     }
-    if (!featureId) {
+
+    // If a pseudo-file with the same path already exists, refuse to
+    // overwrite — the dev should delete it first or use the LLD UI to
+    // edit in place. This protects edited content from being clobbered
+    // by a one-click "regenerate this file" mistake.
+    const existing = await this.prisma.baPseudoFile.findFirst({
+      where: { artifactDbId: lld.id, path: filePath },
+      select: { id: true, isHumanModified: true },
+    });
+    if (existing) {
       throw new BadRequestException(
-        `SubTask ${subtaskId} (story=${st.userStoryId ?? 'none'}) has no feature anchor — ` +
-        `BaSubTask.featureId is null and the USER_STORY artifact's section for ` +
-        `${st.userStoryId ?? 'this story'} contains no F-XX-YY reference. ` +
-        `Auto-fix needs a feature to drive executeSkill06ForFeature. Open the LLD ` +
-        `narrative and add the feature manually, or fire the per-feature endpoint ` +
-        `directly once you know which feature this subtask belongs to.`,
+        `A pseudo-file already exists at "${filePath}" (id ${existing.id}` +
+        `${existing.isHumanModified ? ', human-edited' : ''}). Delete it via the LLD UI ` +
+        `if you want to regenerate, or use the per-file editor to refine it in place.`,
       );
     }
 
-    this.logger.log(
-      `RTM auto-fix: subtask=${subtaskId} feature=${featureId} (source=${featureSource}) requested-file=${filePath} ` +
-      `→ delegating to executeSkill06ForFeature`,
-    );
-    const result = await this.orchestrator.executeSkill06ForFeature(lld.moduleDbId, featureId);
-
-    // Best-effort match: did the AI emit a file whose basename matches
-    // what the ToDo row was waiting on?
-    const targetBasename = filePath.split('/').pop()!.toLowerCase();
-    const updatedFiles = await this.prisma.baPseudoFile.findMany({
-      where: { artifactDbId: input.lldArtifactId },
-      select: { path: true },
+    // Load module + LLD config for stack context the AI uses to pick
+    // framework conventions (NestJS vs Express, Jest vs Vitest, etc.).
+    const mod = await this.prisma.baModule.findUnique({
+      where: { id: lld.moduleDbId },
+      include: { project: true },
     });
-    const matchedFile = updatedFiles.find((f) => f.path.split('/').pop()!.toLowerCase() === targetBasename);
+    const stack = await this.loadStackSummary(lld.moduleDbId);
+
+    // Optional context: the user story's body (first 2 KB) so the AI knows
+    // what the subtask is actually trying to implement.
+    let storySnippet = '';
+    if (st.userStoryId) {
+      storySnippet = (await this.loadStoryBodySnippet(lld.moduleDbId, st.userStoryId)) ?? '';
+    }
+
+    // Build the focused prompt + call the AI service. Idempotent w.r.t.
+    // existing pseudo-files for the feature — we only ever insert ONE row.
+    const language = inferLanguageFromExtension(filePath);
+    const folderKey = folderFor(filePath)?.key ?? (folderFor('LLD-PseudoCode/' + filePath)?.key ?? 'unmapped');
+
+    const systemPrompt = this.buildOneFilePrompt({
+      moduleName: mod?.moduleName ?? lld.moduleDbId,
+      moduleId: mod?.moduleId ?? '(unknown)',
+      featureId,
+      storyId: st.userStoryId ?? null,
+      subtaskId: st.subtaskId,
+      subtaskName: st.subtaskName,
+      team: st.team ?? null,
+      className: st.className ?? null,
+      methodName: st.methodName ?? null,
+      sourceFileName: st.sourceFileName ?? null,
+      targetFilePath: filePath,
+      language,
+      folderKey,
+      stackSummary: stack,
+      storySnippet,
+    });
+
+    this.logger.log(
+      `RTM auto-fix (Option B / per-file): subtask=${subtaskId} feature=${featureId ?? '(none)'} ` +
+      `target=${filePath} language=${language} folder=${folderKey}`,
+    );
+    const rawCode = await this.aiGenerateOneFile(systemPrompt);
+    const cleaned = this.stripCodeFence(rawCode).trim();
+    if (cleaned.length === 0) {
+      throw new BadRequestException(
+        `AI returned empty content for ${filePath}. The model may have refused or returned only prose. Try again or fall back to manual entry.`,
+      );
+    }
+
+    // Insert the new BaPseudoFile row.
+    const created = await this.prisma.baPseudoFile.create({
+      data: {
+        artifactDbId: lld.id,
+        path: filePath,
+        language,
+        aiContent: cleaned,
+      },
+      select: { id: true, path: true, language: true, aiContent: true },
+    });
 
     return {
       requested: { subtaskId, filePath },
-      delegated: {
-        featureId,
-        pseudoFilesAdded: result.pseudoFilesAdded,
-        skipped: result.skipped,
-        reason: result.reason,
+      featureAnchor: { featureId, source: featureSource },
+      generated: {
+        path: created.path,
+        language: created.language,
+        bytes: created.aiContent.length,
+        pseudoFileId: created.id,
       },
-      matched: !!matchedFile,
-      matchedPath: matchedFile?.path,
-      note: matchedFile
-        ? `File generated at ${matchedFile.path} (per-feature run added ${result.pseudoFilesAdded} pseudo-file(s) in total).`
-        : result.skipped
-          ? `Per-feature run was skipped: ${result.reason ?? 'unknown reason'}. The missing file was not generated.`
-          : `Per-feature run added ${result.pseudoFilesAdded} pseudo-file(s) but none matched basename "${targetBasename}". The AI may have emitted under a different filename — inspect the new pseudo-files in the next RTM refresh.`,
+      note: `Generated ${created.path} (${created.aiContent.length} bytes, ${created.language}). ` +
+            `Anchored to ${featureId ? `feature ${featureId} (${featureSource})` : 'no feature (header marks it as unspecified)'}. ` +
+            `Reload the RTM HTML to see the row flip from ToDo → Done.`,
     };
+  }
+
+  /**
+   * Build the focused single-file prompt. Heavily structured because the
+   * AI has only one shot to produce something useful — no per-feature
+   * narrative to fall back on. The prompt explicitly bans markdown fences
+   * and prose so the response can be saved as-is to BaPseudoFile.aiContent.
+   */
+  private buildOneFilePrompt(ctx: {
+    moduleName: string;
+    moduleId: string;
+    featureId: string | null;
+    storyId: string | null;
+    subtaskId: string;
+    subtaskName: string;
+    team: string | null;
+    className: string | null;
+    methodName: string | null;
+    sourceFileName: string | null;
+    targetFilePath: string;
+    language: string;
+    folderKey: string;
+    stackSummary: string;
+    storySnippet: string;
+  }): string {
+    const lines: string[] = [];
+    lines.push('You are generating ONE pseudo-code file as part of a Low-Level Design (LLD) pseudo-code library.');
+    lines.push('');
+    lines.push('CONTEXT');
+    lines.push(`- Module:      ${ctx.moduleId} — ${ctx.moduleName}`);
+    lines.push(`- Feature:     ${ctx.featureId ?? '(unspecified)'}`);
+    lines.push(`- User Story:  ${ctx.storyId ?? '(unspecified)'}`);
+    lines.push(`- SubTask:     ${ctx.subtaskId}${ctx.team ? ` (${ctx.team} team)` : ''}`);
+    lines.push(`- SubTask Name: ${ctx.subtaskName}`);
+    if (ctx.className) lines.push(`- Target Class:  ${ctx.className}`);
+    if (ctx.methodName) lines.push(`- Target Method: ${ctx.methodName}`);
+    if (ctx.sourceFileName) lines.push(`- Declared source path: ${ctx.sourceFileName}`);
+    lines.push(`- Tech stack:  ${ctx.stackSummary || '(use sensible defaults for the language)'}`);
+    lines.push('');
+    lines.push('FILE TO GENERATE');
+    lines.push(`- Path:        ${ctx.targetFilePath}`);
+    lines.push(`- Language:    ${ctx.language}`);
+    lines.push(`- Folder slot: ${ctx.folderKey}`);
+    lines.push('');
+    if (ctx.storySnippet) {
+      lines.push('USER STORY CONTEXT (excerpt of the story body — implement the SubTask in service of this)');
+      lines.push(ctx.storySnippet);
+      lines.push('');
+    }
+    lines.push('REQUIREMENTS');
+    lines.push('1. Produce the COMPLETE pseudo-code content for the single file at the target path.');
+    lines.push('2. Begin the file with a header comment carrying these traceability fields (use the language\'s native comment syntax):');
+    lines.push(`     @file        ${ctx.targetFilePath}`);
+    lines.push(`     @module      ${ctx.moduleId}`);
+    if (ctx.featureId) lines.push(`     @frd         ${ctx.featureId}`);
+    if (ctx.storyId) lines.push(`     @userStory   ${ctx.storyId}`);
+    lines.push(`     @subTask     ${ctx.subtaskId}`);
+    lines.push('3. The code MUST satisfy the SubTask\'s intent. Read the SubTask Name and Story Context carefully.');
+    lines.push('4. Match the folder-slot conventions:');
+    lines.push('   - backend/controller    NestJS @Controller / Express router with route handlers, request validation, calls a service');
+    lines.push('   - backend/service       Business logic class, dependency-injected, returns DTOs');
+    lines.push('   - backend/repository    Data-access methods, queries the DB via the project\'s ORM');
+    lines.push('   - backend/dto           Data transfer object definitions with validation decorators');
+    lines.push('   - backend/entities      ORM entity / model class with column definitions + relations');
+    lines.push('   - backend/integration   External-API client (HTTP/SDK), typed responses, error handling');
+    lines.push('   - backend/middleware    Express/Nest middleware (auth, logging, error transform)');
+    lines.push('   - backend/exceptions    Custom exception classes extending HttpException / similar');
+    lines.push('   - database/migrations   Raw SQL CREATE TABLE / ALTER / INDEX statements, idempotent if possible');
+    lines.push('   - frontend/app          Next.js app-router page or route handler');
+    lines.push('   - frontend/components   React functional component (TS), props typed, hooks for state');
+    lines.push('   - frontend/hooks        Custom React hook (use*), returns typed shape');
+    lines.push('   - frontend/features     Feature-bundled UI: form, list, modal, etc.');
+    lines.push('   - tests/backend         Jest + Supertest. Describe blocks per scenario. Mock external deps. Cover happy + edge + error paths.');
+    lines.push('   - tests/frontend        React Testing Library + Jest. Render component, fire events, assert visible behaviour.');
+    lines.push('   - tests/e2e             Playwright spec. Page-object style. Cover the user story\'s acceptance criteria end-to-end.');
+    lines.push('   - infra                 CI YAML, Dockerfile, .env.example, etc.');
+    lines.push('5. Output ONLY the raw file content. NO markdown code fences. NO surrounding prose. NO explanation. The very first character must be the start of the file (e.g. `import`, `//`, `--`, `CREATE`, etc. depending on language).');
+    lines.push('');
+    lines.push('Now produce the file content for: ' + ctx.targetFilePath);
+    return lines.join('\n');
+  }
+
+  /**
+   * Pull stack hints from BaLldConfig so the AI knows which framework to
+   * target. Joins MasterData lookups for the populated stack IDs.
+   */
+  private async loadStackSummary(moduleDbId: string): Promise<string> {
+    const cfg = await this.prisma.baLldConfig.findUnique({
+      where: { moduleDbId },
+      select: {
+        frontendStackId: true, backendStackId: true, databaseId: true,
+        cachingId: true, storageId: true, cloudId: true,
+      },
+    });
+    if (!cfg) return '';
+    const ids = [cfg.frontendStackId, cfg.backendStackId, cfg.databaseId, cfg.cachingId, cfg.storageId, cfg.cloudId]
+      .filter((x): x is string => !!x);
+    if (ids.length === 0) return '';
+    const md = await this.prisma.baMasterDataEntry.findMany({
+      where: { id: { in: ids } },
+      select: { category: true, name: true },
+    });
+    return md.map((m: { category: string; name: string }) => `${m.category.toLowerCase().replace(/_/g, ' ')}: ${m.name}`).join(', ');
+  }
+
+  /**
+   * Excerpt of a user-story's section body for prompt context. First 2 KB
+   * keeps the AI call cheap while still giving narrative grounding.
+   */
+  private async loadStoryBodySnippet(moduleDbId: string, userStoryId: string): Promise<string | null> {
+    const us = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: 'USER_STORY' as never },
+      orderBy: { createdAt: 'desc' },
+      include: { sections: true },
+    });
+    if (!us) return null;
+    const idLower = userStoryId.toLowerCase().replace(/-/g, '_');
+    const section = us.sections.find((s) =>
+      (s.sectionKey ?? '').toLowerCase().includes(idLower)
+      || (s.sectionLabel ?? '').toUpperCase().includes(userStoryId.toUpperCase()),
+    );
+    if (!section) return null;
+    const body = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+    if (!body) return null;
+    return body.slice(0, 2048);
+  }
+
+  /**
+   * POST to the AI service's /ba/execute-skill endpoint. Same wire format
+   * as BaSkillOrchestratorService.callAiService but inlined here so this
+   * service stays self-contained for the per-file flow.
+   */
+  private async aiGenerateOneFile(systemPrompt: string): Promise<string> {
+    const aiServiceUrl = process.env.AI_SERVICE_URL ?? 'http://localhost:5000';
+    try {
+      const { data } = await axios.post<{ output: string }>(
+        `${aiServiceUrl}/ba/execute-skill`,
+        {
+          systemPrompt,
+          textContent: '',
+        },
+        { timeout: 300_000 },
+      );
+      return data.output ?? '';
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response) {
+        throw new BadRequestException(
+          `AI service returned ${err.response.status} while generating the file: ` +
+          `${JSON.stringify(err.response.data).slice(0, 300)}`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Strip a leading ```language\n...``` fence if the AI ignored the
+   * "no markdown fences" instruction. Idempotent for already-clean output.
+   */
+  private stripCodeFence(s: string): string {
+    const trimmed = s.trim();
+    const fenced = /^```[a-z0-9_+\-]*\n([\s\S]*?)\n```$/i.exec(trimmed);
+    if (fenced) return fenced[1];
+    return trimmed;
   }
 
   /**
