@@ -18,14 +18,23 @@ async function bootstrap() {
     }),
   );
 
-  // CORS — allow frontend origin (loaded from env). Also accept
-  // file:// origin (sent as `Origin: null`) so the downloaded
-  // LLD-MOD-NN-rtm.html bundle's "Generate file" button can call back to
-  // /api/ba/artifacts/:id/rtm/generate-missing-file when a customer opens
-  // it locally. Same-origin (no Origin header, e.g. curl) also passes.
+  // CORS — allow frontend origin (loaded from env). Also accept:
+  //  - file:// origin (sent as `Origin: null`) so the downloaded
+  //    LLD-MOD-NN-rtm.html bundle's "Generate file" button can call back to
+  //    /api/ba/artifacts/:id/rtm/generate-missing-file when a customer opens
+  //    it locally;
+  //  - the API's own origin (e.g. http://localhost:4000) so HTML served
+  //    inline from the backend can fetch back to the backend without being
+  //    rejected as cross-origin. Without this, the per-row "Generate file"
+  //    button on /api/ba/artifacts/:id/rtm-html-inline returned HTTP 500
+  //    (cors lib rejects with an Error → Nest maps to "Internal server
+  //    error"). Same-origin (no Origin header, e.g. curl) also passes.
+  const port = parseInt(process.env.PORT ?? '4000', 10);
+  const selfOrigins = [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
   const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
     .split(',')
-    .map((o) => o.trim());
+    .map((o) => o.trim())
+    .concat(selfOrigins);
 
   app.enableCors({
     origin: (origin, cb) => {
@@ -40,7 +49,7 @@ async function bootstrap() {
     credentials: true,
   });
 
-  const port = parseInt(process.env.PORT ?? '4000', 10);
+
   await app.listen(port);
   logger.log(`Backend running on http://localhost:${port}/api`);
 }

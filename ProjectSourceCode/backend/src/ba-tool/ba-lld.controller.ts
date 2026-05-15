@@ -476,11 +476,26 @@ export class BaLldController {
     @Param('id') lldArtifactId: string,
     @Body() body: { subtaskId?: string; filePath?: string },
   ): Promise<ReturnType<BaLldRtmService['generateMissingFile']>> {
-    return this.rtm.generateMissingFile({
-      lldArtifactId,
-      subtaskId: body?.subtaskId ?? '',
-      filePath: body?.filePath ?? '',
-    });
+    try {
+      return await this.rtm.generateMissingFile({
+        lldArtifactId,
+        subtaskId: body?.subtaskId ?? '',
+        filePath: body?.filePath ?? '',
+      });
+    } catch (e: any) {
+      // BadRequest/NotFound already carry a useful payload — re-throw them
+      // so the UI alert() shows the precise rule that failed. For unknown
+      // errors (AI timeout, DB constraint, network), wrap with a 400 that
+      // includes the underlying message so users don't see "Internal server
+      // error" with no clue.
+      const status = e?.status ?? e?.response?.statusCode ?? 500;
+      if (status >= 400 && status < 500) throw e;
+      const msg = e?.response?.data?.message || e?.message || 'Unknown error';
+      // eslint-disable-next-line no-console
+      console.error(`[rtmGenerateMissingFile] failed: ${msg}`);
+      if (e?.stack) console.error(e.stack.split('\n').slice(0, 8).join('\n'));
+      throw new BadRequestException(`generate-missing-file failed: ${msg}`);
+    }
   }
 
   /**

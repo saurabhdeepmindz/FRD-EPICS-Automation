@@ -1090,6 +1090,15 @@ function rebuildTree() {
   }
 }
 
+function escapeAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function showSubtaskDetail(stId, files) {
   const r = files[0];
   let html = '<h2>' + stId + '</h2>';
@@ -1104,7 +1113,15 @@ function showSubtaskDetail(stId, files) {
     // shown when status === ToDo AND the artifact has an id (the HTML
     // could have been served standalone or via the HTTP endpoint).
     if (f.status === 'ToDo') {
-      html += ' <button class="gen-btn" onclick="window.__generateMissing(this, ' + JSON.stringify(stId) + ', ' + JSON.stringify(f.file) + ')">Generate file</button>';
+      // BUG FIX 2026-05-15: previously we used an inline onclick="" with
+      // JSON.stringify(stId) interpolated as the argument. JSON.stringify
+      // returns a DOUBLE-quoted string, which terminated the outer
+      // onclick="..." attribute at the first inner quote — the browser
+      // saw onclick='window.__generateMissing(this, ' and then garbage,
+      // resulting in PAGEERROR "Unexpected end of input" and a silent
+      // no-op when clicked. We now stash the args in data-* attributes
+      // (HTML-escaped) and bind the listener after innerHTML is set.
+      html += ' <button class="gen-btn" data-stid="' + escapeAttr(stId) + '" data-file="' + escapeAttr(f.file) + '">Generate file</button>';
     }
     html += '</div>';
     html += '<div style="font-size:9pt;color:#64748B;">Folder: <b>' + f.folder + '</b> · Type: ' + f.fileType + ' · Generated: ' + f.generated + '</div>';
@@ -1116,6 +1133,15 @@ function showSubtaskDetail(stId, files) {
     html += '</div>';
   }
   $('detail-pane').innerHTML = html;
+  // Bind Generate file buttons AFTER innerHTML is set. We can't use inline
+  // onclick="" because JSON.stringify(stId) interpolated into a double-quoted
+  // attribute terminates the attribute at its first inner quote (the bug
+  // that made the button a silent no-op in earlier builds).
+  $('detail-pane').querySelectorAll('button.gen-btn').forEach(function(b) {
+    b.addEventListener('click', function() {
+      window.__generateMissing(b, b.getAttribute('data-stid'), b.getAttribute('data-file'));
+    });
+  });
 }
 
 // Workstream 4 hook: invoked when the user clicks "Generate file" on a
