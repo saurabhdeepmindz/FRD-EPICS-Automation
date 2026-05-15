@@ -46,3 +46,7 @@ tsconfig.tsbuildinfo
 
 # Playwright test artifacts (screenshots, summaries from smoke runs)
 pw-artifacts/
+
+# Raw uncompressed Postgres dumps — track .sql.gz only (see backups/db-backup/README.md)
+backups/db-backup/*.sql
+prd_generator-backup-*.sql
