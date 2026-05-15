@@ -574,25 +574,45 @@ export class BaLldRtmService {
 
     const st = await this.prisma.baSubTask.findFirst({
       where: { moduleDbId: lld.moduleDbId, subtaskId: subtaskId.toUpperCase() },
-      select: { subtaskId: true, featureId: true, subtaskName: true },
+      select: { subtaskId: true, featureId: true, userStoryId: true, subtaskName: true },
     });
     if (!st) {
       throw new BadRequestException(
         `SubTask ${subtaskId} not found in module. Did the subtaskId come from a stale RTM?`,
       );
     }
-    if (!st.featureId) {
+
+    // Resolve the feature anchor for executeSkill06ForFeature.
+    // BaSubTask.featureId is the primary source. When it's null (~30% of
+    // MOD-06 SubTasks have this gap because SKILL-04 didn't populate the
+    // back-reference), fall back to the USER_STORY artifact's section
+    // body — SKILL-04 always writes the FRD Feature Reference inside
+    // each story's section, so a `F-XX-YY` regex finds the link.
+    let featureId = st.featureId ?? null;
+    let featureSource: 'subtask' | 'user_story_section' = 'subtask';
+    if (!featureId && st.userStoryId) {
+      const derived = await this.deriveFeatureFromUserStory(lld.moduleDbId, st.userStoryId);
+      if (derived) {
+        featureId = derived;
+        featureSource = 'user_story_section';
+      }
+    }
+    if (!featureId) {
       throw new BadRequestException(
-        `SubTask ${subtaskId} has no featureId; cannot delegate to executeSkill06ForFeature. ` +
-        `Populate the SubTask's feature reference first.`,
+        `SubTask ${subtaskId} (story=${st.userStoryId ?? 'none'}) has no feature anchor — ` +
+        `BaSubTask.featureId is null and the USER_STORY artifact's section for ` +
+        `${st.userStoryId ?? 'this story'} contains no F-XX-YY reference. ` +
+        `Auto-fix needs a feature to drive executeSkill06ForFeature. Open the LLD ` +
+        `narrative and add the feature manually, or fire the per-feature endpoint ` +
+        `directly once you know which feature this subtask belongs to.`,
       );
     }
 
     this.logger.log(
-      `RTM auto-fix: subtask=${subtaskId} feature=${st.featureId} requested-file=${filePath} ` +
+      `RTM auto-fix: subtask=${subtaskId} feature=${featureId} (source=${featureSource}) requested-file=${filePath} ` +
       `→ delegating to executeSkill06ForFeature`,
     );
-    const result = await this.orchestrator.executeSkill06ForFeature(lld.moduleDbId, st.featureId);
+    const result = await this.orchestrator.executeSkill06ForFeature(lld.moduleDbId, featureId);
 
     // Best-effort match: did the AI emit a file whose basename matches
     // what the ToDo row was waiting on?
@@ -606,7 +626,7 @@ export class BaLldRtmService {
     return {
       requested: { subtaskId, filePath },
       delegated: {
-        featureId: st.featureId,
+        featureId,
         pseudoFilesAdded: result.pseudoFilesAdded,
         skipped: result.skipped,
         reason: result.reason,
@@ -619,6 +639,38 @@ export class BaLldRtmService {
           ? `Per-feature run was skipped: ${result.reason ?? 'unknown reason'}. The missing file was not generated.`
           : `Per-feature run added ${result.pseudoFilesAdded} pseudo-file(s) but none matched basename "${targetBasename}". The AI may have emitted under a different filename — inspect the new pseudo-files in the next RTM refresh.`,
     };
+  }
+
+  /**
+   * Fallback when BaSubTask.featureId is null. SKILL-04 writes each
+   * story's "FRD Feature Reference" inside the story's section body
+   * (canonical 27-section per-story template). The first F-XX-YY token
+   * matching the module's expected prefix is treated as the anchor.
+   *
+   * Pure-read; safe to call from any context. Returns null when the
+   * USER_STORY artifact is missing, the story's section is missing, or
+   * no feature token is found.
+   */
+  private async deriveFeatureFromUserStory(
+    moduleDbId: string,
+    userStoryId: string,
+  ): Promise<string | null> {
+    const us = await this.prisma.baArtifact.findFirst({
+      where: { moduleDbId, artifactType: 'USER_STORY' as never },
+      orderBy: { createdAt: 'desc' },
+      include: { sections: true },
+    });
+    if (!us) return null;
+    const idLower = userStoryId.toLowerCase().replace(/-/g, '_');
+    const section = us.sections.find((s) =>
+      (s.sectionKey ?? '').toLowerCase().includes(idLower)
+      || (s.sectionLabel ?? '').toUpperCase().includes(userStoryId.toUpperCase()),
+    );
+    if (!section) return null;
+    const body = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
+    if (!body) return null;
+    const m = body.match(/\bF-\d+-\d+\b/);
+    return m ? m[0] : null;
   }
 
   // ─── HTML template (extracted to its own method for readability) ──────
@@ -873,23 +925,44 @@ window.__generateMissing = async function(btn, subtaskId, filePath) {
   if (!lldId) {
     btn.disabled = true;
     btn.textContent = 'Open via BA-Tool to enable';
+    alert('This RTM HTML was generated without a baked-in lldId.\\n\\nDownload a fresh copy from the BA-Tool LLD page (the new bundle carries the IDs in its JS).');
     return;
   }
   btn.disabled = true;
   btn.textContent = 'Generating…';
+  const origBg = btn.style.background;
   try {
     const res = await fetch(apiBase + '/api/ba/artifacts/' + encodeURIComponent(lldId) + '/rtm/generate-missing-file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subtaskId, filePath }),
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // Surface the server's explanation in an alert so a user clicking
+      // through 50 ToDos can tell at a glance why an individual click
+      // didn't materialise a file. Common reasons:
+      //   - SubTask has no feature anchor (BaSubTask.featureId null)
+      //   - Artifact is not LLD
+      //   - LLD doesn't exist for the module
+      const msg = payload?.message || ('HTTP ' + res.status);
+      throw new Error(msg);
+    }
     btn.textContent = 'Done — reload to see';
     btn.style.background = '#16A34A';
+    // The response carries a note describing what happened (file generated,
+    // feature run skipped, basename didnt match). Showing it makes the
+    // success path informative — especially the "added N files but
+    // none matched this basename" case where the AI emitted a different
+    // filename and the user shouldnt blindly trust the green badge.
+    if (payload?.note) {
+      alert('Generation result:\\n\\n' + payload.note);
+    }
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Retry (' + (e.message || 'error') + ')';
-    btn.style.background = '#B91C1C';
+    btn.textContent = 'Retry';
+    btn.style.background = origBg || '#B91C1C';
+    alert('Could not generate file for ' + subtaskId + ' / ' + filePath + ':\\n\\n' + (e.message || 'unknown error'));
   }
 };
 
