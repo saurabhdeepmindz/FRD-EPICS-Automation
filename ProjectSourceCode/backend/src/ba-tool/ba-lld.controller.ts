@@ -338,7 +338,7 @@ export class BaLldController {
   // feature for a focused review. All return immediately from in-memory
   // synthesis — no DB writes.
 
-  /** GET /api/ba/artifacts/:id/rtm-html — interactive RTM explorer */
+  /** GET /api/ba/artifacts/:id/rtm-html — interactive RTM explorer (download) */
   @Get('artifacts/:id/rtm-html')
   async rtmHtml(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
     const featureFilter = this.parseFeatureParam(res);
@@ -349,12 +349,38 @@ export class BaLldController {
       result.rows,
       tree,
       result.stats,
+      { lldArtifactId, apiBase: this.deriveApiBase(res) },
     );
     const stem = this.rtmStem(result.module.moduleId, featureFilter);
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Disposition': `attachment; filename="${stem}.html"`,
     });
+    res.end(html);
+  }
+
+  /**
+   * GET /api/ba/artifacts/:id/rtm-html-inline — same HTML payload as
+   * rtm-html but rendered inline in the browser (no Content-Disposition:
+   * attachment). Use this from a "View RTM" link so the page renders
+   * same-origin with the backend, sidestepping CORS for the per-row
+   * "Generate file" buttons. The downloaded rtm-html bundle works too,
+   * thanks to CORS allowing Origin: null + IDs baked into the JS — this
+   * inline endpoint is simply the cleaner default for live viewing.
+   */
+  @Get('artifacts/:id/rtm-html-inline')
+  async rtmHtmlInline(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const result = await this.rtm.buildRtm(lldArtifactId, { featureFilter });
+    const tree = this.rtm.emitTree(result.rows, result.module.moduleId);
+    const html = this.rtm.emitHtml(
+      { moduleId: result.module.moduleId, moduleName: result.module.moduleName },
+      result.rows,
+      tree,
+      result.stats,
+      { lldArtifactId, apiBase: this.deriveApiBase(res) },
+    );
+    res.set({ 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   }
 
@@ -417,7 +443,11 @@ export class BaLldController {
   @Get('artifacts/:id/rtm-bundle')
   async rtmBundle(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
     const featureFilter = this.parseFeatureParam(res);
-    const { zip, stem } = await this.rtm.buildBundleZip(lldArtifactId, { featureFilter });
+    const { zip, stem } = await this.rtm.buildBundleZip(
+      lldArtifactId,
+      { featureFilter },
+      { apiBase: this.deriveApiBase(res) },
+    );
     res.set({
       'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename="${stem}-bundle.zip"`,
@@ -474,6 +504,30 @@ export class BaLldController {
     return featureFilter
       ? `LLD-${moduleId}-${featureFilter}-rtm`
       : `LLD-${moduleId}-rtm`;
+  }
+
+  /**
+   * Construct the backend's public origin (`http://localhost:4000` style)
+   * from the inbound request so the RTM HTML's baked-in `__LLD_API_BASE`
+   * matches wherever this server is currently reachable. Falls back to
+   * the env `PUBLIC_API_URL` or the conventional dev default.
+   *
+   * Express's `req.protocol` + `req.get('host')` handles localhost AND
+   * any reverse-proxy-set Host header — we don't hardcode :4000 because
+   * a future Docker / cloud deploy might serve through a different port.
+   */
+  private deriveApiBase(res: Response): string {
+    const req = res.req;
+    if (req) {
+      const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim()
+        ?? req.protocol
+        ?? 'http';
+      const host = (req.headers['x-forwarded-host'] as string)?.split(',')[0]?.trim()
+        ?? req.get?.('host')
+        ?? req.headers.host;
+      if (host) return `${proto}://${host}`;
+    }
+    return process.env.PUBLIC_API_URL ?? 'http://localhost:4000';
   }
 }
 

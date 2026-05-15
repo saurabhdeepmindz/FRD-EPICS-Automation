@@ -18,13 +18,24 @@ async function bootstrap() {
     }),
   );
 
-  // CORS — allow frontend origin (loaded from env)
+  // CORS — allow frontend origin (loaded from env). Also accept
+  // file:// origin (sent as `Origin: null`) so the downloaded
+  // LLD-MOD-NN-rtm.html bundle's "Generate file" button can call back to
+  // /api/ba/artifacts/:id/rtm/generate-missing-file when a customer opens
+  // it locally. Same-origin (no Origin header, e.g. curl) also passes.
   const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
     .split(',')
     .map((o) => o.trim());
 
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, cb) => {
+      // No Origin header (same-origin / curl / Postman) → allow.
+      if (!origin) return cb(null, true);
+      // file:// pages send Origin: null
+      if (origin === 'null') return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   });

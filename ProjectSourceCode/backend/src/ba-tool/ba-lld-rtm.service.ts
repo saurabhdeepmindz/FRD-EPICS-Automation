@@ -452,11 +452,22 @@ export class BaLldRtmService {
     return lines.join('\n');
   }
 
+  /**
+   * Render the RTM HTML viewer. `embed` carries the LLD artifact id +
+   * backend base URL that the embedded JS bakes into its `__generateMissing`
+   * fetch call. Without these the downloaded HTML can't reach the auto-fix
+   * endpoint (no URL context, since file:// has no useful location.origin).
+   *
+   * When `embed` is omitted (callers that don't have a request context),
+   * the HTML still renders but the Generate buttons stay disabled with
+   * "Open via BA-Tool to enable" — preserving the v1 behaviour.
+   */
   emitHtml(
     moduleInfo: { moduleId: string; moduleName: string },
     rows: RtmRow[],
     tree: string,
     stats: RtmBuildResult['stats'],
+    embed?: { lldArtifactId?: string | null; apiBase?: string | null },
   ): string {
     const donePct = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
     const rowsJson = JSON.stringify(rows.map((r) => ({
@@ -467,7 +478,10 @@ export class BaLldRtmService {
       pseudoFileId: r.pseudoFileId ?? null,
     })));
 
-    return this.htmlTemplate(moduleInfo, rowsJson, stats, donePct, tree);
+    return this.htmlTemplate(moduleInfo, rowsJson, stats, donePct, tree, {
+      lldArtifactId: embed?.lldArtifactId ?? null,
+      apiBase: embed?.apiBase ?? null,
+    });
   }
 
   /**
@@ -477,7 +491,11 @@ export class BaLldRtmService {
    * The HTML is fully self-contained so a stakeholder can double-click
    * to open in any browser — no server, no build step.
    */
-  async buildBundleZip(lldArtifactId: string, options: RtmBuildOptions = {}): Promise<{ zip: Buffer; stem: string; moduleId: string; result: RtmBuildResult }> {
+  async buildBundleZip(
+    lldArtifactId: string,
+    options: RtmBuildOptions = {},
+    embed?: { apiBase?: string | null },
+  ): Promise<{ zip: Buffer; stem: string; moduleId: string; result: RtmBuildResult }> {
     const result = await this.buildRtm(lldArtifactId, options);
     const stem = options.featureFilter
       ? `LLD-${result.module.moduleId}-${options.featureFilter}-rtm`
@@ -485,7 +503,14 @@ export class BaLldRtmService {
 
     const csv = this.emitCsv(result.rows);
     const tree = this.emitTree(result.rows, result.module.moduleId);
-    const html = this.emitHtml({ moduleId: result.module.moduleId, moduleName: result.module.moduleName }, result.rows, tree, result.stats);
+    const html = this.emitHtml(
+      { moduleId: result.module.moduleId, moduleName: result.module.moduleName },
+      result.rows, tree, result.stats,
+      // Embed the LLD id so the Generate-file button works from a
+      // downloaded copy. apiBase comes from the request that called this
+      // method; falls back to the env default when invoked via CLI.
+      { lldArtifactId, apiBase: embed?.apiBase ?? null },
+    );
     const implCsv = this.emitImplStatusCsv(result.rows);
 
     const zip = new AdmZip();
@@ -604,6 +629,7 @@ export class BaLldRtmService {
     stats: RtmBuildResult['stats'],
     donePct: number,
     tree: string,
+    embed: { lldArtifactId: string | null; apiBase: string | null },
   ): string {
     return `<!DOCTYPE html>
 <html lang="en">
@@ -825,12 +851,25 @@ function showSubtaskDetail(stId, files) {
 }
 
 // Workstream 4 hook: invoked when the user clicks "Generate file" on a
-// ToDo row. The HTML may be served standalone (no backend reachable) OR
-// from the running BA-tool backend; in the standalone case the fetch
-// just fails and the button shows an error inline. The artifact id is
-// inferred from the URL (when present) or left null.
+// ToDo row. lldArtifactId and apiBase are baked into the HTML at
+// generation time (see BaLldRtmService.emitHtml's embed arg) so the
+// downloaded file can call the backend without depending on URL query
+// params or location.origin (which is useless on file:// pages).
+//
+// When the HTML was generated WITHOUT an embed context (e.g. an older
+// CLI run, or someone called emitHtml() with no args), the constants
+// are null and the Generate button disables itself with a clear hint.
+//
+// CORS for the POST works because main.ts allows Origin: null (file://
+// pages send that) + the configured frontend origins.
+window.__LLD_ARTIFACT_ID = ${embed.lldArtifactId ? JSON.stringify(embed.lldArtifactId) : 'null'};
+window.__LLD_API_BASE = ${embed.apiBase ? JSON.stringify(embed.apiBase) : 'null'};
 window.__generateMissing = async function(btn, subtaskId, filePath) {
-  const lldId = (new URLSearchParams(location.search)).get('lldId');
+  // Fallback to ?lldId= and ?apiBase= URL params if the HTML was
+  // generated without an embed context (older bundles). That keeps the
+  // previous behaviour working alongside the new baked-in approach.
+  const lldId = window.__LLD_ARTIFACT_ID || (new URLSearchParams(location.search)).get('lldId');
+  const apiBase = window.__LLD_API_BASE || (new URLSearchParams(location.search)).get('apiBase') || '';
   if (!lldId) {
     btn.disabled = true;
     btn.textContent = 'Open via BA-Tool to enable';
@@ -839,7 +878,6 @@ window.__generateMissing = async function(btn, subtaskId, filePath) {
   btn.disabled = true;
   btn.textContent = 'Generating…';
   try {
-    const apiBase = (new URLSearchParams(location.search)).get('apiBase') || '';
     const res = await fetch(apiBase + '/api/ba/artifacts/' + encodeURIComponent(lldId) + '/rtm/generate-missing-file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

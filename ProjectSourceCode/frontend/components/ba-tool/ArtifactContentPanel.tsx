@@ -114,10 +114,23 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
       </Button>
       {/* LLD-only — the Module-SubTask-LLD-RTM bundle (HTML / CSV /
           full ZIP). Mirrors the buttons on the LLD preview page so the
-          editor view doesn't force a separate-tab round-trip. */}
+          editor view doesn't force a separate-tab round-trip. The "View
+          RTM" button opens the inline endpoint in a new tab — the
+          embedded "Generate file" buttons work same-origin so CORS is
+          trivially satisfied. */}
       {isLld && (
         <>
-          <Button size="sm" variant="outline" onClick={() => downloadRtm('html')} title="Interactive RTM explorer (HTML)">
+          <Button size="sm" variant="outline" asChild title="Open the interactive RTM explorer inline (auto-fix buttons work)">
+            <a
+              href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/ba/artifacts/${artifact.id}/rtm-html-inline`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Eye className="h-3.5 w-3.5 mr-1" />
+              View RTM
+            </a>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => downloadRtm('html')} title="Download the RTM HTML explorer (auto-fix buttons rely on Origin: null CORS)">
             <Download className="h-3.5 w-3.5 mr-1" />
             RTM HTML
           </Button>
