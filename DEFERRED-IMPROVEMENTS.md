@@ -6,6 +6,78 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
+## -4. LLD Workbench — "Copy config from another module" in-app feature
+
+**Status (2026-05-15):** Captured for future work. Triggered when MOD-06 LLD config was empty and had to be copied from MOD-04 via a manual `PUT /api/ba/modules/<id>/lld/config` curl. The architect's normal workflow is to pick stacks / templates / NFRs per module from dropdowns; when a project has many modules sharing the same target stack, doing that picking N times per module is tedious and error-prone.
+
+**Symptom:** A new module's LLD Workbench (`/ba-tool/project/<projectId>/module/<moduleDbId>/lld`) opens with every Tech Stack / Templates / NFR field set to `(none — use AI best practices)`. The architect must walk through 7 dropdowns + 4 NFR fields manually, even when an existing module in the same project already has the exact right configuration.
+
+**Workflow today:** Manual per-module configuration via the dropdowns, OR ad-hoc curl that copies the full `BaLldConfig` row across modules (one-off, no UI).
+
+**Proposed feature:** Add a "Copy from…" control next to the **Save selections** button at the top right of the LLD Workbench page. UX:
+
+1. Click `↗ Copy from another module` → dropdown listing every module in the same project that already has a populated `BaLldConfig` (frontendStackId or backendStackId not null).
+2. Each row shows `MOD-XX — <moduleName>  ·  <stack summary, e.g. "NestJS + Next.js + Postgres + Redis">`.
+3. Pick a source module → form fields pre-fill with the source's values (frontend/backend/db/streaming/caching/storage/cloud/architecture stack IDs, all 4 template IDs, codingGuidelinesId, NFR values, customNotes, narrative). Architect can then tweak any field and Save.
+4. **No DB write** until Save — same flow as today.
+
+**Backend scope:**
+
+- New endpoint `GET /api/ba/projects/:projectId/lld-configs/summary` → returns one row per module with `{ moduleDbId, moduleId, moduleName, hasConfig, stackSummary, configId }`. Fast project-scoped query; sub-second.
+- Optionally a `POST /api/ba/modules/:targetModuleId/lld/config/clone-from/:sourceModuleId` shortcut that does the copy server-side — but the simpler path is have the frontend GET the source config and prefill the form locally, then PUT to save as today. No new mutation endpoint needed.
+
+**Frontend scope:**
+
+- New dropdown / popover above the Tech Stack section.
+- Calls the summary endpoint on open.
+- On select → fetch source's full config via existing `GET /api/ba/modules/:id/lld/config`, prefill the form, leave Save behaviour unchanged.
+
+**Risk:** Low. Frontend-only state change until Save. Same `BaLldConfig` schema. No migration.
+
+**Effort:** ~3-4 h (1 backend endpoint, 1 frontend popover component, prefill plumbing). Could be smaller if we skip the per-module summary endpoint and just list ALL modules in the project (frontend fetches each module's config on hover/click; lazier but works).
+
+**Acceptance:** An architect opens MOD-07's LLD Workbench, clicks `Copy from MOD-04`, picks MOD-04 from the list, the 7 stack dropdowns + 4 NFR fields populate to MOD-04's values, the architect clicks **Save selections**, and the page shows the saved state on reload.
+
+**First identified on:** 2026-05-15 — during the LLD pipeline run for MOD-06, where MOD-04's `nestjs-next-js-and-tailwind` config had to be hand-copied via curl because the UI offered no shortcut.
+
+---
+
+## -3. SKILL-07-FTC story-coverage gap-filler — close the per-feature → per-story drop
+
+**Status (2026-05-15):** Captured for future work. Decision recorded 2026-05-04 / re-affirmed 2026-05-15 to **accept the 76% gap on MOD-05** (15 / 63 stories without a dedicated happy-path TC) rather than block the SKILL-07 cascade for MOD-05 + MOD-06. The fix is non-trivial and structural; the current data shape is consistent with what new modules will produce, so deferring is the right trade-off.
+
+**Symptom (verbatim from the 2026-05-04 MOD-05 cascade post-checks):** MOD-05's SKILL-07 cascade produced 156 TCs across 21/21 features. Post-check 4 reports `Every user story has >= 1 happy-path test case — 48/63 covered; missing: US-113, US-120, US-131, US-132, US-134, +10 more`. So 15 stories have no dedicated happy-path TC.
+
+**Root cause:** mode-2 (per-feature, the loop that produced the bulk of the TCs) emits TCs *scoped to features*. Each TC's `linkedStoryIds` array is populated by the AI's choice of which stories that TC implicitly covers. Some features had only 3–5 TCs total — not enough to emit one happy-path TC per story under that feature (avg 3 stories/feature for 63 stories / 21 features).
+
+This is **a quality gap, not a structural break:**
+
+- All 21 features have ≥ 1 TC ✅
+- Negative TCs healthy (88 / 156 = 56%) ✅
+- All 14 canonical narrative sections rendered ✅
+- 156 TCs structurally well-formed per the parser contract ✅
+- 15 stories don't appear in any TC's `linkedStoryIds` ❌
+
+**Why it matters:** SKILL-07's checklist (`scripts/checklists/skill-07.ts`) expects per-story happy-path coverage as a 100% bar. Until this is closed, every new module's SKILL-07 cascade will likely fail post-check 4 the same way — making the checklist noisy and obscuring genuine structural regressions.
+
+**Three fix options (from the 2026-05-04 recommendation):**
+
+1. **`executeSkill07ForStory` sub-mode (preferred long-term).** New orchestrator method that takes `(moduleDbId, storyId)`, focuses the AI on that one story, emits 2–3 TCs (happy + at least 1 negative + optional edge), and tags `linkedStoryIds=[storyId]`. Wire into `executeSkill07Complete` as a post-mode-2 gap-filler that runs only for stories without a happy-path TC. Mirrors the SKILL-05 per-story pattern.
+
+2. **Gap-filler that re-fires mode-2 with explicit story-coverage requirements.** Inspect which stories are uncovered, group them by feature, then re-call `executeSkill07ForFeature` with a focus override naming the missing stories ("ensure each of these stories has a happy-path TC: US-113, US-120, ..."). Risk: may regress existing TCs (mode-2 is idempotent per-feature but not per-story).
+
+3. **Soften the post-check threshold** (e.g. 70% or "≥1 TC links to the story in any way"). Quickest, but gaming the metric — only acceptable if 100% is genuinely the wrong bar.
+
+**Recommended approach:** Option 1 (new `executeSkill07ForStory` method). Per-story sub-mode is the natural extension of the existing per-feature / per-category / per-feature-white-box family. Idempotency is straightforward (skip stories that already have a happy-path TC). Aligns with how SKILL-05 closed its per-story coverage.
+
+**Acceptance:** After the gap-filler runs on MOD-05, post-check 4 reports `63/63 covered`. Re-running on MOD-06 (and any future module) is a no-op when mode-2 happens to cover everything; fires only when stories are missing.
+
+**Risk:** None for the data already captured — MOD-05's 156 TCs stay as-is. The new sub-mode appends `TC-S-USNNN-NNN` (or similar story-prefixed) TC IDs alongside the existing feature-prefixed ones.
+
+**First identified on:** 2026-05-04 during MOD-05 SKILL-07 cascade post-checks. User decision 2026-05-04: accept 76% (Option 1 of the three options offered at the time), document the point clearly for recollection. Re-affirmed 2026-05-15 during session resume.
+
+---
+
 ## -2. LLD RTM impl-status workflow — advance beyond Option A (CSV companion)
 
 **Status (2026-05-15):** Workstream-3 Option A landed on branch `feat/export-parity-frd-pilot`, commit `5528960`. The RTM bundle now includes `LLD-MOD-NN-rtm-impl-status.csv` — a starter template the dev team downloads, edits as they implement files, and keeps in git alongside the codebase.

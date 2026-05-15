@@ -44,6 +44,7 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
   const pathname = usePathname();
   const backParam = pathname ? `?back=${encodeURIComponent(pathname)}` : '';
   const previewHref = `/ba-tool/preview/artifact/${artifact.id}${backParam}`;
+  const isLld = artifact.artifactType === 'LLD';
 
   const download = (format: 'pdf' | 'docx') => {
     // Direct anchor link to the backend export URL — let the browser stream
@@ -69,8 +70,34 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
     }
   };
 
+  // LLD-only RTM download. Mirrors the same 3 variants exposed on the
+  // preview page (downloadRtm) so the editor view can drive the same
+  // /api/ba/artifacts/:id/rtm-{html,csv,bundle} endpoints without sending
+  // the user to a separate tab first.
+  const downloadRtm = (variant: 'html' | 'csv' | 'bundle') => {
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+      const endpoint = variant === 'bundle' ? 'rtm-bundle' : variant === 'html' ? 'rtm-html' : 'rtm-csv';
+      const moduleId = artifact.module?.moduleId ?? artifact.artifactId;
+      const ext = variant === 'bundle' ? 'zip' : variant;
+      const a = document.createElement('a');
+      a.href = `${apiBase}/api/ba/artifacts/${artifact.id}/${endpoint}`;
+      a.download = variant === 'bundle'
+        ? `LLD-${moduleId}-rtm-bundle.zip`
+        : `LLD-${moduleId}-rtm.${ext}`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[RTM ${variant} download] failed:`, err);
+      alert(`RTM download failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   return (
-    <div className="flex items-center justify-end gap-2 mb-3 pb-3 border-b border-border">
+    <div className="flex items-center justify-end gap-2 mb-3 pb-3 border-b border-border flex-wrap">
       <Button size="sm" variant="outline" asChild>
         <Link href={previewHref} target="_blank">
           <Eye className="h-3.5 w-3.5 mr-1" />
@@ -85,6 +112,25 @@ function ArtifactToolbar({ artifact }: { artifact: BaArtifact }) {
         <Download className="h-3.5 w-3.5 mr-1" />
         DOCX
       </Button>
+      {/* LLD-only — the Module-SubTask-LLD-RTM bundle (HTML / CSV /
+          full ZIP). Mirrors the buttons on the LLD preview page so the
+          editor view doesn't force a separate-tab round-trip. */}
+      {isLld && (
+        <>
+          <Button size="sm" variant="outline" onClick={() => downloadRtm('html')} title="Interactive RTM explorer (HTML)">
+            <Download className="h-3.5 w-3.5 mr-1" />
+            RTM HTML
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => downloadRtm('csv')} title="Flat tabular RTM (CSV)">
+            <Download className="h-3.5 w-3.5 mr-1" />
+            RTM CSV
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => downloadRtm('bundle')} title="Full RTM bundle (HTML + CSV + tree + schema + impl-status)">
+            <Download className="h-3.5 w-3.5 mr-1" />
+            RTM Bundle
+          </Button>
+        </>
+      )}
     </div>
   );
 }
