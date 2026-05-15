@@ -293,6 +293,34 @@ export default function BaPreviewPage() {
     window.open(`${API_BASE}${base}`, '_blank', 'noopener');
   }, [kind, id]);
 
+  /**
+   * RTM download — LLD-only. Streams from the backend via an anchor link
+   * exactly like the PDF/DOCX download path. The `kind` value here comes
+   * from the route param; this helper is wired into 3 buttons that only
+   * render when `doc.artifactType === 'LLD'`.
+   *
+   * Variants:
+   *   - 'html'   → /rtm-html      Interactive Swagger-like explorer
+   *   - 'csv'    → /rtm-csv       Flat tabular RTM
+   *   - 'bundle' → /rtm-bundle    ZIP of all five RTM artifacts
+   */
+  const downloadRtm = useCallback((variant: 'html' | 'csv' | 'bundle') => {
+    if (!doc) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+    const endpoint = variant === 'bundle' ? 'rtm-bundle' : variant === 'html' ? 'rtm-html' : 'rtm-csv';
+    const ext = variant === 'bundle' ? 'zip' : variant;
+    const url = `${apiBase}/api/ba/artifacts/${id}/${endpoint}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = variant === 'bundle'
+      ? `LLD-${doc.module.moduleId}-rtm-bundle.zip`
+      : `LLD-${doc.module.moduleId}-rtm.${ext}`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, [id, doc]);
+
   const handleLogoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !doc?.project.id) return;
@@ -762,6 +790,27 @@ export default function BaPreviewPage() {
             {downloading === 'docx' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
             DOCX
           </Button>
+          {/* LLD-only: RTM checklist downloads. The HTML opens directly in
+              a browser; the CSV opens in Excel; the bundle ZIP contains
+              all five artifacts (CSV / HTML / tree / schema SQL / dev
+              impl-status template) for one-click customer delivery. */}
+          {doc.artifactType === 'LLD' && (
+            <>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider ml-2">RTM</span>
+              <Button size="sm" variant="outline" onClick={() => downloadRtm('html')}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                HTML
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => downloadRtm('csv')}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                CSV
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => downloadRtm('bundle')}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                Bundle ZIP
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
