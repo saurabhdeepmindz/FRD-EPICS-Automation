@@ -20,6 +20,7 @@ import { BaSkillOrchestratorService } from './ba-skill-orchestrator.service';
 import { BaUnitTestExportService } from './ba-unit-test-export.service';
 import { BaContractTestExportService } from './ba-contract-test-export.service';
 import { BaOpenApiExportService } from './ba-openapi-export.service';
+import { BaLldRtmService } from './ba-lld-rtm.service';
 
 @Controller('ba')
 export class BaLldController {
@@ -31,6 +32,7 @@ export class BaLldController {
     private readonly unitTestExport: BaUnitTestExportService,
     private readonly contractTestExport: BaContractTestExportService,
     private readonly openapiExport: BaOpenApiExportService,
+    private readonly rtm: BaLldRtmService,
   ) {}
 
   // ─── OpenAPI / Swagger for the customer's target app (derived from LLD) ──
@@ -317,6 +319,161 @@ export class BaLldController {
       'Content-Length': buffer.length,
     });
     res.end(buffer);
+  }
+
+  // ─── LLD RTM (Module-SubTask-LLD-RTM checklist) ──────────────────────
+  //
+  // Five endpoints serve the RTM deliverable bundle for an LLD artifact:
+  //
+  //   GET .../rtm-html               Self-contained Swagger-like explorer
+  //   GET .../rtm-csv                Flat one-row-per-(subtask × file) CSV
+  //   GET .../rtm-tree               ASCII project tree with annotations
+  //   GET .../rtm-schema-sql         Consolidated DB schema (concatenated)
+  //   GET .../rtm-impl-status-csv    Developer-facing impl-tracking CSV
+  //                                  (workstream 3, Option A: a starter
+  //                                  template the dev team fills in)
+  //   GET .../rtm-bundle             ZIP of all five (one customer download)
+  //
+  // All accept an optional ?feature=F-XX-YY query param to scope to one
+  // feature for a focused review. All return immediately from in-memory
+  // synthesis — no DB writes.
+
+  /** GET /api/ba/artifacts/:id/rtm-html — interactive RTM explorer */
+  @Get('artifacts/:id/rtm-html')
+  async rtmHtml(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const result = await this.rtm.buildRtm(lldArtifactId, { featureFilter });
+    const tree = this.rtm.emitTree(result.rows, result.module.moduleId);
+    const html = this.rtm.emitHtml(
+      { moduleId: result.module.moduleId, moduleName: result.module.moduleName },
+      result.rows,
+      tree,
+      result.stats,
+    );
+    const stem = this.rtmStem(result.module.moduleId, featureFilter);
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${stem}.html"`,
+    });
+    res.end(html);
+  }
+
+  /** GET /api/ba/artifacts/:id/rtm-csv — flat tabular RTM */
+  @Get('artifacts/:id/rtm-csv')
+  async rtmCsv(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const result = await this.rtm.buildRtm(lldArtifactId, { featureFilter });
+    const csv = this.rtm.emitCsv(result.rows);
+    const stem = this.rtmStem(result.module.moduleId, featureFilter);
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${stem}.csv"`,
+    });
+    res.end(csv);
+  }
+
+  /** GET /api/ba/artifacts/:id/rtm-tree — ASCII project tree */
+  @Get('artifacts/:id/rtm-tree')
+  async rtmTree(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const result = await this.rtm.buildRtm(lldArtifactId, { featureFilter });
+    const tree = this.rtm.emitTree(result.rows, result.module.moduleId);
+    const stem = this.rtmStem(result.module.moduleId, featureFilter);
+    res.set({
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${stem}-tree.txt"`,
+    });
+    res.end(tree);
+  }
+
+  /** GET /api/ba/artifacts/:id/rtm-schema-sql — consolidated DB schema */
+  @Get('artifacts/:id/rtm-schema-sql')
+  async rtmSchemaSql(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const result = await this.rtm.buildRtm(lldArtifactId, { featureFilter });
+    const stem = `LLD-${result.module.moduleId}-schema`;
+    res.set({
+      'Content-Type': 'application/sql; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${stem}.sql"`,
+    });
+    res.end(result.consolidatedSchema || '-- (no migration files found for this module)\n');
+  }
+
+  /** GET /api/ba/artifacts/:id/rtm-impl-status-csv — developer impl tracker */
+  @Get('artifacts/:id/rtm-impl-status-csv')
+  async rtmImplStatusCsv(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const result = await this.rtm.buildRtm(lldArtifactId, { featureFilter });
+    const csv = this.rtm.emitImplStatusCsv(result.rows);
+    const stem = this.rtmStem(result.module.moduleId, featureFilter);
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${stem}-impl-status.csv"`,
+    });
+    res.end(csv);
+  }
+
+  /** GET /api/ba/artifacts/:id/rtm-bundle — ZIP of all five RTM artifacts */
+  @Get('artifacts/:id/rtm-bundle')
+  async rtmBundle(@Param('id') lldArtifactId: string, @Res() res: Response): Promise<void> {
+    const featureFilter = this.parseFeatureParam(res);
+    const { zip, stem } = await this.rtm.buildBundleZip(lldArtifactId, { featureFilter });
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${stem}-bundle.zip"`,
+      'Content-Length': zip.length,
+    });
+    res.end(zip);
+  }
+
+  /**
+   * POST /api/ba/artifacts/:id/rtm/generate-missing-file
+   *
+   * Workstream 4 framework — auto-fix for an RTM ToDo row.
+   * Body: { subtaskId: string, filePath: string }
+   *
+   * v1 implementation: resolves the subtask's featureId and delegates to
+   * the existing idempotent `executeSkill06ForFeature` method. That fires
+   * the AI for the whole feature but skips any pseudo-files already
+   * present — so the net effect is the missing file gets generated
+   * (alongside any other gaps in that feature). Over-generates relative
+   * to a true per-file fast-path, but keeps the framework working today
+   * without bespoke prompt engineering. A focused per-file method can
+   * land later if perf becomes a pain point.
+   */
+  @Post('artifacts/:id/rtm/generate-missing-file')
+  async rtmGenerateMissingFile(
+    @Param('id') lldArtifactId: string,
+    @Body() body: { subtaskId?: string; filePath?: string },
+  ): Promise<ReturnType<BaLldRtmService['generateMissingFile']>> {
+    return this.rtm.generateMissingFile({
+      lldArtifactId,
+      subtaskId: body?.subtaskId ?? '',
+      filePath: body?.filePath ?? '',
+    });
+  }
+
+  /**
+   * Pull `feature` from the request query string. Nest's @Query() decorator
+   * would be cleaner but we already use @Res() (manual response) on every
+   * endpoint here, so we read directly off res.req.
+   */
+  private parseFeatureParam(res: Response): string | undefined {
+    const raw = (res.req?.query?.feature ?? '') as string;
+    const trimmed = String(raw).trim();
+    if (!trimmed) return undefined;
+    // Accept F-XX-YY format (case-insensitive). Reject anything else so
+    // we don't silently embed user input in filenames.
+    if (!/^F-\d+-\d+$/i.test(trimmed)) {
+      throw new BadRequestException(`feature must match F-XX-YY (got "${trimmed}")`);
+    }
+    return trimmed.toUpperCase();
+  }
+
+  private rtmStem(moduleId: string, featureFilter: string | undefined): string {
+    return featureFilter
+      ? `LLD-${moduleId}-${featureFilter}-rtm`
+      : `LLD-${moduleId}-rtm`;
   }
 }
 
