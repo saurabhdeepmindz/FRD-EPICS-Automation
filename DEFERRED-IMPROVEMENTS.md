@@ -6,6 +6,39 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
+## -2. LLD RTM impl-status workflow — advance beyond Option A (CSV companion)
+
+**Status (2026-05-15):** Workstream-3 Option A landed on branch `feat/export-parity-frd-pilot`, commit `5528960`. The RTM bundle now includes `LLD-MOD-NN-rtm-impl-status.csv` — a starter template the dev team downloads, edits as they implement files, and keeps in git alongside the codebase.
+
+**What's working today (Option A):** Each LLD bundle ZIP contains an impl-status CSV pre-populated with one row per pseudo-file: `Feature, UserStory, SubTask, Folder, FilePath, design_status, impl_status, note, updated_by, updated_at`. `design_status` is auto-derived (Done / ToDo); `impl_status` starts at ToDo and devs maintain it manually. The CSV lives in the project's repo; no DB writes, no sync logic.
+
+**Why advance:** Option A is per-machine / per-dev. The HTML RTM viewer can't see manual edits to the CSV because it ships separately. Three forward paths from the original design discussion:
+
+- **Option B — Inline status UI in the HTML.** Add an editable status column to the RTM HTML viewer; saves to `localStorage` on the dev's machine. Optionally exports back as updates. Tradeoff: per-dev tracking, no DB writes, doesn't survive cross-machine.
+
+- **Option C — Persist in BA-Tool DB.** New `BaImplementationStatus` table keyed by `(artifactDbId, subtaskId, filePath)`; UI in BA-Tool to update; the RTM HTML viewer loads it via a fetch and overlays the manual `impl_status` on top of the auto-derived `design_status`. Tradeoff: multi-user / team tracking, persists in DB, biggest scope.
+
+- **Option D — Git-scan auto-derive.** Periodic CI job greps the real codebase for files matching the LLD path conventions; updates `impl_status` automatically (PR opened, merged, etc.). Tradeoff: true "code exists" signal, zero manual update overhead, but needs CI hookup and path-mapping logic between `LLD-PseudoCode/backend/service/foo.service.ts` and the real `src/modules/.../FooService.ts`.
+
+**Trigger to revisit:** when the dev team starts using the impl-status CSV in anger and the manual-edit workflow becomes a pain point — typically once 3+ devs are working off the same module's RTM, OR when status tracking needs to surface in dashboards.
+
+**Scope when picked up (recommended Option C):**
+
+1. Add `BaImplementationStatus` Prisma model: `id, artifactDbId, subtaskId, filePath, implStatus (enum: ToDo | WIP | Done | Failed | Blocked), note, updatedBy, updatedAt`.
+2. New endpoints under `BaLldController`:
+   - `GET  /api/ba/artifacts/:id/rtm-impl-status` → returns merged design+impl status JSON for the RTM HTML to fetch
+   - `PATCH /api/ba/artifacts/:id/rtm-impl-status/:subtaskId/:filePath` → updates one row
+3. Extend `BaLldRtmService.emitHtml` to inject a fetch-on-load that overlays manual impl_status on the auto-derived rows.
+4. Keep the standalone CSV export working (Option A) — it's still the offline-friendly format for customer hand-off.
+
+**Risk:** Low for B (frontend-only, localStorage). Medium for C (Prisma migration, new endpoints). Higher for D (CI integration + path mapping is project-specific).
+
+**Acceptance criteria (Option C):** A dev updates `impl_status` for `ST-US053-BE-01 / research-chat.service.ts` to `WIP`; refreshes the RTM HTML; the row shows the `WIP` badge and the dev's name in the updated_by column.
+
+**First identified on:** 2026-05-15 — during the LLD RTM design discussion, immediately after Option A shipped.
+
+---
+
 ## -1. MOD-04 FTC artifact — patch OWASP coverage gap via mode-2b backfill
 
 **Symptom:** MOD-04's FTC artifact (`status=DRAFT`, 16 sections, 180 `BaTestCase` rows) was generated on 2026-04-25, **before** the per-mode SKILL-07 orchestrator (mode 2 / 2b / 2c / 3) existed. As a result it has uneven coverage:
