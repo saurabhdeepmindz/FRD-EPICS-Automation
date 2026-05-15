@@ -1564,6 +1564,21 @@ export async function listTestCasesByArtifact(artifactDbId: string): Promise<BaT
   return data;
 }
 
+/**
+ * FTC pilot Gap A — fetch the sibling-FRD enrichment maps used to render
+ * per-TC screen cards client-side. Returns empty maps when the artifact
+ * isn't FTC, has no sibling FRD, or the FRD parse turns up no features.
+ */
+export interface FtcSiblingFrdFeatures {
+  featureNames: Record<string, string>;
+  featureScreenRefs: Record<string, string[]>;
+}
+
+export async function getFtcSiblingFrdFeatures(artifactDbId: string): Promise<FtcSiblingFrdFeatures> {
+  const { data } = await api.get<FtcSiblingFrdFeatures>(`/ba/artifacts/${artifactDbId}/sibling-frd-features`);
+  return data;
+}
+
 export async function saveTestCase(id: string, editedContent: string): Promise<BaTestCase> {
   const { data } = await api.put<BaTestCase>(`/ba/test-cases/${id}`, { editedContent });
   return data;
@@ -2260,6 +2275,10 @@ export interface UpdateBaBrdDto {
   sections?: Record<string, string>;
   frTable?: BaFrTableRow[];
   openItems?: string[];
+  /** Patches BRD `meta.productName` — used by the Stage 2 page to persist edits without a full regenerate. */
+  productName?: string;
+  /** Patches BRD `meta.audience` — used by the Stage 2 page to persist edits without a full regenerate. */
+  audience?: BaBrdAudience;
   status?: BaBrdStatus;
 }
 
@@ -2313,6 +2332,97 @@ export interface BaAnOpenQuestion {
   default: string;
 }
 
+// ─── §12 PRD-Readiness Bridge types (skill 03 §12) ──────────────────────
+
+export interface BaAnActor {
+  role: string;
+  type: string;
+  description: string;
+  permissions: string;
+}
+
+export interface BaAnIntegration {
+  name: string;
+  type: string;
+  purpose: string;
+  criticality: string;
+  phase: string;
+}
+
+export interface BaAnCustomerJourney {
+  name: string;
+  primaryActor: string;
+  trigger: string;
+  steps: string[];
+  successOutcome: string;
+  failureModes: string[];
+}
+
+export interface BaAnFunctionalLandscapeRow {
+  module: string;
+  purpose: string;
+  frRefs: string[];
+}
+
+export interface BaAnUiUxRequirements {
+  interactionPatterns: string;
+  accessibility: string;
+  responsive: string;
+  emptyErrorStates: string;
+  microcopyTone: string;
+  internationalization: string;
+}
+
+export interface BaAnComplianceRow {
+  standard: string;
+  applicability: string;
+  phase1Controls: string;
+}
+
+export interface BaAnTestType {
+  coverageTarget: string;
+  tools: string;
+  owner: string;
+}
+
+export interface BaAnTestingRequirements {
+  unit: BaAnTestType;
+  integration: BaAnTestType;
+  e2e: BaAnTestType;
+  evalHarness: BaAnTestType;
+  accessibility: BaAnTestType;
+  performance: BaAnTestType;
+  security: BaAnTestType;
+}
+
+export interface BaAnReceivable {
+  item: string;
+  ownerClient: string;
+  neededByWeek: number | null;
+  blocking: boolean;
+}
+
+export interface BaAnEnvironment {
+  environment: string;
+  purpose: string;
+  phase1Hosting: string;
+  phase2Hosting: string;
+}
+
+export interface BaAnPrdReadiness {
+  actors: BaAnActor[];
+  integrations: BaAnIntegration[];
+  customerJourneys: BaAnCustomerJourney[];
+  functionalLandscape: BaAnFunctionalLandscapeRow[];
+  uiUxRequirements: BaAnUiUxRequirements;
+  complianceRequirements: BaAnComplianceRow[];
+  testingRequirements: BaAnTestingRequirements;
+  keyDeliverables: string[];
+  receivables: BaAnReceivable[];
+  environmentList: BaAnEnvironment[];
+  miscellaneous: string;
+}
+
 export interface BaAnVersionMeta {
   audience?: string | null;
   productName?: string | null;
@@ -2324,11 +2434,13 @@ export interface BaApproachNoteVersion {
   id: string;
   approachNoteId: string;
   versionNumber: number;
-  /** Map of section number ('1' to '11') → markdown body. */
+  /** Map of section number ('1' to '12') → markdown body. */
   sections: Record<string, string>;
   brandTokens: BaAnBrandTokens | null;
   decisionsLocked: BaAnDecision[] | null;
   openQuestions: BaAnOpenQuestion[] | null;
+  /** §12 PRD-Readiness Bridge — structured form of items the PRD generator lifts directly. */
+  prdReadiness: BaAnPrdReadiness | null;
   /** Required v2+, null on v1. */
   changesSince: string | null;
   /** FK to prior version this one supersedes; null on v1. */
@@ -2364,6 +2476,7 @@ export const AN_SECTION_TITLES: Record<string, string> = {
   '9': 'Phase 1 (PoC) Scope',
   '10': 'Open Items for Next Version',
   '11': 'Phase 2 Roadmap',
+  '12': 'PRD-Readiness Bridge',
 };
 
 export async function generateDiscoveryAn(
@@ -2420,6 +2533,8 @@ export interface UpdateBaAnVersionDto {
   brandTokens?: Partial<BaAnBrandTokens>;
   decisionsLocked?: BaAnDecision[];
   openQuestions?: BaAnOpenQuestion[];
+  /** Partial — only the §12 sub-sections that changed. Backend shallow-merges with prior. */
+  prdReadiness?: Partial<BaAnPrdReadiness>;
   status?: BaAnVersionStatus;
 }
 

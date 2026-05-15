@@ -13,6 +13,7 @@ import { BaTemplateService } from './ba-template.service';
 import { BaLldService } from './ba-lld.service';
 import { BaLldParserService } from './ba-lld-parser.service';
 import { BaLldNarrativeService } from './ba-lld-narrative.service';
+import { BaLldRtmService } from './ba-lld-rtm.service';
 import { BaFtcService } from './ba-ftc.service';
 import { BaFtcParserService } from './ba-ftc-parser.service';
 import { BaFtcNarrativeService } from './ba-ftc-narrative.service';
@@ -32,9 +33,10 @@ import { TextExtractionService } from './text-extraction.service';
 import { AttachmentStorageModule } from './storage/storage.module';
 import { SubTaskParserService } from './subtask-parser.service';
 import { ExportModule } from '../export/export.module';
+import { DiscoveryModule } from './discovery/discovery.module';
 
 @Module({
-  imports: [ExportModule, AttachmentStorageModule],
+  imports: [ExportModule, AttachmentStorageModule, DiscoveryModule],
   controllers: [BaToolController, BaSkillController, BaMasterDataController, BaLldController, BaFtcController, BaExecutionController, BaSprintController],
   providers: [
     BaToolService,
@@ -46,6 +48,7 @@ import { ExportModule } from '../export/export.module';
     BaLldService,
     BaLldParserService,
     BaLldNarrativeService,
+    BaLldRtmService,
     BaFtcService,
     BaFtcParserService,
     BaFtcNarrativeService,

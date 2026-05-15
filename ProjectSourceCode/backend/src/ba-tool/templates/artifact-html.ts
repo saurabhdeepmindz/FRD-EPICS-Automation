@@ -2,10 +2,15 @@
  * Generic HTML renderer for BA Tool artifacts (FRD, EPIC, User Story, SubTask).
  * Produces a self-contained HTML document with:
  *   - Cover page (project productName / client / submittedBy / date / status)
- *   - Table of Contents
- *   - Sections
+ *   - Nested Table of Contents (mirrors the preview tree depth: section →
+ *     subsection → feature)
+ *   - Sections (with per-feature inline screen thumbnails when feature
+ *     headings carry a `Screen Reference: SCR-NN` line)
  *   - Document History (derived from section timestamps)
  *   - Revision appendix
+ *
+ * Styling is consumed from `./artifact-style.ts` so the DOCX side and this
+ * template stay visually aligned (single source of truth for tokens).
  *
  * Design note: BA artifacts don't yet have a dedicated audit-log table, so the
  * "Document History" is a best-effort reconstruction from each section's
@@ -13,6 +18,13 @@
  * `BaArtifactAuditLog` model is added, this template can be extended to
  * consume it — the shape mirrors `PrdAuditLog` deliberately.
  */
+import { buildArtifactCss, statusKindFor } from './artifact-style';
+import { shouldOmitFromExport } from './artifact-internal-filter';
+import { restructureEpicDoc } from './epic-restructure';
+import { restructureFrdDoc } from './frd-restructure';
+import { restructureFtcDoc } from './ftc-restructure';
+import { restructureSubtaskDoc } from './subtask-restructure';
+import { restructureUserStoryDoc } from './user-story-restructure';
 
 export interface BaSectionLite {
   id: string;
@@ -27,9 +39,45 @@ export interface BaSectionLite {
   updatedAt: string | Date;
 }
 
+/**
+ * Subset of `BaTestCase` carried into the export pipeline. The FTC pilot
+ * uses these to build the per-category / per-feature / per-TC structure
+ * that mirrors the editor tree. Only the fields the renderers consume are
+ * included so the loader can avoid pulling fields that bloat the payload
+ * (e.g. supportingDocs binary refs).
+ */
+export interface BaTestCaseLite {
+  id: string;
+  testCaseId: string;          // human-readable: TC-001, Neg_TC-005
+  title: string;
+  category: string | null;     // Functional | Integration | Security | UI | Data | Performance | Accessibility | API | null
+  scope: string;               // black_box | white_box
+  testKind: string;            // positive | negative | edge
+  priority: string | null;     // P0 | P1 | P2
+  isIntegrationTest: boolean;
+  owaspCategory: string | null;
+  scenarioGroup: string | null;
+  testData: string | null;
+  e2eFlow: string | null;
+  preconditions: string | null;
+  steps: string;
+  expected: string;
+  postValidation: string | null;
+  sqlSetup: string | null;
+  sqlVerify: string | null;
+  playwrightHint: string | null;
+  developerHints: string | null;
+  parentTestCaseId: string | null;
+  linkedFeatureIds: string[];
+  linkedEpicIds: string[];
+  linkedStoryIds: string[];
+  linkedSubtaskIds: string[];
+  isHumanModified: boolean;
+}
+
 export interface BaArtifactDoc {
   artifactId: string;         // e.g. FRD-MOD-01
-  artifactType: string;       // FRD | EPIC | USER_STORY | SUBTASK | SCREEN_ANALYSIS
+  artifactType: string;       // FRD | EPIC | USER_STORY | SUBTASK | SCREEN_ANALYSIS | FTC | LLD
   status: string;             // DRAFT | CONFIRMED | APPROVED | CONFIRMED_PARTIAL
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -48,6 +96,27 @@ export interface BaArtifactDoc {
     submittedBy: string | null;
     clientLogo: string | null;
   };
+  /**
+   * Populated only for FTC artifacts. Each test case carries its full body
+   * (steps, expected, preconditions, etc.) so the renderer can emit a
+   * complete per-TC card without making additional DB queries.
+   */
+  testCases?: BaTestCaseLite[];
+  /**
+   * Populated only for FTC artifacts when the same module also has an FRD.
+   * Maps `F-XX-YY` to its human-readable feature name so the FTC TOC can
+   * render `F-05-01 — Reset Password` instead of the bare ID.
+   */
+  frdFeatureNames?: Record<string, string>;
+  /**
+   * Populated only for FTC artifacts when the same module also has an FRD.
+   * Maps `F-XX-YY` to the screen IDs (`SCR-NN`) that feature references
+   * via its FRD `Screen Reference:` line. Drives Gap A — per-TC inline
+   * screen cards: each TC's `linkedFeatureIds[0]` resolves to a feature,
+   * which resolves to one or more screens, which the renderer splices in
+   * directly under the TC heading.
+   */
+  frdFeatureScreenRefs?: Record<string, string[]>;
 }
 
 // v4: LLD artifacts are distinct from the other types — they carry their own
@@ -114,8 +183,12 @@ export function enrichScreenReferences(
 // ─── Minimal markdown → HTML renderer ───────────────────────────────────────
 // Handles headings, lists, tables (pipe-syntax), code fences, bold/italic/inline
 // code, horizontal rules, blockquotes and paragraphs. No external deps.
+//
+// `parentSlug` (optional): when provided, every emitted heading gets an
+// `id="parentSlug__<heading-slug>"` attribute so the nested TOC can deep-link
+// into specific sub-features. Pass an empty string to disable anchor IDs.
 
-export function renderMarkdown(md: string): string {
+export function renderMarkdown(md: string, parentSlug = ''): string {
   const lines = md.split(/\r?\n/);
   const out: string[] = [];
   let i = 0;
@@ -226,7 +299,9 @@ export function renderMarkdown(md: string): string {
     const hMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
     if (hMatch) {
       const level = hMatch[1].length;
-      out.push(`<h${level + 2}>${renderInline(hMatch[2])}</h${level + 2}>`);
+      const headingText = hMatch[2];
+      const anchor = parentSlug ? ` id="${parentSlug}__${slug(headingText)}"` : '';
+      out.push(`<h${level + 2}${anchor}>${renderInline(headingText)}</h${level + 2}>`);
       i++; continue;
     }
 
@@ -486,19 +561,250 @@ function renderInline(text: string): string {
   return s;
 }
 
+// ─── Nested TOC + per-feature inline screens ────────────────────────────────
+
+interface InnerHeading {
+  text: string;
+  slug: string;       // namespaced slug ready for an href
+  // Normalised TOC depth: 2 = first inner level, 3 = second inner level.
+  // Derived from the shallowest markdown heading depth seen in the section,
+  // so a section emitting only `####` headings still renders its first
+  // level as TOC depth 2 (immediately under the section's depth-1 entry).
+  depth: 2 | 3;
+}
+
+/**
+ * Pre-walk a section's markdown body to extract inner headings, normalising
+ * their depth so the TOC indents look uniform regardless of which heading
+ * level the LLM happened to pick.
+ *
+ * Headings inside fenced code blocks are skipped — they're code, not nav.
+ */
+function extractInnerHeadings(md: string, parentSlug: string): InnerHeading[] {
+  const lines = md.split(/\r?\n/);
+  let inFence = false;
+  const collected: Array<{ text: string; rawLevel: number }> = [];
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (/^```/.test(t)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = /^(#{1,6})\s+(.*)$/.exec(t);
+    if (!m) continue;
+    collected.push({ text: m[2].trim(), rawLevel: m[1].length });
+  }
+  if (collected.length === 0) return [];
+  // Find the shallowest depth — that becomes "depth 2" in TOC.
+  const minRaw = Math.min(...collected.map((c) => c.rawLevel));
+  const seenSlugs = new Map<string, number>();
+  return collected
+    .map((c) => {
+      const baseSlug = slug(c.text) || 'heading';
+      const dupeIdx = (seenSlugs.get(baseSlug) ?? 0) + 1;
+      seenSlugs.set(baseSlug, dupeIdx);
+      const finalSlug = dupeIdx === 1 ? baseSlug : `${baseSlug}-${dupeIdx}`;
+      const depth: 2 | 3 = c.rawLevel === minRaw ? 2 : 3;
+      return { text: c.text, slug: `${parentSlug}__${finalSlug}`, depth };
+    })
+    // Cap to first 500 inner entries per section. Bumped from 50 for the
+    // FTC pilot — the "Functional Test Cases" category alone can carry
+    // ~90+ feature buckets and ~100+ TCs, far past the FRD-era assumption.
+    // 500 is large enough for any real-world deliverable while still
+    // protecting against runaway AI output.
+    .slice(0, 500);
+}
+
+function buildNestedTocHtml(
+  sections: Array<{ slug: string; label: string; idx: number; inner: InnerHeading[] }>,
+): string {
+  const lis: string[] = [];
+  for (const s of sections) {
+    lis.push(`<li><a href="#sec-${s.slug}">${s.idx + 1}. ${esc(s.label)}</a></li>`);
+    for (const ih of s.inner) {
+      const cls = ih.depth === 2 ? 'toc-child' : 'toc-grandchild';
+      lis.push(`<li class="${cls}"><a href="#${ih.slug}">${esc(ih.text)}</a></li>`);
+    }
+  }
+  return `<ul>${lis.join('')}</ul>`;
+}
+
+/**
+ * After a section body is rendered to HTML, find feature headings of the
+ * form `<hN>F-XX-YY: Title</hN>` and inject an inline screen thumbnail
+ * directly after the heading. The thumbnail is resolved from the markdown
+ * source's `Screen Reference: SCR-NN` line associated with that feature.
+ *
+ * This implements DEFERRED-IMPROVEMENTS.md item #2 (per-feature inline
+ * screens). The standalone "Referenced Screens" appendix is kept at the
+ * top of the doc so readers can still see the full screen catalog at a
+ * glance — but the per-feature thumbnails make the body self-contained
+ * for someone reading feature-by-feature.
+ */
+function injectFeatureScreens(
+  html: string,
+  rawMarkdown: string,
+  parentSlug: string,
+  screens: Array<{ screenId: string; screenTitle: string; fileData: string }>,
+): string {
+  if (!html || !rawMarkdown || screens.length === 0 || !parentSlug) return html;
+  const screenById = new Map(screens.map((s) => [s.screenId, s]));
+
+  // Walk the markdown source, and for every `^####? F-XX-YY: ...` heading
+  // within ~60 lines find the associated `Screen Reference: SCR-NN` line.
+  // The same slugifier renderMarkdown uses gives us the heading's anchor
+  // id, so we can splice the thumbnail in by anchor — robust against
+  // renderInline wrapping the F-XX-YY in a `<span class="idref">`.
+  const lines = rawMarkdown.split(/\r?\n/);
+  const anchorToScreenId = new Map<string, string>();
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^#{2,4}\s+(F-\d+-\d+):\s*(.*)$/i.exec(lines[i].trim());
+    if (!m) continue;
+    const headingText = `${m[1]}:${m[2] ? ` ${m[2]}` : ''}`;
+    const anchor = `${parentSlug}__${slug(headingText) || 'heading'}`;
+    const startDepth = (lines[i].match(/^#+/) ?? [''])[0].length;
+    for (let j = i + 1; j < Math.min(lines.length, i + 60); j++) {
+      const nextHash = /^(#{1,6})\s/.exec(lines[j].trim());
+      if (nextHash && nextHash[1].length <= startDepth) break;
+      // Tolerates markdown emphasis around the label:
+      //   `Screen Reference: SCR-01`
+      //   `**Screen Reference:** SCR-01`
+      //   `_Screen Reference_: SCR-01`
+      const sm = /Screen\s+Reference[\s*_:]*\s*(SCR-\d+)/i.exec(lines[j]);
+      if (sm) {
+        anchorToScreenId.set(anchor, sm[1].toUpperCase());
+        break;
+      }
+    }
+  }
+
+  if (anchorToScreenId.size === 0) return html;
+
+  // Insert the thumbnail right AFTER the closing `</hN>` for each anchor.
+  // Matching by id makes us tolerant to whatever `renderInline` did to the
+  // heading text (idref spans, `<strong>`, etc.).
+  let result = html;
+  for (const [anchor, screenId] of anchorToScreenId) {
+    const screen = screenById.get(screenId);
+    if (!screen) continue;
+    const tile = `<div class="feature-screen-inline">
+      <div class="fs-caption">${esc(screenId)} — ${esc(screen.screenTitle)}</div>
+      <img src="${esc(screen.fileData)}" alt="${esc(screen.screenTitle)}"/>
+    </div>`;
+    // Anchor must match exactly. Escape regex meta characters in the slug.
+    const reAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(<h[1-6][^>]*\\sid="${reAnchor}"[^>]*>[\\s\\S]*?<\\/h[1-6]>)`, 'i');
+    result = result.replace(re, `$1${tile}`);
+  }
+  return result;
+}
+
+/**
+ * FTC Gap A — splice a screen thumbnail under each `## F-XX-YY` feature
+ * heading in a rendered FTC category section.
+ *
+ * Originally this fired per `### TC-…` heading (one tile per test case).
+ * For a 156-TC module that meant ~150 inline base64 images in a single
+ * HTML payload — Chrome (via Puppeteer) crashed with `TargetCloseError`
+ * on the PDF render path because the input HTML hit the renderer's
+ * memory ceiling. The screen card is the same for every TC in a feature
+ * bucket (they all share `linkedFeatureIds[0]`), so attaching the card
+ * to the parent feature heading once gives the testing team the same
+ * information at ~3-4× lower image count and keeps the PDF render
+ * within Chrome's memory envelope. Each TC reads in the context of its
+ * parent feature heading, which already shows the screen.
+ *
+ * Falls through silently when:
+ *   - the FTC artifact has no sibling FRD (no screenRefs map);
+ *   - the section's markdown has no recognisable feature heading
+ *     pattern (a degraded restructure shouldn't produce broken markup);
+ *   - a referenced screen ID isn't present in `module.screens` (SCR-NN
+ *     points at a screen that was never uploaded).
+ */
+function injectFtcFeatureScreens(
+  html: string,
+  rawMarkdown: string,
+  parentSlug: string,
+  featureScreenRefs: Record<string, string[]>,
+  screens: Array<{ screenId: string; screenTitle: string; fileData: string }>,
+): string {
+  if (!html || !rawMarkdown || !parentSlug) return html;
+  if (screens.length === 0) return html;
+  if (Object.keys(featureScreenRefs).length === 0) return html;
+
+  const screenById = new Map(screens.map((s) => [s.screenId, s] as const));
+
+  // Walk the markdown source for `## F-XX-YY …` feature headings. The
+  // anchor IDs use the same slugifier `renderMarkdown` produces, so the
+  // regex match by `id="…"` is exact.
+  const lines = rawMarkdown.split(/\r?\n/);
+  const featAnchorToScreenIds = new Map<string, string[]>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const featMatch = /^##\s+(F-\d+-\d+)\b/i.exec(trimmed);
+    if (!featMatch) continue;
+    // After the `##` strip, recover the heading text the slugifier saw —
+    // that's everything after the `## ` prefix on the same line.
+    const headingText = trimmed.replace(/^##\s+/, '');
+    const featureId = featMatch[1].toUpperCase();
+    const screenIds = featureScreenRefs[featureId];
+    if (!screenIds || screenIds.length === 0) continue;
+    const featAnchor = `${parentSlug}__${slug(headingText) || 'heading'}`;
+    featAnchorToScreenIds.set(featAnchor, screenIds);
+  }
+  if (featAnchorToScreenIds.size === 0) return html;
+
+  let result = html;
+  for (const [anchor, screenIds] of featAnchorToScreenIds) {
+    const tiles = screenIds
+      .map((sid) => {
+        const screen = screenById.get(sid);
+        if (!screen) return '';
+        return `<div class="feature-screen-inline">
+          <div class="fs-caption">${esc(screen.screenId)} — ${esc(screen.screenTitle)}</div>
+          <img src="${esc(screen.fileData)}" alt="${esc(screen.screenTitle)}"/>
+        </div>`;
+      })
+      .filter((t) => t.length > 0)
+      .join('');
+    if (!tiles) continue;
+    const reAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(<h[1-6][^>]*\\sid="${reAnchor}"[^>]*>[\\s\\S]*?<\\/h[1-6]>)`, 'i');
+    result = result.replace(re, `$1${tiles}`);
+  }
+  return result;
+}
+
 // ─── Top-level renderer ─────────────────────────────────────────────────────
 
-export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
+export function generateBaArtifactHtml(input: BaArtifactDoc): string {
+  // Pilot restructurers — chained but each is a no-op outside its own
+  // artifact type, so the order is irrelevant. FRD: nest features under
+  // `<artifactId> — <moduleName>`. FTC: drop AI markdown duplicates of the
+  // structured TC data and append per-category synthetic sections so the
+  // editor's three-level category → feature → TC tree shows up in the
+  // exported TOC.
+  const doc = restructureFtcDoc(
+    restructureFrdDoc(
+      restructureEpicDoc(
+        restructureUserStoryDoc(
+          restructureSubtaskDoc(input),
+        ),
+      ),
+    ),
+  );
   const typeLabel = ARTIFACT_TYPE_LABELS[doc.artifactType] ?? doc.artifactType;
   const productName = doc.project.productName || doc.project.name;
-  const sections = [...doc.sections].sort((a, b) => a.displayOrder - b.displayOrder);
-
-  const toc = sections
-    .map(
-      (s, idx) =>
-        `<li><a href="#sec-${slug(s.sectionKey || s.sectionLabel || String(idx))}">${idx + 1}. ${esc(s.sectionLabel || s.sectionKey)}</a></li>`,
-    )
-    .join('');
+  // Filter internal-processing sections + preamble-only noise BEFORE TOC
+  // and body rendering. Single shared predicate used by HTML/PDF and
+  // DOCX builders so the two surfaces stay in lockstep. (Gap B fix.)
+  // Pass the artifact type so the FRD-specific Step N / Output Checklist /
+  // Sign-Off label regex doesn't strip legitimate EPIC content
+  // (EPIC's monolithic body section is labelled "Introduction").
+  const sections = [...doc.sections]
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .filter((s) => !shouldOmitFromExport(s, doc.artifactType));
 
   // Customer-facing deliverables read better when bare SCR-NN references in
   // the section body carry the human screen title (e.g. `SCR-01 — Login`).
@@ -506,22 +812,65 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
   // include the title aren't double-stamped.
   const screensForEnrichment = doc.module.screens ?? [];
 
-  const sectionHtml = sections
-    .map((s, idx) => {
-      const rawContent = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
-      const content = enrichScreenReferences(rawContent || '', screensForEnrichment);
+  // Pre-compute slugs + inner headings per section so the nested TOC and
+  // the body anchor IDs stay in lockstep (same slug used for both).
+  const enriched = sections.map((s, idx) => {
+    const sectionSlug = slug(s.sectionKey || s.sectionLabel || String(idx));
+    const rawContent = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+    const content = enrichScreenReferences(rawContent || '', screensForEnrichment);
+    const inner = extractInnerHeadings(content || '', sectionSlug);
+    return { section: s, idx, slug: sectionSlug, content: content || '', inner };
+  });
+
+  const tocHtml = buildNestedTocHtml(
+    enriched.map((e) => ({
+      slug: e.slug,
+      label: e.section.sectionLabel || e.section.sectionKey,
+      idx: e.idx,
+      inner: e.inner,
+    })),
+  );
+
+  // FTC Gap A — sibling-FRD feature → screen-IDs map. Empty for non-FTC
+  // artifacts; `injectFtcTcScreens` no-ops in that case.
+  const ftcFeatureScreenRefs = doc.frdFeatureScreenRefs ?? {};
+
+  const sectionHtml = enriched
+    .map(({ section: s, idx, slug: sectionSlug, content }) => {
       const badges: string[] = [];
       if (s.aiGenerated && !s.isHumanModified) badges.push('<span class="badge badge-ai">AI</span>');
       if (s.isHumanModified) badges.push('<span class="badge badge-edited">Edited</span>');
-      return `<section id="sec-${slug(s.sectionKey || s.sectionLabel || String(idx))}" class="doc-section">
+      const renderedBody = renderMarkdown(content, sectionSlug);
+      let bodyWithScreens = injectFeatureScreens(renderedBody, content, sectionSlug, screensForEnrichment);
+      // FTC synthetic category sections (sectionKey starts with `ftc_`)
+      // get an inline screen card spliced under each `## F-XX-YY` feature
+      // heading. Same screen applies to every TC inside the bucket, so
+      // attaching it to the parent feature heading is both visually
+      // sufficient and keeps the inline-image count tractable for the
+      // Puppeteer-driven PDF renderer (per-TC produced ~150 inline images
+      // and crashed Chrome with a memory error).
+      if (doc.artifactType === 'FTC' && s.sectionKey.startsWith('ftc_')) {
+        bodyWithScreens = injectFtcFeatureScreens(
+          bodyWithScreens,
+          content,
+          sectionSlug,
+          ftcFeatureScreenRefs,
+          screensForEnrichment,
+        );
+      }
+      return `<section id="sec-${sectionSlug}" class="doc-section">
         <h2>${idx + 1}. ${esc(s.sectionLabel || s.sectionKey)} ${badges.join(' ')}</h2>
-        <div class="section-body">${renderMarkdown(content)}</div>
+        <div class="section-body">${bodyWithScreens}</div>
       </section>`;
     })
     .join('\n');
 
-  // Document history: one row per section showing last update + AI/Human flag
-  const historyRows = sections
+  // Document history: one row per section showing last update + AI/Human flag.
+  // FRD pilot: source from the *original* sections so the history reflects
+  // the audit trail of every authored section rather than the synthetic
+  // canonical parent (which collapses every feature into one row).
+  const historySectionsSource = input.sections.length > 0 ? input.sections : sections;
+  const historyRows = historySectionsSource
     .filter((s) => s.isHumanModified || s.aiGenerated)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 50)
@@ -542,65 +891,7 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
 <head>
 <meta charset="UTF-8"/>
 <title>${esc(doc.artifactId)} — ${esc(typeLabel)}</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color: #0f172a; font-size: 11pt; line-height: 1.55; margin: 0; padding: 0; }
-  .container { max-width: 900px; margin: 0 auto; padding: 24px 32px; }
-  .cover { min-height: 900px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 80px 40px; page-break-after: always; }
-  .cover .eyebrow { letter-spacing: 0.18em; color: #64748b; font-size: 10pt; text-transform: uppercase; margin-bottom: 18px; }
-  .cover h1 { font-size: 26pt; margin: 0 0 8px; color: #0f172a; font-weight: 700; }
-  .cover .divider { width: 72px; height: 3px; background: #f97316; margin: 18px auto 28px; }
-  .cover dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 24px; margin-top: 32px; text-align: left; font-size: 11pt; }
-  .cover dt { color: #64748b; font-weight: 500; }
-  .cover dd { margin: 0; color: #0f172a; font-weight: 500; }
-  .history { page-break-after: always; padding: 40px 0 60px; }
-  .history h2 { font-size: 18pt; margin: 0 0 18px; }
-  table { width: 100%; border-collapse: collapse; margin: 10px 0 20px; font-size: 10pt; }
-  th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
-  th { background: #f8fafc; font-weight: 600; }
-  .toc { page-break-after: always; padding: 40px 0; }
-  .toc h2 { font-size: 18pt; margin: 0 0 14px; }
-  .toc ol { list-style: none; padding-left: 0; }
-  .toc li { padding: 4px 0; border-bottom: 1px dotted #e2e8f0; }
-  .toc a { color: #0f172a; text-decoration: none; }
-  .doc-section { margin: 28px 0; page-break-inside: avoid; }
-  .doc-section h2 { font-size: 14pt; color: #0f172a; margin: 0 0 10px; border-bottom: 2px solid #f97316; padding-bottom: 6px; }
-  .doc-section h3 { font-size: 12pt; color: #1e293b; margin: 18px 0 8px; }
-  .doc-section h4 { font-size: 11pt; color: #1e293b; margin: 12px 0 6px; font-weight: 600; }
-  .section-body p { margin: 6px 0; }
-  .section-body ul, .section-body ol { margin: 6px 0; padding-left: 22px; }
-  .section-body li { margin: 3px 0; }
-  .md-table { font-size: 9.5pt; }
-  .md-table th { background: #f1f5f9; }
-  .md-table tr:nth-child(even) td { background: #fafbfc; }
-  .badge { display: inline-block; font-size: 8pt; padding: 2px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; font-weight: 500; }
-  .badge-ai { background: #dbeafe; color: #1d4ed8; }
-  .badge-edited { background: #fef3c7; color: #b45309; }
-  .tbd { background: #fef3c7; color: #92400e; padding: 0 3px; border-radius: 3px; }
-  .idref { background: #ede9fe; color: #5b21b6; padding: 0 3px; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9.5pt; }
-  code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9.5pt; }
-  pre.code { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 9.5pt; }
-  pre.code code { background: none; padding: 0; }
-  blockquote { margin: 10px 0; padding: 8px 14px; border-left: 3px solid #cbd5e1; color: #475569; background: #f8fafc; }
-  hr { border: none; border-top: 1px solid #e2e8f0; margin: 18px 0; }
-  a { color: #2563eb; }
-  .status-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 9pt; font-weight: 500; }
-  .status-draft { background: #f1f5f9; color: #475569; }
-  .status-confirmed { background: #dbeafe; color: #1d4ed8; }
-  .status-approved { background: #dcfce7; color: #166534; }
-  .status-partial { background: #fef3c7; color: #b45309; }
-  .mermaid { background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 12px 0; overflow-x: auto; text-align: center; }
-  .mermaid svg { max-width: 100%; height: auto; }
-  .kv-block { margin: 10px 0 16px; }
-  .kv-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-  .kv-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
-  .kv-table th.kv-key { width: 30%; background: #f8fafc; font-weight: 600; text-align: left; vertical-align: top; padding: 6px 10px; border: 1px solid #e2e8f0; }
-  .kv-table td.kv-val { padding: 6px 10px; border: 1px solid #e2e8f0; vertical-align: top; }
-  .kv-table tr:nth-child(even) td.kv-val { background: #fafbfc; }
-  .tree-block { margin: 10px 0 16px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
-  .tree-block .tree-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; padding: 6px 10px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
-  .tree-block pre { margin: 0; padding: 10px 12px; background: #fafbfc; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9pt; white-space: pre; overflow-x: auto; }
-</style>
+<style>${buildArtifactCss()}</style>
 <!-- Mermaid script for UML diagrams. Rendered client-side in the browser
      and also during PDF capture inside Puppeteer. Loaded from CDN for
      zero-config; falls back gracefully (fenced source block visible) if
@@ -630,7 +921,7 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
       <dt>Client Name:</dt><dd>${esc(doc.project.clientName ?? '—')}</dd>
       <dt>Submitted By:</dt><dd>${esc(doc.project.submittedBy ?? '—')}</dd>
       <dt>Date:</dt><dd>${formatDate(doc.updatedAt)}</dd>
-      <dt>Status:</dt><dd><span class="status-chip status-${statusClass(doc.status)}">${esc(doc.status.replace(/_/g, ' '))}</span></dd>
+      <dt>Status:</dt><dd><span class="status-chip status-${statusKindFor(doc.status)}">${esc(doc.status.replace(/_/g, ' '))}</span></dd>
     </dl>
   </div>
 
@@ -642,10 +933,10 @@ export function generateBaArtifactHtml(doc: BaArtifactDoc): string {
       : '<p><em>No edits or AI generations recorded.</em></p>'}
   </div>
 
-  <!-- Table of Contents -->
+  <!-- Table of Contents (nested: section → inner heading → feature) -->
   <div class="toc">
     <h2>Table of Contents</h2>
-    <ol>${toc}</ol>
+    ${tocHtml}
   </div>
 
   ${renderScreensBlock(doc)}
@@ -687,30 +978,12 @@ function renderScreensBlock(doc: BaArtifactDoc): string {
         <div class="screen-title">${esc(s.screenTitle)}</div>
       </div>
     </div>`).join('');
+  // Cover-grid catalog of every screen (kept as appendix for full inventory).
+  // CSS for .screens / .screen-tile / .screen-grid lives in artifact-style.ts
+  // so this stays a pure markup function.
   return `
   <div class="screens">
     <h2>Referenced Screens <span class="count">(${screens.length})</span></h2>
     <div class="screen-grid">${tiles}</div>
-  </div>
-  <style>
-    .screens { page-break-inside: avoid; padding: 30px 0 10px; }
-    .screens h2 { font-size: 14pt; border-bottom: 2px solid #f97316; padding-bottom: 6px; margin-bottom: 14px; }
-    .screens h2 .count { font-size: 9pt; color: #94a3b8; font-weight: normal; margin-left: 6px; }
-    .screen-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .screen-tile { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; background: #fff; page-break-inside: avoid; }
-    .screen-img { background: #f8fafc; height: 220px; display: flex; align-items: center; justify-content: center; }
-    .screen-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .screen-meta { padding: 8px 10px; border-top: 1px solid #e2e8f0; }
-    .screen-meta .screen-id { display: inline-block; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9pt; background: #ede9fe; color: #5b21b6; padding: 1px 6px; border-radius: 3px; }
-    .screen-meta .screen-type { font-size: 9pt; color: #64748b; margin-left: 6px; }
-    .screen-title { font-size: 10pt; color: #0f172a; font-weight: 500; margin-top: 4px; }
-  </style>`;
-}
-
-function statusClass(status: string): string {
-  const s = status.toLowerCase();
-  if (s.includes('approved')) return 'approved';
-  if (s.includes('partial')) return 'partial';
-  if (s.includes('confirmed')) return 'confirmed';
-  return 'draft';
+  </div>`;
 }

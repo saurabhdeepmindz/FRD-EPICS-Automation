@@ -12,6 +12,8 @@ import {
   getBaSubTask,
   updateBaProject,
   listPseudoFilesByArtifact,
+  listTestCasesByArtifact,
+  getFtcSiblingFrdFeatures,
   downloadPseudoFile,
   downloadPseudoFilesZip,
   downloadProjectStructureZip,
@@ -20,10 +22,13 @@ import {
   type BaSubTask,
   type BaProject,
   type BaPseudoFile,
+  type BaTestCase,
 } from '@/lib/ba-api';
+import { buildFtcStructure, formatTestCaseBodyMarkdown } from '@/lib/ftc-structure';
 import { MarkdownRenderer } from '@/components/ba-tool/MarkdownRenderer';
-import { ScreensGallery, filterReferencedScreens } from '@/components/ba-tool/ScreensGallery';
+import { ScreensGallery, filterReferencedScreens, extractScreenIds } from '@/components/ba-tool/ScreensGallery';
 import { parseFrdContent, type ParsedFeature } from '@/lib/frd-parser';
+import type { BaScreenLite } from '@/lib/ba-api';
 import { parseEpicContent, sortInternalSections } from '@/lib/epic-parser';
 import { STORY_SECTION_CONFIG, CATEGORY_LABELS } from '@/components/ba-tool/UserStoryArtifactView';
 import { cn } from '@/lib/utils';
@@ -42,6 +47,13 @@ interface PreviewSection {
   hasTbd?: boolean;
   isAi?: boolean;
   isEdited?: boolean;
+  /**
+   * Inline screen card data — when set, `renderBody` resolves the IDs to the
+   * module's screens and renders a compact `ScreensGallery` directly under
+   * the markdown body. Used by the FRD pilot so each feature shows its
+   * referenced wireframe inline (matches `FrdArtifactView.FeatureCard`).
+   */
+  inlineScreenIds?: string[];
 }
 
 const ARTIFACT_TYPE_LABELS: Record<string, string> = {
@@ -176,6 +188,13 @@ export default function BaPreviewPage() {
   const [downloading, setDownloading] = useState<'pdf' | 'docx' | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [pseudoFiles, setPseudoFiles] = useState<BaPseudoFile[]>([]);
+  const [testCases, setTestCases] = useState<BaTestCase[]>([]);
+  /**
+   * FTC pilot Gap A — `featureId → SCR-NN[]` map sourced from the same
+   * module's FRD. Empty for non-FTC artifacts or when there's no sibling
+   * FRD with parseable features.
+   */
+  const [featureScreenRefs, setFeatureScreenRefs] = useState<Record<string, string[]>>({});
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -185,6 +204,7 @@ export default function BaPreviewPage() {
         const st = await getBaSubTask(id);
         setDoc(normalizeSubTask(st));
         setPseudoFiles([]);
+        setTestCases([]);
       } else {
         const a = await getArtifact(id);
         setDoc(normalizeArtifact(a));
@@ -194,6 +214,27 @@ export default function BaPreviewPage() {
           setPseudoFiles(files);
         } else {
           setPseudoFiles([]);
+        }
+        // For FTC artifacts, fetch the structured BaTestCase rows so the
+        // preview can mirror the editor tree's category → feature → TC
+        // hierarchy (server-rendered PDF/DOCX get the same data via
+        // `loadFtcExtras`). Skipped silently on fetch failure — the
+        // preview still renders the canonical text sections.
+        if (a.artifactType === 'FTC') {
+          try {
+            const [tcs, frdSibling] = await Promise.all([
+              listTestCasesByArtifact(id),
+              getFtcSiblingFrdFeatures(id),
+            ]);
+            setTestCases(tcs);
+            setFeatureScreenRefs(frdSibling.featureScreenRefs);
+          } catch {
+            setTestCases([]);
+            setFeatureScreenRefs({});
+          }
+        } else {
+          setTestCases([]);
+          setFeatureScreenRefs({});
         }
       }
     } catch {
@@ -252,6 +293,34 @@ export default function BaPreviewPage() {
     window.open(`${API_BASE}${base}`, '_blank', 'noopener');
   }, [kind, id]);
 
+  /**
+   * RTM download — LLD-only. Streams from the backend via an anchor link
+   * exactly like the PDF/DOCX download path. The `kind` value here comes
+   * from the route param; this helper is wired into 3 buttons that only
+   * render when `doc.artifactType === 'LLD'`.
+   *
+   * Variants:
+   *   - 'html'   → /rtm-html      Interactive Swagger-like explorer
+   *   - 'csv'    → /rtm-csv       Flat tabular RTM
+   *   - 'bundle' → /rtm-bundle    ZIP of all five RTM artifacts
+   */
+  const downloadRtm = useCallback((variant: 'html' | 'csv' | 'bundle') => {
+    if (!doc) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+    const endpoint = variant === 'bundle' ? 'rtm-bundle' : variant === 'html' ? 'rtm-html' : 'rtm-csv';
+    const ext = variant === 'bundle' ? 'zip' : variant;
+    const url = `${apiBase}/api/ba/artifacts/${id}/${endpoint}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = variant === 'bundle'
+      ? `LLD-${doc.module.moduleId}-rtm-bundle.zip`
+      : `LLD-${doc.module.moduleId}-rtm.${ext}`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, [id, doc]);
+
   const handleLogoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !doc?.project.id) return;
@@ -275,8 +344,17 @@ export default function BaPreviewPage() {
     const rawForParser = raw.map((s) => ({ sectionKey: s.sectionKey, sectionLabel: s.sectionLabel, content: s.isHumanModified && s.editedContent ? s.editedContent : s.content }));
 
     // ── FRD: features parsed from content (F-XX-XX) ───────────────────
+    // FRD pilot (`feat/export-parity-frd-pilot`): nest every feature under
+    // a single group labelled `<artifactId> — <moduleName>` so the preview
+    // TOC mirrors the editor tree (`Skill → FRD-MOD-XX → F-XX-YY`). Each
+    // feature also carries `inlineScreenIds` so `renderBody` can splice the
+    // referenced wireframe card directly under the feature body — matching
+    // the `FrdArtifactView.FeatureCard` Screen Reference subsection.
     if (doc.artifactType === 'FRD') {
       const parsed = parseFrdContent(rawForParser);
+      const moduleHeader = parsed.moduleName
+        ? `${doc.artifactId} — ${parsed.moduleName}`
+        : doc.artifactId;
 
       const featureSection = (f: ParsedFeature): PreviewSection => {
         const body: string[] = [];
@@ -291,19 +369,25 @@ export default function BaPreviewPage() {
         if (f.validations) body.push(`\n### Validations\n${f.validations}`);
         if (f.integrationSignals) body.push(`\n### Integration Signals\n${f.integrationSignals}`);
         if (f.acceptanceCriteria) body.push(`\n### Acceptance Criteria\n${f.acceptanceCriteria}`);
+        const screenIds = f.screenRef ? extractScreenIds(f.screenRef) : [];
         return {
           id: `feature-${f.featureId}`,
           label: f.featureName || f.featureId,
           idRef: f.featureId,
           content: body.join('\n\n') || f.rawBlock,
           hasTbd: f.status.includes('PARTIAL'),
+          groupLabel: moduleHeader,
+          inlineScreenIds: screenIds.length > 0 ? screenIds : undefined,
         };
       };
 
       const out: PreviewSection[] = [];
-      // Features (like the tree's F-01-01 .. list)
+      // Features (nested under the module-header group)
       for (const feat of parsed.features) out.push(featureSection(feat));
-      // Deliverable non-feature sections (Business Rules, Validations, TBD Registry, etc.)
+      // Deliverable non-feature sections — sit at top level (no group) so
+      // they read as siblings of the module-header group, mirroring the
+      // editor's "Business Rules" / "Validations" / "TBD-Future Registry"
+      // collapsibles below the feature list.
       if (parsed.businessRules) out.push({ id: 'frd-business-rules', label: 'Business Rules', content: parsed.businessRules });
       if (parsed.validations) out.push({ id: 'frd-validations', label: 'Validations', content: parsed.validations });
       if (parsed.tbdFutureRegistry) out.push({ id: 'frd-tbd', label: 'TBD-Future Integration Registry', content: parsed.tbdFutureRegistry, hasTbd: true });
@@ -534,47 +618,98 @@ export default function BaPreviewPage() {
       }
     }
 
-    // ── FTC: sort by canonical section order (matches FINAL-SKILL-07
-    //    §3 / BaFtcParserService.CANONICAL_SECTIONS). Without this the
-    //    TOC shows sections in DB insertion order — per-feature mode 2
-    //    inserts test_case_appendix first, narrative pass inserts
-    //    Summary/Strategy/etc. later, so the appendix appears at the
-    //    top and Summary in the middle. Sorting by canonical order
-    //    matches the structure of single-shot mode 1 modules.
+    // ── FTC: canonical text sections (Summary, Test Strategy, …)
+    //    followed by per-category, per-feature, per-test-case entries.
+    //    Matches the editor tree's three-level hierarchy
+    //    (`Functional Test Cases → F-XX-YY → TC-…`) and the same shape
+    //    the PDF/DOCX exporters emit. Hidden sections
+    //    (`functional_test_cases` etc.) are dropped because the
+    //    structured `BaTestCase` rows carry the same data without the
+    //    AI-emitted markdown noise.
     if (doc.artifactType === 'FTC') {
-      const FTC_SECTION_ORDER = [
-        'summary',
-        'test_strategy',
-        'test_environment',
-        'master_data_setup',
+      const FTC_HIDDEN_SECTION_KEYS = new Set([
         'test_cases_index',
         'functional_test_cases',
         'integration_test_cases',
         'white_box_test_cases',
+        'test_case_appendix',
+      ]);
+      const FTC_TEXT_SECTION_ORDER = [
+        'summary',
+        'test_strategy',
+        'test_environment',
+        'master_data_setup',
         'owasp_web_coverage',
         'owasp_llm_coverage',
         'data_cleanup',
         'playwright_readiness',
-        'ac_coverage_verification',
         'traceability_summary',
         'open_questions_tbd',
         'applied_defaults',
-        'test_case_appendix',
+        'ac_coverage_verification',
       ];
       const orderIndex = (key: string): number => {
-        const i = FTC_SECTION_ORDER.indexOf(key);
-        return i === -1 ? FTC_SECTION_ORDER.length : i;
+        const i = FTC_TEXT_SECTION_ORDER.indexOf(key);
+        return i === -1 ? FTC_TEXT_SECTION_ORDER.length : i;
       };
-      return [...raw]
-        .sort((a, b) => orderIndex(a.sectionKey) - orderIndex(b.sectionKey))
-        .map((s) => ({
+
+      const out: PreviewSection[] = [];
+
+      // Phase 1 — canonical text sections, in fixed order, dropping the
+      // hidden ones (their content is duplicated in BaTestCase rows).
+      const textSections = [...raw]
+        .filter((s) => !FTC_HIDDEN_SECTION_KEYS.has(s.sectionKey))
+        .sort((a, b) => orderIndex(a.sectionKey) - orderIndex(b.sectionKey));
+      for (const s of textSections) {
+        const content = s.isHumanModified && s.editedContent ? s.editedContent : s.content;
+        if (!content?.trim()) continue;
+        out.push({
           id: s.id,
           label: s.sectionLabel,
           sectionKey: s.sectionKey,
-          content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+          content,
           isAi: s.aiGenerated && !s.isHumanModified,
           isEdited: s.isHumanModified,
-        }));
+        });
+      }
+
+      // Phase 2 — per-category / per-feature / per-test-case entries.
+      // Each TC becomes its own preview section with `groupLabel` set to
+      // `<Category Label> · <Feature Label>` so the inline TOC renders a
+      // nested header per (category, feature) pair with TC items
+      // underneath. The body markdown is built by `formatTestCaseBodyMarkdown`
+      // — same shape the DOCX renderer emits.
+      if (testCases.length > 0) {
+        const structure = buildFtcStructure(testCases);
+        for (const group of structure) {
+          for (const fb of group.featureBuckets) {
+            const groupLabel = `${group.label} · ${fb.featureLabel}`;
+            // FTC Gap A — resolve the bucket's feature ID to one or more
+            // `SCR-NN`s via the sibling-FRD map. Every TC in the bucket
+            // shares `linkedFeatureIds[0]` (the bucket key), so attach
+            // the screen card ONLY to the first TC. The remaining TCs
+            // sit immediately below and inherit the screen visually.
+            // Avoids the 150+ duplicated thumbnails that overwhelmed
+            // Chrome on the PDF render path; same approach in DOCX +
+            // HTML.
+            const bucketScreenIds = featureScreenRefs[fb.featureId] ?? [];
+            fb.testCases.forEach((tc, idx) => {
+              out.push({
+                id: `tc-${tc.id}`,
+                label: `${tc.testCaseId} — ${tc.title}`,
+                idRef: tc.testCaseId,
+                content: formatTestCaseBodyMarkdown(tc),
+                groupLabel,
+                hasTbd: false,
+                isAi: !tc.isHumanModified,
+                isEdited: tc.isHumanModified,
+                inlineScreenIds: idx === 0 && bucketScreenIds.length > 0 ? bucketScreenIds : undefined,
+              });
+            });
+          }
+        }
+      }
+      return out;
     }
 
     // ── SubTask / Screen Analysis / LLD / other: raw sections 1:1 ─────
@@ -586,7 +721,7 @@ export default function BaPreviewPage() {
       isAi: s.aiGenerated && !s.isHumanModified,
       isEdited: s.isHumanModified,
     }));
-  }, [doc]);
+  }, [doc, testCases, featureScreenRefs]);
 
   // Derived data
   const history = useMemo(() => {
@@ -655,6 +790,27 @@ export default function BaPreviewPage() {
             {downloading === 'docx' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
             DOCX
           </Button>
+          {/* LLD-only: RTM checklist downloads. The HTML opens directly in
+              a browser; the CSV opens in Excel; the bundle ZIP contains
+              all five artifacts (CSV / HTML / tree / schema SQL / dev
+              impl-status template) for one-click customer delivery. */}
+          {doc.artifactType === 'LLD' && (
+            <>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider ml-2">RTM</span>
+              <Button size="sm" variant="outline" onClick={() => downloadRtm('html')}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                HTML
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => downloadRtm('csv')}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                CSV
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => downloadRtm('bundle')}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                Bundle ZIP
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
@@ -675,9 +831,16 @@ export default function BaPreviewPage() {
         </aside>
 
         <main className="flex-1 overflow-y-auto">
-          <div className="max-w-4xl mx-auto px-10 py-10 bg-white my-6 rounded-lg shadow-sm border border-border">
+          {/* Each top-level block (Cover, Document History, TOC, Referenced
+              Screens, body, Pseudo-Code) lives in its own card so the on-screen
+              layout reads as separate "pages" — and each card carries
+              `print:break-after-page` so an actual print produces real page
+              breaks between them. The sidebar TOC duplicates the inline TOC
+              card below; both are kept (sidebar = quick nav, inline TOC =
+              part of the deliverable). */}
+          <div className="max-w-4xl mx-auto px-4 py-6 space-y-6 print:p-0 print:space-y-0 print:max-w-none">
             {/* Cover */}
-            <section id="cover" className="min-h-[700px] flex flex-col items-center justify-center text-center py-16">
+            <section id="cover" className="bg-white rounded-lg shadow-sm border border-border min-h-[700px] flex flex-col items-center justify-center text-center px-10 py-16 print:break-after-page print:rounded-none print:border-0 print:shadow-none">
               {/* Logo */}
               <div className="mb-10">
                 <input
@@ -738,10 +901,8 @@ export default function BaPreviewPage() {
               </dl>
             </section>
 
-            <hr className="my-10 border-border" />
-
             {/* Document History */}
-            <section id="document-history" className="py-8">
+            <section id="document-history" className="bg-white rounded-lg shadow-sm border border-border px-10 py-10 scroll-mt-4 print:break-after-page print:rounded-none print:border-0 print:shadow-none">
               <h2 className="text-lg font-semibold mb-4">Document History</h2>
               {history.length === 0 ? (
                 <p className="text-sm text-muted-foreground italic">No edits or AI generations recorded.</p>
@@ -777,11 +938,23 @@ export default function BaPreviewPage() {
               )}
             </section>
 
-            <hr className="my-10 border-border" />
+            {/* Table of Contents — own card, mirrors the static TOC the
+                PDF/DOCX exporters emit. Hyperlinks scroll inside the
+                preview and survive printing. */}
+            <section id="toc" className="bg-white rounded-lg shadow-sm border border-border px-10 py-10 scroll-mt-4 print:break-after-page print:rounded-none print:border-0 print:shadow-none">
+              <h2 className="text-lg font-semibold border-b-2 border-primary pb-2 mb-4">Table of Contents</h2>
+              <ul className="space-y-1.5 text-sm leading-relaxed">
+                {renderInlineToc(previewSections, {
+                  showScreens: showScreensBlock,
+                  pseudoFilesCount: pseudoFiles.length,
+                  pseudoSectionNumber: previewSections.length + 1,
+                })}
+              </ul>
+            </section>
 
             {/* Screens block — only those this artifact references */}
             {showScreensBlock && (
-              <section id="screens" className="py-6 scroll-mt-4">
+              <section id="screens" className="bg-white rounded-lg shadow-sm border border-border px-10 py-10 scroll-mt-4 print:break-after-page print:rounded-none print:border-0 print:shadow-none">
                 <h2 className="text-lg font-semibold border-b-2 border-primary pb-2 mb-4 flex items-center gap-2">
                   <span>Referenced Screens</span>
                   <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-medium">
@@ -792,18 +965,23 @@ export default function BaPreviewPage() {
               </section>
             )}
 
-            {/* Sections — grouped by groupLabel where applicable */}
-            {renderBody(previewSections, {
-              onDownloadProjectStructure: doc.artifactType === 'LLD' && doc.kind === 'artifact'
-                ? () => downloadProjectStructureZip(doc.id, `${doc.artifactId}-project-structure.zip`).catch(() => alert('Download failed'))
-                : undefined,
-            })}
+            {/* Body sections — single card holding all numbered sections so
+                they flow naturally inside one page region. Per-section
+                anchors still work for sidebar TOC + inline TOC navigation. */}
+            <div className="bg-white rounded-lg shadow-sm border border-border px-10 py-6 print:rounded-none print:border-0 print:shadow-none">
+              {renderBody(previewSections, {
+                onDownloadProjectStructure: doc.artifactType === 'LLD' && doc.kind === 'artifact'
+                  ? () => downloadProjectStructureZip(doc.id, `${doc.artifactId}-project-structure.zip`).catch(() => alert('Download failed'))
+                  : undefined,
+                moduleScreens: allScreens,
+              })}
+            </div>
 
             {/* Pseudo-code files (LLD only) — positional section, numbered sub-headings */}
             {pseudoFiles.length > 0 && doc.kind === 'artifact' && (() => {
               const sectionNumber = previewSections.length + 1; // positional
               return (
-                <section id="pseudo-files" className="py-8 scroll-mt-4">
+                <section id="pseudo-files" className="bg-white rounded-lg shadow-sm border border-border px-10 py-10 scroll-mt-4 print:rounded-none print:border-0 print:shadow-none print:break-before-page">
                   <h2 className="text-lg font-semibold border-b-2 border-primary pb-2 mb-4 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-2">
                       <span>{sectionNumber}. Pseudo-Code Files</span>
@@ -870,6 +1048,66 @@ export default function BaPreviewPage() {
   );
 }
 
+/**
+ * Inline TOC for the body card. Mirrors the sidebar's `renderToc` ordering
+ * (Cover → Document History → Screens → grouped sections → Pseudo-Code) but
+ * emits a numbered `<ul>` of plain anchor links — what the PDF/DOCX
+ * exporters carry, so the printed deliverable stays self-contained.
+ */
+function renderInlineToc(
+  items: PreviewSection[],
+  opts: { showScreens: boolean; pseudoFilesCount: number; pseudoSectionNumber: number },
+): JSX.Element[] {
+  const out: JSX.Element[] = [];
+
+  const pushStatic = (id: string, label: string): void => {
+    out.push(
+      <li key={`itoc-${id}`} className="list-none">
+        <a href={`#${id}`} className="text-foreground hover:text-primary hover:underline font-medium">{label}</a>
+      </li>,
+    );
+  };
+  pushStatic('cover', 'Cover Page');
+  pushStatic('document-history', 'Document History');
+  if (opts.showScreens) pushStatic('screens', 'Referenced Screens');
+
+  let lastGroup: string | undefined = undefined;
+  let flatCounter = 0;
+  let groupCounter = 0;
+  for (const item of items) {
+    if (item.groupLabel !== lastGroup) {
+      lastGroup = item.groupLabel;
+      if (item.groupLabel) {
+        out.push(
+          <li key={`itoc-grp-${item.groupLabel}`} className="list-none mt-3 pt-2 border-t border-border/50 font-semibold text-foreground">
+            {item.groupLabel}
+          </li>,
+        );
+        groupCounter = 0;
+      }
+    }
+    const counter = item.groupLabel ? ++groupCounter : ++flatCounter;
+    const label = item.idRef ? `${counter}. ${item.idRef} — ${item.label}` : `${counter}. ${item.label}`;
+    out.push(
+      <li key={`itoc-${item.id}`} className={cn('list-none', item.groupLabel ? 'pl-4' : '')}>
+        <a href={`#${item.id}`} className="text-foreground hover:text-primary hover:underline">{label}</a>
+        {item.hasTbd && <span className="ml-2 text-[9px] bg-amber-100 text-amber-700 px-1 rounded">TBD</span>}
+      </li>,
+    );
+  }
+
+  if (opts.pseudoFilesCount > 0) {
+    out.push(
+      <li key="itoc-pseudo" className="list-none mt-3 pt-2 border-t border-border/50">
+        <a href="#pseudo-files" className="text-foreground hover:text-primary hover:underline font-medium">
+          {opts.pseudoSectionNumber}. Pseudo-Code Files ({opts.pseudoFilesCount})
+        </a>
+      </li>,
+    );
+  }
+  return out;
+}
+
 function renderToc(items: PreviewSection[]) {
   // Group by groupLabel (preserves order)
   const out: JSX.Element[] = [];
@@ -909,6 +1147,12 @@ function renderToc(items: PreviewSection[]) {
 interface RenderBodyOptions {
   /** Called when the "Download structure" button on the Project Structure section is clicked. */
   onDownloadProjectStructure?: () => void;
+  /**
+   * Module-level screens, used to resolve `PreviewSection.inlineScreenIds`
+   * to actual `BaScreenLite` records for the inline card. Empty / missing
+   * arrays just hide the card — the markdown body still renders.
+   */
+  moduleScreens?: BaScreenLite[];
 }
 
 function renderBody(items: PreviewSection[], opts: RenderBodyOptions = {}) {
@@ -964,6 +1208,24 @@ function renderBody(items: PreviewSection[], opts: RenderBodyOptions = {}) {
           )}
         </h2>
         <div className={cn('text-sm', item.isAi ? 'text-blue-700' : 'text-foreground')}>
+          {(() => {
+            // FRD pilot: render the resolved screen card BEFORE the feature
+            // body so the preview matches the PDF/DOCX layout (image up
+            // top, prose below). Skip silently when the IDs don't resolve
+            // to any uploaded module screen (degraded SCR-NN that points
+            // at a screen that was never uploaded).
+            if (!item.inlineScreenIds || item.inlineScreenIds.length === 0) return null;
+            const all = opts.moduleScreens ?? [];
+            if (all.length === 0) return null;
+            const ids = new Set(item.inlineScreenIds);
+            const matched = all.filter((s) => ids.has(s.screenId));
+            if (matched.length === 0) return null;
+            return (
+              <div className="mb-4" data-testid={`feature-screen-card-${item.idRef ?? item.id}`}>
+                <ScreensGallery screens={matched} compact />
+              </div>
+            );
+          })()}
           <MarkdownRenderer content={item.content || ''} />
         </div>
       </section>,

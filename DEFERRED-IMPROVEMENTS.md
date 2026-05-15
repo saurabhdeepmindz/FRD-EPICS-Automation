@@ -6,7 +6,149 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
-## 0. Harden SKILL-05 with the same 3-layer defense applied to SKILL-02-S and SKILL-04 (Option B)
+## -4. LLD Workbench — "Copy config from another module" in-app feature
+
+**Status (2026-05-15):** Captured for future work. Triggered when MOD-06 LLD config was empty and had to be copied from MOD-04 via a manual `PUT /api/ba/modules/<id>/lld/config` curl. The architect's normal workflow is to pick stacks / templates / NFRs per module from dropdowns; when a project has many modules sharing the same target stack, doing that picking N times per module is tedious and error-prone.
+
+**Symptom:** A new module's LLD Workbench (`/ba-tool/project/<projectId>/module/<moduleDbId>/lld`) opens with every Tech Stack / Templates / NFR field set to `(none — use AI best practices)`. The architect must walk through 7 dropdowns + 4 NFR fields manually, even when an existing module in the same project already has the exact right configuration.
+
+**Workflow today:** Manual per-module configuration via the dropdowns, OR ad-hoc curl that copies the full `BaLldConfig` row across modules (one-off, no UI).
+
+**Proposed feature:** Add a "Copy from…" control next to the **Save selections** button at the top right of the LLD Workbench page. UX:
+
+1. Click `↗ Copy from another module` → dropdown listing every module in the same project that already has a populated `BaLldConfig` (frontendStackId or backendStackId not null).
+2. Each row shows `MOD-XX — <moduleName>  ·  <stack summary, e.g. "NestJS + Next.js + Postgres + Redis">`.
+3. Pick a source module → form fields pre-fill with the source's values (frontend/backend/db/streaming/caching/storage/cloud/architecture stack IDs, all 4 template IDs, codingGuidelinesId, NFR values, customNotes, narrative). Architect can then tweak any field and Save.
+4. **No DB write** until Save — same flow as today.
+
+**Backend scope:**
+
+- New endpoint `GET /api/ba/projects/:projectId/lld-configs/summary` → returns one row per module with `{ moduleDbId, moduleId, moduleName, hasConfig, stackSummary, configId }`. Fast project-scoped query; sub-second.
+- Optionally a `POST /api/ba/modules/:targetModuleId/lld/config/clone-from/:sourceModuleId` shortcut that does the copy server-side — but the simpler path is have the frontend GET the source config and prefill the form locally, then PUT to save as today. No new mutation endpoint needed.
+
+**Frontend scope:**
+
+- New dropdown / popover above the Tech Stack section.
+- Calls the summary endpoint on open.
+- On select → fetch source's full config via existing `GET /api/ba/modules/:id/lld/config`, prefill the form, leave Save behaviour unchanged.
+
+**Risk:** Low. Frontend-only state change until Save. Same `BaLldConfig` schema. No migration.
+
+**Effort:** ~3-4 h (1 backend endpoint, 1 frontend popover component, prefill plumbing). Could be smaller if we skip the per-module summary endpoint and just list ALL modules in the project (frontend fetches each module's config on hover/click; lazier but works).
+
+**Acceptance:** An architect opens MOD-07's LLD Workbench, clicks `Copy from MOD-04`, picks MOD-04 from the list, the 7 stack dropdowns + 4 NFR fields populate to MOD-04's values, the architect clicks **Save selections**, and the page shows the saved state on reload.
+
+**First identified on:** 2026-05-15 — during the LLD pipeline run for MOD-06, where MOD-04's `nestjs-next-js-and-tailwind` config had to be hand-copied via curl because the UI offered no shortcut.
+
+---
+
+## -3. SKILL-07-FTC story-coverage gap-filler — close the per-feature → per-story drop
+
+**Status (2026-05-15):** Captured for future work. Decision recorded 2026-05-04 / re-affirmed 2026-05-15 to **accept the 76% gap on MOD-05** (15 / 63 stories without a dedicated happy-path TC) rather than block the SKILL-07 cascade for MOD-05 + MOD-06. The fix is non-trivial and structural; the current data shape is consistent with what new modules will produce, so deferring is the right trade-off.
+
+**Symptom (verbatim from the 2026-05-04 MOD-05 cascade post-checks):** MOD-05's SKILL-07 cascade produced 156 TCs across 21/21 features. Post-check 4 reports `Every user story has >= 1 happy-path test case — 48/63 covered; missing: US-113, US-120, US-131, US-132, US-134, +10 more`. So 15 stories have no dedicated happy-path TC.
+
+**Root cause:** mode-2 (per-feature, the loop that produced the bulk of the TCs) emits TCs *scoped to features*. Each TC's `linkedStoryIds` array is populated by the AI's choice of which stories that TC implicitly covers. Some features had only 3–5 TCs total — not enough to emit one happy-path TC per story under that feature (avg 3 stories/feature for 63 stories / 21 features).
+
+This is **a quality gap, not a structural break:**
+
+- All 21 features have ≥ 1 TC ✅
+- Negative TCs healthy (88 / 156 = 56%) ✅
+- All 14 canonical narrative sections rendered ✅
+- 156 TCs structurally well-formed per the parser contract ✅
+- 15 stories don't appear in any TC's `linkedStoryIds` ❌
+
+**Why it matters:** SKILL-07's checklist (`scripts/checklists/skill-07.ts`) expects per-story happy-path coverage as a 100% bar. Until this is closed, every new module's SKILL-07 cascade will likely fail post-check 4 the same way — making the checklist noisy and obscuring genuine structural regressions.
+
+**Three fix options (from the 2026-05-04 recommendation):**
+
+1. **`executeSkill07ForStory` sub-mode (preferred long-term).** New orchestrator method that takes `(moduleDbId, storyId)`, focuses the AI on that one story, emits 2–3 TCs (happy + at least 1 negative + optional edge), and tags `linkedStoryIds=[storyId]`. Wire into `executeSkill07Complete` as a post-mode-2 gap-filler that runs only for stories without a happy-path TC. Mirrors the SKILL-05 per-story pattern.
+
+2. **Gap-filler that re-fires mode-2 with explicit story-coverage requirements.** Inspect which stories are uncovered, group them by feature, then re-call `executeSkill07ForFeature` with a focus override naming the missing stories ("ensure each of these stories has a happy-path TC: US-113, US-120, ..."). Risk: may regress existing TCs (mode-2 is idempotent per-feature but not per-story).
+
+3. **Soften the post-check threshold** (e.g. 70% or "≥1 TC links to the story in any way"). Quickest, but gaming the metric — only acceptable if 100% is genuinely the wrong bar.
+
+**Recommended approach:** Option 1 (new `executeSkill07ForStory` method). Per-story sub-mode is the natural extension of the existing per-feature / per-category / per-feature-white-box family. Idempotency is straightforward (skip stories that already have a happy-path TC). Aligns with how SKILL-05 closed its per-story coverage.
+
+**Acceptance:** After the gap-filler runs on MOD-05, post-check 4 reports `63/63 covered`. Re-running on MOD-06 (and any future module) is a no-op when mode-2 happens to cover everything; fires only when stories are missing.
+
+**Risk:** None for the data already captured — MOD-05's 156 TCs stay as-is. The new sub-mode appends `TC-S-USNNN-NNN` (or similar story-prefixed) TC IDs alongside the existing feature-prefixed ones.
+
+**First identified on:** 2026-05-04 during MOD-05 SKILL-07 cascade post-checks. User decision 2026-05-04: accept 76% (Option 1 of the three options offered at the time), document the point clearly for recollection. Re-affirmed 2026-05-15 during session resume.
+
+---
+
+## -2. LLD RTM impl-status workflow — advance beyond Option A (CSV companion)
+
+**Status (2026-05-15):** Workstream-3 Option A landed on branch `feat/export-parity-frd-pilot`, commit `5528960`. The RTM bundle now includes `LLD-MOD-NN-rtm-impl-status.csv` — a starter template the dev team downloads, edits as they implement files, and keeps in git alongside the codebase.
+
+**What's working today (Option A):** Each LLD bundle ZIP contains an impl-status CSV pre-populated with one row per pseudo-file: `Feature, UserStory, SubTask, Folder, FilePath, design_status, impl_status, note, updated_by, updated_at`. `design_status` is auto-derived (Done / ToDo); `impl_status` starts at ToDo and devs maintain it manually. The CSV lives in the project's repo; no DB writes, no sync logic.
+
+**Why advance:** Option A is per-machine / per-dev. The HTML RTM viewer can't see manual edits to the CSV because it ships separately. Three forward paths from the original design discussion:
+
+- **Option B — Inline status UI in the HTML.** Add an editable status column to the RTM HTML viewer; saves to `localStorage` on the dev's machine. Optionally exports back as updates. Tradeoff: per-dev tracking, no DB writes, doesn't survive cross-machine.
+
+- **Option C — Persist in BA-Tool DB.** New `BaImplementationStatus` table keyed by `(artifactDbId, subtaskId, filePath)`; UI in BA-Tool to update; the RTM HTML viewer loads it via a fetch and overlays the manual `impl_status` on top of the auto-derived `design_status`. Tradeoff: multi-user / team tracking, persists in DB, biggest scope.
+
+- **Option D — Git-scan auto-derive.** Periodic CI job greps the real codebase for files matching the LLD path conventions; updates `impl_status` automatically (PR opened, merged, etc.). Tradeoff: true "code exists" signal, zero manual update overhead, but needs CI hookup and path-mapping logic between `LLD-PseudoCode/backend/service/foo.service.ts` and the real `src/modules/.../FooService.ts`.
+
+**Trigger to revisit:** when the dev team starts using the impl-status CSV in anger and the manual-edit workflow becomes a pain point — typically once 3+ devs are working off the same module's RTM, OR when status tracking needs to surface in dashboards.
+
+**Scope when picked up (recommended Option C):**
+
+1. Add `BaImplementationStatus` Prisma model: `id, artifactDbId, subtaskId, filePath, implStatus (enum: ToDo | WIP | Done | Failed | Blocked), note, updatedBy, updatedAt`.
+2. New endpoints under `BaLldController`:
+   - `GET  /api/ba/artifacts/:id/rtm-impl-status` → returns merged design+impl status JSON for the RTM HTML to fetch
+   - `PATCH /api/ba/artifacts/:id/rtm-impl-status/:subtaskId/:filePath` → updates one row
+3. Extend `BaLldRtmService.emitHtml` to inject a fetch-on-load that overlays manual impl_status on the auto-derived rows.
+4. Keep the standalone CSV export working (Option A) — it's still the offline-friendly format for customer hand-off.
+
+**Risk:** Low for B (frontend-only, localStorage). Medium for C (Prisma migration, new endpoints). Higher for D (CI integration + path mapping is project-specific).
+
+**Acceptance criteria (Option C):** A dev updates `impl_status` for `ST-US053-BE-01 / research-chat.service.ts` to `WIP`; refreshes the RTM HTML; the row shows the `WIP` badge and the dev's name in the updated_by column.
+
+**First identified on:** 2026-05-15 — during the LLD RTM design discussion, immediately after Option A shipped.
+
+---
+
+## -1. MOD-04 FTC artifact — patch OWASP coverage gap via mode-2b backfill
+
+**Symptom:** MOD-04's FTC artifact (`status=DRAFT`, 16 sections, 180 `BaTestCase` rows) was generated on 2026-04-25, **before** the per-mode SKILL-07 orchestrator (mode 2 / 2b / 2c / 3) existed. As a result it has uneven coverage:
+
+- Only **18 / 180 TCs (10%)** carry an OWASP tag — well below what mode-2b's per-category pass produces for a new module.
+- **0 `BaSkillExecution` rows** — the artifact was produced via a legacy single-shot path (or seeded), not via the current append-mode pipeline. The trace of *which mode produced what* is missing.
+- Status is **DRAFT** — never approved through `POST /api/ba/artifacts/:id/approve`.
+- Created when mode-2c (per-feature white-box) didn't exist either; the 82 white-box TCs in there came from a different code path with the same structural shape but unverified per-category coverage.
+
+**Why it matters:** When MOD-05 / MOD-06 (and any new module) run `executeSkill07Complete`, mode-2b explicitly produces 8-15 TCs per missing OWASP / UI / Performance / Accessibility category. New modules will have richer coverage matrices than MOD-04 — making MOD-04 inconsistent with the rest of the portfolio.
+
+**Scope (low-risk, additive only):**
+
+1. Run `POST /api/ba/modules/:MOD-04-id/execute/SKILL-07-FTC/category/Security` (and similarly for `UI`, `Performance`, `Accessibility`, `Smoke`, `Regression` — whichever appear in `listMissingCategoriesForCoverage(MOD-04-id)`).
+2. The orchestrator's `executeSkill07ForCategory` is idempotent — it skips any category that already has at least one TC. So categories already covered (e.g. Functional, Integration which MOD-04 has) are no-ops.
+3. After mode-2b backfill, optionally run mode 3 (`POST /api/ba/modules/:id/execute/SKILL-07-FTC/narrative`) to refresh §10 OWASP Web Coverage Matrix with the new TC IDs.
+
+**Risk:** None. All operations are additive — no existing TCs are deleted or modified. The 180 existing TCs stay as-is; only new category-prefixed TCs (TC-SEC-NNN, TC-UI-NNN, etc.) get appended.
+
+**Acceptance:** After backfill, MOD-04's `BaTestCase.owaspCategory` non-null count rises from 18 to roughly the same percentage as MOD-05/06 produce on a clean run.
+
+**First identified on:** 2026-05-04 — during the SKILL-07 alignment review prior to running the cascade for MOD-05.
+
+---
+
+## 0. ~~Harden SKILL-05 with the same 3-layer defense applied to SKILL-02-S and SKILL-04~~ — ✅ RESOLVED 2026-05-14
+
+**Status (2026-05-14):** Resolved on branch `feat/export-parity-frd-pilot`, commit `e147845`. All three layers in place:
+
+- **Layer 1 (prompt):** Forbidden Patterns + Self-check sections added to `Screen-FRD-EPICS-Automation-Skills/FINAL-SKILL-05-create-subtasks-v2.md`.
+- **Layer 2 (orchestrator):** `executeSkill05ForStory`'s `focusedPrompt` now carries the Forbidden Patterns + Self-check blocks inline so the contract is re-stated at the top of every per-story call.
+- **Layer 3 (validator):** New `validateSkill05Output()` invoked from `runSkillAsync` Step 5d. Splits humanDocument on `## ST-USNNN-TEAM-NN` headings, counts `#### Section N` markers (N=1..25) per SubTask, fails the exec on any incomplete coverage.
+
+Defense applies to all future SKILL-05 runs (MOD-06 onwards). Existing MOD-04 / MOD-05 SubTask data is NOT being re-generated — the current data was approved manually and is preserved. Should a future re-run be needed, the validator will catch any drift from the canonical 25-section template.
+
+---
+
+### Original problem (preserved for context)
 
 **Symptom:** SKILL-05 produces correct SubTasks for MOD-05 (63 stories → 276 BaSubTask, 21/21 RTM linked) and MOD-06 (in-flight at time of writing) under the current per-story append-mode loop. However, the skill is **not yet hardened** to the 3-layer defense standard now applied to SKILL-02-S (PR #3) and SKILL-04 (PR #4):
 
@@ -38,7 +180,33 @@ Maintained chronologically; newest items at the top. Resolved items move to the 
 
 ---
 
-## 1. Word/PDF export formatting parity with preview view
+## 1. ~~Word/PDF export formatting parity with preview view~~ — ✅ RESOLVED (workstream A complete) 2026-05-14
+
+**Status (2026-05-14):** All 5 customer-facing artifact types now have render-side canonical-shape restructurers PLUS upstream generation-time validators. Pilot landed on branch `feat/export-parity-frd-pilot`. MOD-04 + MOD-05 verified end-to-end. Module-level delivery runbook at `MODULE-DELIVERY-CHECKLIST.md`.
+
+**Per-type canonicalization status:**
+
+| Artifact | Render-side restructurer | Generation-side validator | Commit |
+|---|---|---|---|
+| FRD | `frd-restructure.ts` (pre-existing) | `validateSkill01SOutput` (pre-existing) | (existing) |
+| EPIC | `epic-restructure.ts` | `validateSkill02SOutput` (pre-existing) | `b81bc1c` |
+| USER_STORY | `user-story-restructure.ts` | `validateSkill04Output` (pre-existing) | `4f91724` |
+| SUBTASK | `subtask-restructure.ts` | `validateSkill05Output` (this session) | `4e83aee` + `e147845` |
+| FTC | `ftc-restructure.ts` (pre-existing) | mode-2b idempotency | (existing) |
+
+Rollback anchor `pre-export-pilot-v1`; DB snapshot `backups/db-backup/prd_generator-pre-canonical-20260514-141231.sql`.
+
+**Resolved gaps surfaced during MOD-04 review (2026-05-14):**
+
+- **Gap A — MOD-04 FRD weak feature content.** Old FRD had 9 features but only 1 Screen Reference; rest were placeholder "Not applicable". Re-running SKILL-01-S with the hardened prompt produced 9 features × 9 screen-refs, feature IDs F-04-01..09 stable. No downstream re-cascade needed.
+- **Gap B — Internal-processing leaks in PDF/DOCX exports.** Frontend `INTERNAL_SECTION_REGEX` was not mirrored on the export side. Fixed via shared `templates/artifact-internal-filter.ts` consumed by both renderers (commit `4ac27d6`).
+- **Gap C — FTC missing per-feature inline screen cards (MOD-04).** Downstream of Gap A — the FTC injector reads `Screen Reference` lines from the sibling FRD's features. Fixing Gap A automatically populated MOD-04 FTC with 81 per-feature screen cards across the 6 category appendix sections.
+- **Gap D — EPIC body stripped by the internal-section filter regression.** Step 1's filter applied to ALL artifact types stripped EPIC's monolithic "Introduction" section (matched the FRD-derived regex). Fixed via artifact-type-aware filter (commit `44b56db`); regex only applies to FRD now.
+- **Gap E — Long-term EPIC/USER_STORY/SUBTASK render-side canonicalization.** These previously relied entirely on upstream skill validators. Now have per-type render-side restructurers (commits `b81bc1c`, `4f91724`, `4e83aee`) so the export is canonical regardless of LLM output drift.
+
+---
+
+### Original problem (preserved for context)
 
 **Symptom:** When a user generates a Word (.docx) or PDF export of an FRD/EPIC/User Story/SubTask artifact, the document layout differs noticeably from the in-app preview view. Cover page styling, fonts, section spacing, color theme, and overall presentation are not as polished as the preview.
 

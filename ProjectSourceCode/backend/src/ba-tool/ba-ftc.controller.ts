@@ -159,6 +159,30 @@ export class BaFtcController {
     return this.ftc.listTestCases(artifactDbId);
   }
 
+  /**
+   * GET /api/ba/artifacts/:id/sibling-frd-features
+   *
+   * Returns the FTC pilot Gap A enrichment maps: feature display name +
+   * referenced screen IDs sourced from the same module's FRD artifact.
+   * Used by the preview page to render per-TC inline screen cards
+   * client-side without needing a sibling-artifact fetch endpoint.
+   *
+   * Response shape:
+   *   {
+   *     featureNames: { "F-05-01": "Reset Password", ... },
+   *     featureScreenRefs: { "F-05-01": ["SCR-28"], ... }
+   *   }
+   *
+   * Both maps are empty when the artifact isn't FTC, isn't in a module
+   * with an FRD, or the FRD parse turns up no features. The endpoint
+   * never errors — it falls back to empty maps so the preview can render
+   * with degraded labels.
+   */
+  @Get('artifacts/:id/sibling-frd-features')
+  getSiblingFrdFeatures(@Param('id') artifactDbId: string) {
+    return this.ftc.getSiblingFrdFeatures(artifactDbId);
+  }
+
   /** GET /api/ba/artifacts/:id/test-cases/csv — export FTC test cases in the
    *  QA-team CSV template (same columns as the supplied reference sheet).
    */

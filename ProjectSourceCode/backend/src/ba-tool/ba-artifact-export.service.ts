@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
+  BorderStyle,
   Document,
   HeadingLevel,
   ImageRun,
@@ -11,7 +12,18 @@ import {
   TableRow,
   WidthType,
   AlignmentType,
+  ShadingType,
+  Bookmark,
+  InternalHyperlink,
 } from 'docx';
+import {
+  COLORS,
+  DOCX_FONT_HALF_PTS,
+  DOCX_TABLE_CELL_PADDING_TWIPS,
+  buildDocxStyles,
+  statusKindFor,
+} from './templates/artifact-style';
+import { shouldOmitFromExport } from './templates/artifact-internal-filter';
 
 interface MermaidImage {
   buffer: Buffer;
@@ -25,11 +37,31 @@ import {
   enrichScreenReferences,
   type BaArtifactDoc,
 } from './templates/artifact-html';
+import { restructureFrdDoc } from './templates/frd-restructure';
+import { restructureFtcDoc } from './templates/ftc-restructure';
+import { parseFrdContent, type ParsedFeature } from './templates/frd-parser';
+import { extractScreenIds } from './templates/screen-utils';
+import { buildFtcStructure, type FtcCategoryGroup } from './templates/ftc-structure';
+import type { BaTestCaseLite } from './templates/artifact-html';
+import { compressScreensForHtml } from './templates/image-compress';
 
 // docx@9 ImageRun accepts these raster `type` values without a fallback.
 // SVG is supported by docx but requires a PNG fallback buffer; screens are
 // always uploaded as raster, so we keep the union tight.
 type DocxImageType = 'png' | 'jpg' | 'gif' | 'bmp';
+
+// Cover-page eyebrow text per artifact type. Mirrors the
+// ARTIFACT_TYPE_LABELS map in templates/artifact-html.ts so the cover
+// reads the same on PDF and DOCX.
+const ARTIFACT_TYPE_LABELS_DOCX: Record<string, string> = {
+  FRD: 'Functional Requirements Document',
+  EPIC: 'EPIC',
+  USER_STORY: 'User Story',
+  SUBTASK: 'SubTask',
+  SCREEN_ANALYSIS: 'Screen Analysis',
+  LLD: 'Low-Level Design',
+  FTC: 'Functional Test Cases',
+};
 
 @Injectable()
 export class BaArtifactExportService {
@@ -59,6 +91,12 @@ export class BaArtifactExportService {
       name: string; projectCode: string;
       productName: string | null; clientName: string | null; submittedBy: string | null; clientLogo: string | null;
     };
+
+    // FTC pilot: load the structured test-case data and the same-module
+    // FRD feature names so the renderers can emit the editor tree's
+    // category → feature → TC hierarchy with human-readable feature
+    // labels. Both are no-ops when this isn't an FTC artifact.
+    const { testCases, frdFeatureNames, frdFeatureScreenRefs } = await this.loadFtcExtras(artifact.id, artifact.artifactType, artifact.module.id);
 
     return {
       artifactId: artifact.artifactId,
@@ -92,12 +130,129 @@ export class BaArtifactExportService {
         submittedBy: p.submittedBy ?? null,
         clientLogo: p.clientLogo ?? null,
       },
+      ...(testCases ? { testCases } : {}),
+      ...(frdFeatureNames ? { frdFeatureNames } : {}),
+      ...(frdFeatureScreenRefs ? { frdFeatureScreenRefs } : {}),
     };
+  }
+
+  /**
+   * Returns FTC-only sidecar data: the structured `BaTestCase` rows for the
+   * artifact, plus a `featureId → featureName` map sourced from the same
+   * module's FRD artifact (when present). Both are `undefined` for non-FTC
+   * artifact types so the loader's spread doesn't pollute non-FTC docs.
+   *
+   * Mirrors the runtime lookup `FtcArtifactView` does on the client — the
+   * editor tree shows `F-05-01 — Reset Password` because it parses the
+   * sibling FRD's features. Doing the same on the server keeps the
+   * exported PDF/DOCX TOC + body labels consistent with the editor.
+   */
+  private async loadFtcExtras(
+    artifactDbId: string,
+    artifactType: string,
+    moduleDbId: string,
+  ): Promise<{
+    testCases?: BaArtifactDoc['testCases'];
+    frdFeatureNames?: BaArtifactDoc['frdFeatureNames'];
+    frdFeatureScreenRefs?: BaArtifactDoc['frdFeatureScreenRefs'];
+  }> {
+    if (artifactType !== 'FTC') return {};
+
+    const tcs = await this.prisma.baTestCase.findMany({
+      where: { artifactDbId },
+      orderBy: [{ category: 'asc' }, { testCaseId: 'asc' }],
+    });
+    const testCases: BaArtifactDoc['testCases'] = tcs.map((t) => ({
+      id: t.id,
+      testCaseId: t.testCaseId,
+      title: t.title,
+      category: t.category ?? null,
+      scope: t.scope,
+      testKind: t.testKind,
+      priority: t.priority ?? null,
+      isIntegrationTest: t.isIntegrationTest,
+      owaspCategory: t.owaspCategory ?? null,
+      scenarioGroup: t.scenarioGroup ?? null,
+      testData: t.testData ?? null,
+      e2eFlow: t.e2eFlow ?? null,
+      preconditions: t.preconditions ?? null,
+      steps: t.steps,
+      expected: t.expected,
+      postValidation: t.postValidation ?? null,
+      sqlSetup: t.sqlSetup ?? null,
+      sqlVerify: t.sqlVerify ?? null,
+      playwrightHint: t.playwrightHint ?? null,
+      developerHints: t.developerHints ?? null,
+      parentTestCaseId: t.parentTestCaseId ?? null,
+      linkedFeatureIds: t.linkedFeatureIds,
+      linkedEpicIds: t.linkedEpicIds,
+      linkedStoryIds: t.linkedStoryIds,
+      linkedSubtaskIds: t.linkedSubtaskIds,
+      isHumanModified: t.isHumanModified,
+    }));
+
+    // Look up the same-module FRD's parsed features. The module can hold
+    // several FRD artifacts (legacy + current) and BaModule has no
+    // canonical `frdArtifactId` pointer, so enumerate them in
+    // status/recency order and use the first one whose parser actually
+    // returns features. Schema FK is `moduleDbId`, not `moduleId` (which
+    // is the human-readable string column).
+    const frdCandidates = await this.prisma.baArtifact.findMany({
+      where: { moduleDbId, artifactType: 'FRD' },
+      include: { sections: { orderBy: { createdAt: 'asc' } } },
+      orderBy: [
+        { status: 'desc' },
+        { approvedAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
+    });
+    let frdFeatureNames: BaArtifactDoc['frdFeatureNames'];
+    let frdFeatureScreenRefs: BaArtifactDoc['frdFeatureScreenRefs'];
+    for (const frd of frdCandidates) {
+      try {
+        const parsed = parseFrdContent(frd.sections.map((s: { sectionKey: string; sectionLabel: string; content: string; isHumanModified: boolean; editedContent: string | null }) => ({
+          sectionKey: s.sectionKey,
+          sectionLabel: s.sectionLabel,
+          content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+        })));
+        if (parsed.features.length === 0) continue;
+        frdFeatureNames = {};
+        frdFeatureScreenRefs = {};
+        for (const f of parsed.features) {
+          if (!f.featureId) continue;
+          frdFeatureNames[f.featureId] = f.featureName ?? f.featureId;
+          // The FRD parser stores the raw "Screen Reference:" value as
+          // free text (e.g. "SCR-28 — Reset Password" or "SCR-30, SCR-31").
+          // Pluck out the SCR-NN tokens so the renderers can resolve them
+          // to the module's `BaScreen` rows by ID.
+          const ids = extractScreenIds(f.screenRef);
+          if (ids.length > 0) frdFeatureScreenRefs[f.featureId] = ids;
+        }
+        break;
+      } catch {
+        // Try the next candidate.
+      }
+    }
+
+    return { testCases, frdFeatureNames, frdFeatureScreenRefs };
   }
 
   async renderHtml(artifactId: string): Promise<{ html: string; fileStem: string; typeLabel: string }> {
     const doc = await this.loadArtifactDoc(artifactId);
-    let html = generateBaArtifactHtml(doc);
+    // Compress screen images before they hit the HTML renderer. A fresh
+    // upload from `BaScreen.fileData` is ~1.5 MB; FTC artifacts can
+    // reference 60+ screens (one per feature bucket plus the catalog),
+    // and Chrome's PDF pipeline OOMs on 100+ MB HTML payloads. This
+    // resizes to ~600 px JPEG q72 — visually identical for catalog
+    // thumbnails, ~30× smaller. No-op when `sharp` is unavailable.
+    const compressedScreens = doc.module.screens
+      ? await compressScreensForHtml(doc.module.screens)
+      : doc.module.screens;
+    const docForHtml = {
+      ...doc,
+      module: { ...doc.module, screens: compressedScreens },
+    };
+    let html = generateBaArtifactHtml(docForHtml);
     // v4: for LLD artifacts, append the pseudo-file tree as a final appendix
     if (doc.artifactType === 'LLD') {
       const pseudoAppendix = await this.renderPseudoFilesAppendix(artifactId);
@@ -268,7 +423,27 @@ export class BaArtifactExportService {
    * as paragraphs + tables. Avoids html-docx-js' known failures on large
    * artifacts (150 KB+ of User Story content) and embedded base64 images.
    */
-  private async buildDocxFromDoc(doc: BaArtifactDoc): Promise<Buffer> {
+  private async buildDocxFromDoc(input: BaArtifactDoc): Promise<Buffer> {
+    // FRD pilot: parse features from the *original* input before
+    // restructuring so the dedicated per-feature renderer can emit
+    // bookmarked headings + inline screen images directly. Empty for
+    // non-FRD artifacts — those go through the generic markdown→DOCX
+    // path unchanged.
+    const frdFeatures = input.artifactType === 'FRD' ? this.parseFrdFeaturesFromDoc(input) : null;
+
+    // FTC pilot: build the same category → feature → TC structure the
+    // HTML restructurer emits and keep it in scope so the body renderer
+    // can emit bookmarked TC headings (which the post-restructure
+    // markdown round-trip would lose). `null` for non-FTC types.
+    const ftcStructure: FtcCategoryGroup[] | null = input.artifactType === 'FTC' && input.testCases
+      ? buildFtcStructure(input.testCases, input.frdFeatureNames ?? {})
+      : null;
+
+    // Same canonical restructure as the HTML/PDF path so the DOCX TOC,
+    // section headings, and standalone-section ordering stay aligned with
+    // PDF and the editor tree. No-op for unrelated artifact types.
+    const doc = restructureFtcDoc(restructureFrdDoc(input));
+
     // Render any Mermaid diagrams to PNG up front so the DOCX shows real
     // swim-lane visuals instead of the source code. One Chromium instance is
     // reused across diagrams. If puppeteer is unavailable or rendering
@@ -277,59 +452,106 @@ export class BaArtifactExportService {
 
     const children: Array<Paragraph | Table> = [];
 
-    // Title page
-    const projectLabel = doc.project.productName?.trim() || doc.project.name;
-    children.push(new Paragraph({
-      text: `${projectLabel} — ${doc.artifactType.replace(/_/g, ' ')}`,
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-    }));
-    children.push(new Paragraph({ text: doc.artifactId, alignment: AlignmentType.CENTER }));
-    children.push(new Paragraph({
-      text: `Module: ${doc.module.moduleId} — ${doc.module.moduleName}`,
-      alignment: AlignmentType.CENTER,
-    }));
-    children.push(new Paragraph({
-      text: `Project: ${doc.project.projectCode}`,
-      alignment: AlignmentType.CENTER,
-    }));
-    if (doc.project.clientName) {
-      children.push(new Paragraph({
-        text: `Client: ${doc.project.clientName}`,
-        alignment: AlignmentType.CENTER,
-      }));
-    }
-    children.push(new Paragraph({ text: '' }));
-    children.push(new Paragraph({ text: '' }));
+    // ─── Cover page (matches HTML cover via shared style tokens) ───────
+    this.appendCoverPage(children, doc);
 
-    // Embed the per-module screen catalog right after the title page so the
+    // Sort sections by displayOrder then createdAt for stable output, then
+    // filter out internal-processing + preamble-only sections via the
+    // shared predicate. Mirrors the HTML/PDF pipeline so PDF and DOCX are
+    // never out of step on what reaches the customer. (Gap B fix.)
+    // Artifact type is passed so the FRD-specific Step N / Output
+    // Checklist / Sign-Off label regex doesn't strip legitimate EPIC body
+    // (its monolithic deliverable section is labelled "Introduction").
+    const sorted = [...doc.sections]
+      .sort((a, b) => {
+        if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
+        const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return at - bt;
+      })
+      .filter((s) => !shouldOmitFromExport(s, doc.artifactType));
+
+    // ─── Document History (own page, mirrors the HTML history block) ───
+    // Use the *original* sections — `restructureFrdDoc` collapses every
+    // FRD feature into a synthetic parent section, which would reduce the
+    // history to a single row. The original sections still carry the per-
+    // section edit timestamps + AI/Human flags the audit trail needs.
+    this.appendDocumentHistory(children, input.sections);
+
+    // ─── Table of Contents (own page, hyperlinks to bookmarked headings)
+    this.appendTableOfContents(children, sorted, frdFeatures, ftcStructure);
+
+    // Embed the per-module screen catalog right after the TOC so the
     // customer can correlate every SCR-NN reference in the body with the
     // actual wireframe image. Only emitted for the artifact types where
     // screens are meaningful (EPIC / User Story / FTC / FRD / SubTask).
     this.appendScreensSection(children, doc);
-
-    // Sort sections by displayOrder then createdAt for stable output.
-    const sorted = [...doc.sections].sort((a, b) => {
-      if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
-      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return at - bt;
-    });
 
     // Same screen list used for inline reference enrichment in the body —
     // every bare `SCR-NN` is rewritten to `SCR-NN — Title` so the Word doc
     // reads fluently without forcing a flip back to the screen catalog.
     const screensForEnrichment = doc.module.screens ?? [];
 
+    let isFirstSection = true;
     for (const section of sorted) {
       const rawBody = section.isHumanModified && section.editedContent ? section.editedContent : section.content;
       if (!rawBody || !rawBody.trim()) continue;
+
+      // Bookmarked section heading — TOC entries above hyperlink into
+      // these IDs. First body section forces a page break so it doesn't
+      // start mid-page right after the screens catalog.
+      const sectionLabel = section.sectionLabel || section.sectionKey.replace(/_/g, ' ');
+      const sectionBookmarkId = this.bookmarkIdFor(`sec_${section.sectionKey || section.id}`);
+      children.push(this.buildBookmarkedHeading(
+        sectionLabel,
+        sectionBookmarkId,
+        HeadingLevel.HEADING_1,
+        { pageBreakBefore: isFirstSection },
+      ));
+      isFirstSection = false;
+
+      // FRD canonical parent section: bypass the markdown→DOCX path and
+      // render features directly so bookmarks + per-feature screen
+      // thumbnails are guaranteed (the post-pass `injectFeatureScreensDocx`
+      // can't reliably read heading text out of docx@9 Paragraph instances,
+      // so we never depend on it for the FRD pilot).
+      if (frdFeatures && section.sectionKey === 'frd_features') {
+        const featBlocks = this.buildFrdFeatureBlocks(
+          frdFeatures,
+          doc.module.screens ?? [],
+          mermaidImages,
+        );
+        for (const node of featBlocks) children.push(node);
+        children.push(new Paragraph({ text: '' }));
+        continue;
+      }
+
+      // FTC canonical category section: bypass markdown→DOCX so we can
+      // emit bookmarks per feature bucket AND per individual TC. The
+      // restructurer named these sections `ftc_<categoryKey>` (e.g.
+      // `ftc_functional`); match by prefix to find the matching group in
+      // `ftcStructure`.
+      if (ftcStructure && section.sectionKey.startsWith('ftc_')) {
+        const group = this.findFtcGroupForSection(section.sectionKey, ftcStructure);
+        if (group) {
+          const blocks = this.buildFtcCategoryBlocks(
+            group,
+            doc.frdFeatureScreenRefs ?? {},
+            doc.module.screens ?? [],
+          );
+          for (const node of blocks) children.push(node);
+          children.push(new Paragraph({ text: '' }));
+          continue;
+        }
+      }
+
+      // Generic path — unchanged for non-FRD types and for FRD
+      // standalone sections (Business Rules, Validations, TBD-Future
+      // Registry, "other" deliverable sections).
       const body = enrichScreenReferences(rawBody, screensForEnrichment);
-      children.push(new Paragraph({
-        text: section.sectionLabel || section.sectionKey.replace(/_/g, ' '),
-        heading: HeadingLevel.HEADING_1,
-      }));
-      for (const node of this.markdownBlocksToDocx(body, mermaidImages)) {
+      const blocks = this.markdownBlocksToDocx(body, mermaidImages);
+      const blocksWithScreens = this.injectFeatureScreensDocx(blocks, body, doc.module.screens ?? []);
+      for (const node of blocksWithScreens) {
         children.push(node);
       }
       children.push(new Paragraph({ text: '' }));
@@ -338,11 +560,867 @@ export class BaArtifactExportService {
     const document = new Document({
       creator: 'BA Tool',
       title: doc.artifactId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      styles: buildDocxStyles() as any,
       description: `${doc.artifactType} for module ${doc.module.moduleId}`,
       sections: [{ children }],
     });
 
     return Packer.toBuffer(document);
+  }
+
+  /**
+   * Match an FTC synthetic section's `sectionKey` (e.g. `ftc_functional`,
+   * `ftc_white_box`) back to the matching `FtcCategoryGroup`. The
+   * restructurer derives sectionKeys by lowercasing + sanitising the
+   * group's `key`; we apply the same transform here so the lookup is a
+   * straightforward equality check rather than a fuzzy match.
+   */
+  private findFtcGroupForSection(
+    sectionKey: string,
+    structure: FtcCategoryGroup[],
+  ): FtcCategoryGroup | undefined {
+    const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const target = sectionKey.replace(/^ftc_/, '');
+    return structure.find((g) => normalize(g.key) === target);
+  }
+
+  /**
+   * Render one FTC category group as bookmarked DOCX blocks. Emits, per
+   * feature bucket: a bookmarked H2 feature heading, then per test case a
+   * bookmarked H3 TC heading + a one-line metadata run + the body fields
+   * (preconditions, test data, steps, expected, post-validation, etc.).
+   *
+   * Bookmark IDs match `appendTableOfContents`'s anchors so clicking a
+   * feature or TC entry in the TOC jumps to the matching block in the
+   * body. Empty fields are skipped to keep the page count tractable on
+   * 150+ test-case artifacts.
+   */
+  private buildFtcCategoryBlocks(
+    group: FtcCategoryGroup,
+    featureScreenRefs: Record<string, string[]>,
+    screens: BaArtifactDoc['module']['screens'],
+  ): Array<Paragraph | Table> {
+    const out: Array<Paragraph | Table> = [];
+    const screenList = screens ?? [];
+    const screenById = new Map(screenList.map((s) => [s.screenId, s] as const));
+
+    for (const fb of group.featureBuckets) {
+      const featBookmarkId = this.bookmarkIdFor(`ftc_feat_${group.key}_${fb.featureId}`);
+      out.push(this.buildBookmarkedHeading(
+        fb.featureLabel,
+        featBookmarkId,
+        HeadingLevel.HEADING_2,
+      ));
+
+      // Resolve this feature's screenRefs once per bucket — every TC in
+      // the bucket maps to the same feature, so emit the screen card
+      // ONCE under the feature heading and let every TC below inherit
+      // the visual context. Avoids 150+ duplicated images that bloat
+      // the DOCX file and overwhelm Chrome on the PDF render path.
+      // Skipped silently when the FTC has no sibling FRD or the feature
+      // has no `Screen Reference:` line.
+      const featScreenIds = featureScreenRefs[fb.featureId] ?? [];
+      const featScreens = featScreenIds
+        .map((sid) => screenById.get(sid))
+        .filter((s): s is NonNullable<typeof s> => Boolean(s));
+
+      for (const screen of featScreens) {
+        out.push(new Paragraph({
+          spacing: { before: 80, after: 40 },
+          children: [
+            new TextRun({
+              text: `${screen.screenId} — ${screen.screenTitle}`,
+              size: DOCX_FONT_HALF_PTS.caption,
+              font: 'Consolas',
+              color: COLORS.idRefFg,
+              shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+            }),
+          ],
+        }));
+        const decoded = this.decodeScreenImage(screen.fileData);
+        if (!decoded) continue;
+        try {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 160 },
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 460),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed inline feature screen embed ${screen.screenId} in ${group.key}/${fb.featureId}: ${(err as Error).message}`);
+        }
+      }
+
+      for (const tc of fb.testCases) {
+        const tcBookmarkId = this.bookmarkIdFor(`ftc_tc_${tc.id}`);
+        out.push(this.buildBookmarkedHeading(
+          `${tc.testCaseId}: ${tc.title}`,
+          tcBookmarkId,
+          HeadingLevel.HEADING_3,
+        ));
+
+        // Compact metadata run — Type · Priority · Integration · OWASP · Scenario.
+        const metaParts: string[] = [];
+        metaParts.push(`Type: ${tc.testKind.charAt(0).toUpperCase()}${tc.testKind.slice(1)}`);
+        if (tc.priority) metaParts.push(`Priority: ${tc.priority}`);
+        if (tc.isIntegrationTest) metaParts.push('Integration');
+        if (tc.owaspCategory) metaParts.push(`OWASP: ${tc.owaspCategory}`);
+        if (tc.scenarioGroup) metaParts.push(`Scenario: ${tc.scenarioGroup}`);
+        out.push(new Paragraph({
+          spacing: { before: 40, after: 40 },
+          children: [new TextRun({
+            text: metaParts.join('  ·  '),
+            italics: true,
+            color: COLORS.muted,
+            size: DOCX_FONT_HALF_PTS.caption,
+          })],
+        }));
+
+        // Traceability — only when something is actually linked.
+        const traceParts: string[] = [];
+        if (tc.linkedFeatureIds.length > 0) traceParts.push(`Feature: ${tc.linkedFeatureIds.join(', ')}`);
+        if (tc.linkedEpicIds.length > 0) traceParts.push(`EPIC: ${tc.linkedEpicIds.join(', ')}`);
+        if (tc.linkedStoryIds.length > 0) traceParts.push(`Story: ${tc.linkedStoryIds.join(', ')}`);
+        if (tc.linkedSubtaskIds.length > 0) traceParts.push(`SubTask: ${tc.linkedSubtaskIds.join(', ')}`);
+        if (traceParts.length > 0) {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 80 },
+            children: [new TextRun({
+              text: traceParts.join('  ·  '),
+              color: COLORS.idRefFg,
+              size: DOCX_FONT_HALF_PTS.caption,
+            })],
+          }));
+        }
+
+        // Note: the screen card was emitted once per feature bucket above
+        // (not once per TC). The screen applies to every TC in the bucket,
+        // so the per-feature emission is sufficient and keeps the file
+        // size + render time tractable on 150+ TC modules.
+
+        // Body fields — flow through `markdownBlocksToDocx` so bullets /
+        // bolds / SQL fences render as proper Word constructs. Skipping
+        // empty fields keeps the per-TC footprint compact.
+        const fieldMd = this.formatTestCaseFieldsAsMarkdown(tc);
+        if (fieldMd) {
+          const blocks = this.markdownBlocksToDocx(fieldMd);
+          for (const b of blocks) out.push(b);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Format a TC's body fields (preconditions / test data / e2e flow /
+   * steps / expected / post-validation / SQL / Playwright / dev hints) as
+   * markdown. Empty fields are dropped so a sparse TC produces a sparse
+   * page rather than a wall of empty labels.
+   *
+   * Companion to `formatTestCaseBlock` in `ftc-structure.ts` — that one
+   * builds the entire markdown block (heading + meta + body) for the
+   * HTML/PDF path; this one only emits the body fields because the
+   * DOCX feature renderer already laid down the heading + meta line as
+   * bookmarked paragraphs.
+   */
+  private formatTestCaseFieldsAsMarkdown(tc: BaTestCaseLite): string {
+    const lines: string[] = [];
+    if (tc.preconditions?.trim()) {
+      lines.push('**Pre-conditions:**', '', tc.preconditions.trim(), '');
+    }
+    if (tc.testData?.trim()) {
+      lines.push('**Test Data:**', '', tc.testData.trim(), '');
+    }
+    if (tc.e2eFlow?.trim()) {
+      lines.push(`**E2E Flow:** ${tc.e2eFlow.trim()}`, '');
+    }
+    if (tc.steps?.trim()) {
+      lines.push('**Steps:**', '', tc.steps.trim(), '');
+    }
+    if (tc.expected?.trim()) {
+      lines.push('**Expected:**', '', tc.expected.trim(), '');
+    }
+    if (tc.postValidation?.trim()) {
+      lines.push('**Post-validation:**', '', tc.postValidation.trim(), '');
+    }
+    if (tc.sqlSetup?.trim()) {
+      lines.push('**SQL Setup:**', '', '```sql', tc.sqlSetup.trim(), '```', '');
+    }
+    if (tc.sqlVerify?.trim()) {
+      lines.push('**SQL Verify:**', '', '```sql', tc.sqlVerify.trim(), '```', '');
+    }
+    if (tc.playwrightHint?.trim()) {
+      lines.push(`**Playwright Hint:** ${tc.playwrightHint.trim()}`, '');
+    }
+    if (tc.developerHints?.trim()) {
+      lines.push(`**Developer Hints:** ${tc.developerHints.trim()}`, '');
+    }
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+  }
+
+  /**
+   * Server-side mirror of `parseFrdContent` for the DOCX path. Returns the
+   * parsed features (sorted by ID) or null when the artifact isn't an FRD or
+   * has no features. The caller uses the result to drive
+   * `buildFrdFeatureBlocks` and the FRD-aware TOC nesting.
+   */
+  private parseFrdFeaturesFromDoc(input: BaArtifactDoc): ParsedFeature[] | null {
+    if (input.artifactType !== 'FRD') return null;
+    const sections = [...input.sections].sort((a, b) => a.displayOrder - b.displayOrder);
+    const parsed = parseFrdContent(sections.map((s) => ({
+      sectionKey: s.sectionKey,
+      sectionLabel: s.sectionLabel,
+      content: s.isHumanModified && s.editedContent ? s.editedContent : s.content,
+    })));
+    return parsed.features.length > 0 ? parsed.features : null;
+  }
+
+  /**
+   * Build a stable Word bookmark ID from an arbitrary stem. Word constraints:
+   * starts with a letter, only letters/digits/underscores, max 40 chars.
+   * The same `stem` always produces the same ID so the TOC's
+   * `InternalHyperlink({ anchor })` and the body's `Bookmark({ id })` line
+   * up.
+   */
+  private bookmarkIdFor(stem: string): string {
+    const sanitised = stem.replace(/[^a-zA-Z0-9_]/g, '_');
+    const withLeadingLetter = /^[a-zA-Z]/.test(sanitised) ? sanitised : `b_${sanitised}`;
+    return withLeadingLetter.slice(0, 40);
+  }
+
+  /**
+   * Heading paragraph whose text is wrapped in a `Bookmark`. Every body
+   * heading callable from the TOC goes through this helper so the TOC
+   * hyperlinks always have a matching anchor.
+   */
+  private buildBookmarkedHeading(
+    text: string,
+    bookmarkId: string,
+    level: (typeof HeadingLevel)[keyof typeof HeadingLevel],
+    options: { pageBreakBefore?: boolean } = {},
+  ): Paragraph {
+    return new Paragraph({
+      heading: level,
+      pageBreakBefore: options.pageBreakBefore === true,
+      children: [
+        new Bookmark({
+          id: bookmarkId,
+          children: [new TextRun({ text })],
+        }),
+      ],
+    });
+  }
+
+  /**
+   * Document History block — own page, table with Date / Section / Action /
+   * By columns. Mirrors the HTML history block so PDF and DOCX show the
+   * same audit trail. Falls back to a single italic line when no sections
+   * carry AI-generated or human-edited markers.
+   */
+  private appendDocumentHistory(
+    children: Array<Paragraph | Table>,
+    sortedSections: BaArtifactDoc['sections'],
+  ): void {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
+      text: 'Document History',
+    }));
+
+    const rows = [...sortedSections]
+      .filter((s) => s.isHumanModified || s.aiGenerated)
+      .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
+      .slice(0, 50);
+
+    if (rows.length === 0) {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: 'No edits or AI generations recorded.',
+          italics: true,
+          size: DOCX_FONT_HALF_PTS.body,
+          color: COLORS.muted,
+        })],
+      }));
+      return;
+    }
+
+    const headerCell = (label: string): TableCell => new TableCell({
+      shading: { type: ShadingType.SOLID, color: COLORS.surfaceMuted, fill: COLORS.surfaceMuted },
+      children: [new Paragraph({
+        children: [new TextRun({
+          text: label,
+          bold: true,
+          size: DOCX_FONT_HALF_PTS.body,
+          color: COLORS.text,
+        })],
+      })],
+    });
+    const dataCell = (text: string): TableCell => new TableCell({
+      children: [new Paragraph({
+        children: [new TextRun({ text, size: DOCX_FONT_HALF_PTS.body, color: COLORS.text })],
+      })],
+    });
+
+    const headerRow = new TableRow({
+      tableHeader: true,
+      children: ['Date', 'Section', 'Action', 'By'].map(headerCell),
+    });
+
+    const dataRows = rows.map((s) => {
+      const who = s.isHumanModified ? 'Human' : s.aiGenerated ? 'AI' : '—';
+      const action = s.isHumanModified ? 'Edited' : 'Generated';
+      return new TableRow({
+        children: [
+          dataCell(this.formatHumanDate(s.updatedAt)),
+          dataCell(s.sectionLabel),
+          dataCell(action),
+          dataCell(who),
+        ],
+      });
+    });
+
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [headerRow, ...dataRows],
+    }));
+  }
+
+  /**
+   * Format a feature's labelled fields (Description / Priority / Status /
+   * Trigger / Pre- / Post- / Business Rules / Validations / Integration
+   * Signals / Acceptance Criteria) as deterministic markdown. Multi-line
+   * fields keep their bullet structure so `markdownBlocksToDocx` renders
+   * them as proper Word lists. Description appears first; the screen card
+   * is spliced in BEFORE the Description by the caller so PDF and DOCX
+   * read top-to-bottom in the same order.
+   */
+  private formatFeatureFieldsAsMarkdown(f: ParsedFeature): string {
+    const lines: string[] = [];
+    if (f.description) { lines.push(`**Description:** ${f.description}`); lines.push(''); }
+    if (f.priority) { lines.push(`**Priority:** ${f.priority}`); lines.push(''); }
+    if (f.status) { lines.push(`**Status:** ${f.status}`); lines.push(''); }
+    if (f.trigger) { lines.push(`**Trigger:** ${f.trigger}`); lines.push(''); }
+    if (f.preConditions) { lines.push(`**Pre-conditions:**`); lines.push(''); lines.push(f.preConditions); lines.push(''); }
+    if (f.postConditions) { lines.push(`**Post-conditions:**`); lines.push(''); lines.push(f.postConditions); lines.push(''); }
+    if (f.businessRules) { lines.push(`**Business Rules:**`); lines.push(''); lines.push(f.businessRules); lines.push(''); }
+    if (f.validations) { lines.push(`**Validations:**`); lines.push(''); lines.push(f.validations); lines.push(''); }
+    if (f.integrationSignals) { lines.push(`**Integration Signals:**`); lines.push(''); lines.push(f.integrationSignals); lines.push(''); }
+    if (f.acceptanceCriteria) { lines.push(`**Acceptance Criteria:**`); lines.push(''); lines.push(f.acceptanceCriteria); lines.push(''); }
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  /**
+   * FRD-only per-feature renderer. Emits — for every parsed feature — a
+   * bookmarked H2 heading, then the feature's referenced wireframe
+   * (caption + image), then the labelled body fields as Word paragraphs.
+   * The bookmark IDs match what `appendTableOfContents` hyperlinks to so
+   * clicking a feature in the TOC jumps to the corresponding heading.
+   *
+   * Replaces the `injectFeatureScreensDocx` post-pass for FRD content —
+   * that pass relied on `Paragraph.options.text` which docx@9 doesn't
+   * expose, silently dropping every per-feature thumbnail.
+   */
+  private buildFrdFeatureBlocks(
+    features: ParsedFeature[],
+    screens: BaArtifactDoc['module']['screens'],
+    mermaidImages: Map<string, MermaidImage>,
+  ): Array<Paragraph | Table> {
+    const out: Array<Paragraph | Table> = [];
+    const screenList = screens ?? [];
+    const screenById = new Map(screenList.map((s) => [s.screenId, s]));
+
+    for (const f of features) {
+      const featBookmarkId = this.bookmarkIdFor(`feat_${f.featureId}`);
+      out.push(this.buildBookmarkedHeading(
+        `${f.featureId}: ${f.featureName}`,
+        featBookmarkId,
+        HeadingLevel.HEADING_2,
+      ));
+
+      // Inline screen card — rendered immediately under the heading so
+      // the layout matches the PDF (image at the top, prose below).
+      const screenIds = extractScreenIds(f.screenRef);
+      for (const sid of screenIds) {
+        const screen = screenById.get(sid);
+        if (!screen) continue;
+        out.push(new Paragraph({
+          spacing: { before: 80, after: 40 },
+          children: [
+            new TextRun({
+              text: `${screen.screenId} — ${screen.screenTitle}`,
+              size: DOCX_FONT_HALF_PTS.caption,
+              font: 'Consolas',
+              color: COLORS.idRefFg,
+              shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+            }),
+          ],
+        }));
+        const decoded = this.decodeScreenImage(screen.fileData);
+        if (!decoded) continue;
+        try {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 160 },
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 460),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed inline screen embed ${screen.screenId}: ${(err as Error).message}`);
+        }
+      }
+
+      // Body fields. We delegate to the existing markdown converter so
+      // bullet lists / inline `**bold**` etc. render the same way as
+      // every other section.
+      const fieldMd = this.formatFeatureFieldsAsMarkdown(f);
+      if (fieldMd) {
+        const blocks = this.markdownBlocksToDocx(fieldMd, mermaidImages);
+        for (const b of blocks) out.push(b);
+      }
+    }
+    return out;
+  }
+
+  // ─── Document-structure helpers ────────────────────────────────────────
+
+  /**
+   * Build the cover page using a 1-cell layout table so the centered block
+   * mirrors the HTML cover's visual weight (eyebrow / title / accent rule /
+   * KV grid / status). docx headings + paragraph borders give us the brand
+   * accent line without the html-docx-js fragility we used to depend on.
+   */
+  private appendCoverPage(children: Array<Paragraph | Table>, doc: BaArtifactDoc): void {
+    const productName = doc.project.productName?.trim() || doc.project.name;
+    const typeLabel = ARTIFACT_TYPE_LABELS_DOCX[doc.artifactType] ?? doc.artifactType.replace(/_/g, ' ');
+
+    // Eyebrow (artifact type label, all-caps, muted).
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 800, after: 80 },
+      children: [
+        new TextRun({
+          text: typeLabel.toUpperCase(),
+          size: DOCX_FONT_HALF_PTS.coverEyebrow,
+          color: COLORS.muted,
+          characterSpacing: 60, // ≈ 0.18em letter spacing in docx (units = 1/20 pt)
+        }),
+      ],
+    }));
+
+    // Big title (artifact ID).
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 0, after: 80 },
+      children: [
+        new TextRun({
+          text: doc.artifactId,
+          size: DOCX_FONT_HALF_PTS.coverTitle,
+          bold: true,
+          color: COLORS.text,
+        }),
+      ],
+    }));
+
+    // Accent divider — short bottom-bordered empty paragraph mirroring
+    // the HTML cover's 72×3 px orange rule.
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 120, after: 280 },
+      border: {
+        bottom: { color: COLORS.accent, space: 1, style: BorderStyle.SINGLE, size: 18 },
+      },
+      // Extra padding so the bottom border floats clear of any text below.
+      children: [new TextRun({ text: '          ' })],
+    }));
+
+    // KV table: 2 columns, no outer border (cell borders only on bottom for
+    // a soft separator). Mirrors the <dl> grid in HTML.
+    const kvRows: Array<[string, string]> = [
+      ['Product Name', productName],
+      ['Project Code', doc.project.projectCode],
+      ['Module', `${doc.module.moduleId} — ${doc.module.moduleName}`],
+      ['Client Name', doc.project.clientName ?? '—'],
+      ['Submitted By', doc.project.submittedBy ?? '—'],
+      ['Date', this.formatHumanDate(doc.updatedAt)],
+      ['Status', doc.status.replace(/_/g, ' ')],
+    ];
+    children.push(this.buildCoverKvTable(kvRows, doc.status));
+    // No trailing break paragraph — Document History / TOC / Screens / first
+    // body section each set `pageBreakBefore: true` on their leading
+    // paragraph, which keeps the cover on its own page without an extra
+    // blank line at the bottom of every export.
+  }
+
+  private buildCoverKvTable(rows: Array<[string, string]>, status: string): Table {
+    const C = COLORS;
+    const cellPadding = { top: DOCX_TABLE_CELL_PADDING_TWIPS, bottom: DOCX_TABLE_CELL_PADDING_TWIPS, left: DOCX_TABLE_CELL_PADDING_TWIPS, right: DOCX_TABLE_CELL_PADDING_TWIPS };
+    const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' };
+    const softBottom = { style: BorderStyle.SINGLE, size: 4, color: C.borderSoft };
+    const cellBorders = { top: noBorder, left: noBorder, right: noBorder, bottom: softBottom };
+
+    const tableRows = rows.map(([k, v], idx) => {
+      const isStatus = k === 'Status';
+      const valueRuns: TextRun[] = isStatus
+        ? [new TextRun({
+            text: ` ${v} `,
+            size: DOCX_FONT_HALF_PTS.coverDl,
+            bold: true,
+            color: this.statusFg(status),
+            shading: { type: ShadingType.SOLID, color: this.statusBg(status), fill: this.statusBg(status) },
+          })]
+        : [new TextRun({
+            text: v,
+            size: DOCX_FONT_HALF_PTS.coverDl,
+            color: C.text,
+          })];
+      return new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 35, type: WidthType.PERCENTAGE },
+            margins: cellPadding,
+            borders: cellBorders,
+            children: [new Paragraph({
+              children: [new TextRun({
+                text: `${k}:`,
+                size: DOCX_FONT_HALF_PTS.coverDl,
+                color: C.muted,
+                bold: false,
+              })],
+            })],
+          }),
+          new TableCell({
+            width: { size: 65, type: WidthType.PERCENTAGE },
+            margins: cellPadding,
+            borders: cellBorders,
+            children: [new Paragraph({ children: valueRuns })],
+          }),
+        ],
+      });
+    });
+
+    return new Table({
+      width: { size: 80, type: WidthType.PERCENTAGE },
+      alignment: AlignmentType.CENTER,
+      rows: tableRows,
+    });
+  }
+
+  private statusBg(status: string): string {
+    const k = statusKindFor(status);
+    if (k === 'approved') return COLORS.statusApprovedBg;
+    if (k === 'partial') return COLORS.statusPartialBg;
+    if (k === 'confirmed') return COLORS.statusConfirmedBg;
+    return COLORS.statusDraftBg;
+  }
+  private statusFg(status: string): string {
+    const k = statusKindFor(status);
+    if (k === 'approved') return COLORS.statusApprovedFg;
+    if (k === 'partial') return COLORS.statusPartialFg;
+    if (k === 'confirmed') return COLORS.statusConfirmedFg;
+    return COLORS.statusDraftFg;
+  }
+
+  private formatHumanDate(d: string | Date | null | undefined): string {
+    if (!d) return '—';
+    const date = typeof d === 'string' ? new Date(d) : d;
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  /**
+   * Static Table of Contents — mirrors the HTML nested TOC. Each section
+   * gets a bold entry; inner headings (markdown ## / ### / #### inside
+   * the section body) are emitted as indented italic entries. We don't
+   * use docx's TableOfContents() field because that requires Word to
+   * recalculate fields on open, which not every renderer does reliably
+   * (e.g. LibreOffice / Pages).
+   */
+  private appendTableOfContents(
+    children: Array<Paragraph | Table>,
+    sortedSections: BaArtifactDoc['sections'],
+    frdFeatures: ParsedFeature[] | null,
+    ftcStructure: FtcCategoryGroup[] | null,
+  ): void {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
+      text: 'Table of Contents',
+      spacing: { before: 0, after: 160 },
+    }));
+
+    sortedSections.forEach((section, idx) => {
+      const sectionLabel = section.sectionLabel || section.sectionKey.replace(/_/g, ' ');
+      const sectionBookmarkId = this.bookmarkIdFor(`sec_${section.sectionKey || section.id}`);
+
+      // Top-level entry — clickable hyperlink into the matching body
+      // bookmark. Word renders `InternalHyperlink` with the default
+      // hyperlink character style (blue + underlined) when the document
+      // styles include one; we bold it here for visual hierarchy.
+      children.push(new Paragraph({
+        spacing: { before: 60, after: 60 },
+        children: [
+          new InternalHyperlink({
+            anchor: sectionBookmarkId,
+            children: [new TextRun({
+              text: `${idx + 1}. ${sectionLabel}`,
+              bold: true,
+              size: DOCX_FONT_HALF_PTS.body,
+              color: COLORS.text,
+              style: 'Hyperlink',
+            })],
+          }),
+        ],
+      }));
+
+      // FRD canonical parent: emit each parsed feature as a nested
+      // hyperlink so the TOC mirrors the editor tree
+      // (FRD-MOD-XX → F-XX-YY). Bookmarks are created in
+      // `buildFrdFeatureBlocks` with the same `feat_<featureId>` stem.
+      if (frdFeatures && section.sectionKey === 'frd_features') {
+        frdFeatures.forEach((f) => {
+          const featBookmarkId = this.bookmarkIdFor(`feat_${f.featureId}`);
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            spacing: { before: 20, after: 20 },
+            children: [
+              new InternalHyperlink({
+                anchor: featBookmarkId,
+                children: [new TextRun({
+                  text: `${f.featureId} — ${f.featureName}`,
+                  size: DOCX_FONT_HALF_PTS.caption,
+                  color: COLORS.muted,
+                  style: 'Hyperlink',
+                })],
+              }),
+            ],
+          }));
+        });
+        return;
+      }
+
+      // FTC canonical category section: emit nested feature buckets and
+      // per-test-case entries. Bookmarks match the IDs created in
+      // `buildFtcCategoryBlocks` (`ftc_feat_<cat>_<fid>` and
+      // `ftc_tc_<tcDbId>`). Two indent levels (360 / 720 twips) line up
+      // with the editor tree's three-level nesting.
+      if (ftcStructure && section.sectionKey.startsWith('ftc_')) {
+        const group = this.findFtcGroupForSection(section.sectionKey, ftcStructure);
+        if (group) {
+          for (const fb of group.featureBuckets) {
+            const featBookmarkId = this.bookmarkIdFor(`ftc_feat_${group.key}_${fb.featureId}`);
+            children.push(new Paragraph({
+              indent: { left: 360 },
+              spacing: { before: 30, after: 20 },
+              children: [
+                new InternalHyperlink({
+                  anchor: featBookmarkId,
+                  children: [new TextRun({
+                    text: fb.featureLabel,
+                    bold: true,
+                    size: DOCX_FONT_HALF_PTS.caption,
+                    color: COLORS.text,
+                    style: 'Hyperlink',
+                  })],
+                }),
+              ],
+            }));
+            for (const tc of fb.testCases) {
+              const tcBookmarkId = this.bookmarkIdFor(`ftc_tc_${tc.id}`);
+              children.push(new Paragraph({
+                indent: { left: 720 },
+                spacing: { before: 10, after: 10 },
+                children: [
+                  new InternalHyperlink({
+                    anchor: tcBookmarkId,
+                    children: [new TextRun({
+                      text: `${tc.testCaseId} — ${tc.title}`,
+                      size: DOCX_FONT_HALF_PTS.caption,
+                      color: COLORS.muted,
+                      italics: tc.testKind === 'negative',
+                      style: 'Hyperlink',
+                    })],
+                  }),
+                ],
+              }));
+            }
+          }
+          return;
+        }
+      }
+
+      // Non-FRD inner headings stay as informational indented text. We
+      // don't bookmark inner markdown headings (no stable anchor target),
+      // so making them hyperlinks would lead nowhere. Section-level
+      // hyperlinks above are sufficient for navigation.
+      const body = (section.isHumanModified && section.editedContent) ? section.editedContent : section.content;
+      if (!body) return;
+      const inner = this.extractInnerHeadingsForToc(body);
+      for (const ih of inner) {
+        children.push(new Paragraph({
+          indent: { left: ih.depth === 2 ? 360 : 720 },
+          spacing: { before: 20, after: 20 },
+          children: [new TextRun({
+            text: ih.text,
+            size: DOCX_FONT_HALF_PTS.caption,
+            color: COLORS.muted,
+            italics: ih.depth === 3,
+          })],
+        }));
+      }
+    });
+  }
+
+  /**
+   * Mirrors the extractInnerHeadings helper in artifact-html.ts but without
+   * generating slugs (DOCX TOC entries don't hyperlink — they're informational).
+   * Skips headings inside fenced code blocks; normalises depth so the
+   * shallowest heading depth in a section becomes "depth 2".
+   */
+  private extractInnerHeadingsForToc(md: string): Array<{ text: string; depth: 2 | 3 }> {
+    const lines = md.split(/\r?\n/);
+    let inFence = false;
+    const collected: Array<{ text: string; rawLevel: number }> = [];
+    for (const raw of lines) {
+      const t = raw.trim();
+      if (/^```/.test(t)) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      const m = /^(#{1,6})\s+(.*)$/.exec(t);
+      if (!m) continue;
+      collected.push({ text: m[2].trim(), rawLevel: m[1].length });
+    }
+    if (collected.length === 0) return [];
+    const minRaw = Math.min(...collected.map((c) => c.rawLevel));
+    return collected
+      .map((c) => ({ text: c.text, depth: (c.rawLevel === minRaw ? 2 : 3) as 2 | 3 }))
+      // Bumped from 50 for the FTC pilot — see the matching comment in
+      // `templates/artifact-html.ts::extractInnerHeadings`.
+      .slice(0, 500);
+  }
+
+  /**
+   * After markdownBlocksToDocx renders a section into Paragraph/Table blocks,
+   * walk the markdown source for `^####? F-XX-YY:` feature headings + their
+   * `Screen Reference: SCR-NN` line, and splice the screen image right after
+   * the matching heading paragraph in the blocks array.
+   *
+   * Matching strategy: find the index of the paragraph whose plain text
+   * starts with `F-XX-YY:` (heading paragraphs from markdown headings carry
+   * the heading text as their first run). For each match insert an
+   * ImageRun-bearing paragraph immediately after.
+   */
+  private injectFeatureScreensDocx(
+    blocks: Array<Paragraph | Table>,
+    rawMarkdown: string,
+    screens: Array<{ screenId: string; screenTitle: string; screenType: string | null; fileData: string }>,
+  ): Array<Paragraph | Table> {
+    if (screens.length === 0 || !rawMarkdown) return blocks;
+    const screenById = new Map(screens.map((s) => [s.screenId, s]));
+
+    // Walk the markdown source to learn which feature ID maps to which screen.
+    const lines = rawMarkdown.split(/\r?\n/);
+    const featureToScreen = new Map<string, string>();
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^#{2,4}\s+(F-\d+-\d+):/i.exec(lines[i].trim());
+      if (!m) continue;
+      const featureId = m[1].toUpperCase();
+      const startDepth = (lines[i].match(/^#+/) ?? [''])[0].length;
+      for (let j = i + 1; j < Math.min(lines.length, i + 60); j++) {
+        const nextHash = /^(#{1,6})\s/.exec(lines[j].trim());
+        if (nextHash && nextHash[1].length <= startDepth) break;
+        const sm = /Screen\s+Reference[\s*_:]*\s*(SCR-\d+)/i.exec(lines[j]);
+        if (sm) {
+          featureToScreen.set(featureId, sm[1].toUpperCase());
+          break;
+        }
+      }
+    }
+
+    if (featureToScreen.size === 0) return blocks;
+
+    const out: Array<Paragraph | Table> = [];
+    for (const block of blocks) {
+      out.push(block);
+      const headingFid = this.extractFeatureIdFromHeadingBlock(block);
+      if (!headingFid) continue;
+      const screenId = featureToScreen.get(headingFid);
+      if (!screenId) continue;
+      const screen = screenById.get(screenId);
+      if (!screen) continue;
+      // Caption (e.g. SCR-01 — Order Document List), then the image itself.
+      out.push(new Paragraph({
+        spacing: { before: 80, after: 40 },
+        children: [
+          new TextRun({
+            text: `${screen.screenId} — ${screen.screenTitle}`,
+            size: DOCX_FONT_HALF_PTS.caption,
+            font: 'Consolas',
+            color: COLORS.idRefFg,
+            shading: { type: ShadingType.SOLID, color: COLORS.idRefBg, fill: COLORS.idRefBg },
+          }),
+        ],
+      }));
+      const decoded = this.decodeScreenImage(screen.fileData);
+      if (decoded) {
+        try {
+          out.push(new Paragraph({
+            spacing: { before: 0, after: 160 },
+            children: [
+              new ImageRun({
+                data: decoded.buffer,
+                transformation: this.scaleImageForDocx(decoded.width, decoded.height, 460),
+                type: decoded.type,
+              }),
+            ],
+          }));
+        } catch (err) {
+          this.logger.warn(`Failed inline screen embed ${screen.screenId}: ${(err as Error).message}`);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Inspect a Paragraph block produced by markdownBlocksToDocx and decide
+   * whether it's a heading whose first text starts with an `F-XX-YY:`
+   * feature ID. Returns the upper-cased feature ID or null.
+   *
+   * Tables can never be feature headings, so they're skipped.
+   */
+  private extractFeatureIdFromHeadingBlock(block: Paragraph | Table): string | null {
+    if (block instanceof Table) return null;
+    // The Paragraph instance doesn't expose its run text via public API in
+    // docx 9.x. Read the JSON-serialised representation; OOXML attribute
+    // names are stable across versions.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json = (block as any)?.options ?? (block as any)?.root ?? null;
+    // Fast-path: most heading blocks pass the `text` shorthand at construction.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const directText: string | undefined = (block as any)?.options?.text ?? (block as any)?.text;
+    if (typeof directText === 'string') {
+      const m = /^(F-\d+-\d+):/i.exec(directText.trim());
+      if (m) return m[1].toUpperCase();
+    }
+    if (json && Array.isArray(json)) {
+      for (const child of json) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const t: string | undefined = (child as any)?.options?.text ?? (child as any)?.text;
+        if (typeof t === 'string') {
+          const m = /^(F-\d+-\d+):/i.exec(t.trim());
+          if (m) return m[1].toUpperCase();
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -872,6 +1950,7 @@ export class BaArtifactExportService {
     children.push(new Paragraph({
       text: `Referenced Screens (${screens.length})`,
       heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
     }));
     children.push(new Paragraph({
       children: [new TextRun({

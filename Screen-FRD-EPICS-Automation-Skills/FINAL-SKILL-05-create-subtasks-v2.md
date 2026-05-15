@@ -954,3 +954,69 @@ fact. It also matches the format SKILL-04 uses for User Story Traceability.
 - Stubs allow development to proceed immediately — they are not a workaround, they are a design pattern.
 - SubTask IDs are permanent — never reuse a deleted SubTask's ID.
 - Order matters: schema → model → repository → service → validation → integration → API → frontend → tests.
+
+---
+
+## Forbidden Patterns — these WILL hard-fail the validator
+
+The backend orchestrator runs `validateSkill05Output()` against every
+SKILL-05 emission. It splits the markdown on `## ST-USNNN-TEAM-NN`
+headings and counts `#### Section N` markers per block. The execution
+is marked FAILED if any of the following patterns surface:
+
+1. **Missing canonical heading shape.** Every SubTask MUST be
+   introduced with a literal `## ST-USNNN-TEAM-NN — <Title>` line. The
+   validator does NOT accept `### ST-...` (wrong depth), `## SubTask:
+   ST-...` (extra prefix), or bold-text-only labels (e.g.
+   `**ST-USNNN-TEAM-NN**`). The em-dash + Title suffix is part of the
+   contract.
+
+2. **Incomplete 25-section coverage.** Every SubTask block must contain
+   EXACTLY 25 `#### Section N` markers, one for each of Sections 1–25
+   in the canonical template. Missing a section number (e.g. skipping
+   Section 22 — End-to-End Integration Flow) hard-fails.
+
+3. **Simplified narrative shape.** Bullet points instead of section
+   headings, bare numbered text without the `####` prefix, or
+   `**N. Label**:` paragraph-style labels. The canonical template
+   REQUIRES `#### Section N — <Label>` at H4 — not H3, not H5, not
+   bold paragraphs.
+
+4. **Improvised section labels.** The labels MUST match the canonical
+   template character-for-character. Common drift to avoid:
+   - "SubTask Description" — wrong, canonical is **"Description"**
+   - "Algorithm Outline" — wrong, canonical is **"Algorithm"**
+   - "Integration Flow" — wrong, canonical is **"End-to-End
+     Integration Flow"** (Section 22)
+   - Collapsing Section 22 (End-to-End Integration Flow) into Section
+     14 (Algorithm) — they are SEPARATE sections.
+
+5. **Bare-stub Section 19 in a CONFIRMED-PARTIAL story.** A SubTask
+   inside a CONFIRMED-PARTIAL parent story whose Section 19 emits
+   `* None for this SubTask.` is rejected — that silently drops the
+   cross-module TBD-Future dependency tracking that the entire
+   TBD-Future Integration Registry workflow depends on.
+
+## Self-check before responding
+
+Before emitting your response, walk your draft and verify each of:
+
+- [ ] For every `## ST-USNNN-TEAM-NN` block, count the `#### Section N`
+      headings. There must be EXACTLY 25, one for each of Sections
+      1 through 25.
+- [ ] Each Section heading uses the EXACT canonical label
+      (Description, not "SubTask Description"; Algorithm, not
+      "Algorithm Outline"; End-to-End Integration Flow, not
+      "Integration Flow").
+- [ ] Section 22 is present in EVERY SubTask with all three parts
+      (Part A — Flow Chain; Part B — Dependency Table; Part C —
+      Sprint Sequencing). The same Section 22 content is identical
+      across every SubTask in the story — copy it verbatim once you
+      have it right.
+- [ ] If the parent story is CONFIRMED-PARTIAL, every SubTask's
+      Section 19 carries real TBD-NNN entries (not the bare-stub
+      "None" placeholder).
+- [ ] Every SubTask body is ≥ 500 chars — stubs are rejected.
+
+If your draft fails ANY check, fix it BEFORE responding. The validator
+does not negotiate.
