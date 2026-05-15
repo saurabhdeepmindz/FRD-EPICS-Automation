@@ -43,3 +43,6 @@ Project-Documents/SubTasks/
 
 # TypeScript build info
 tsconfig.tsbuildinfo
+
+# Playwright test artifacts (screenshots, summaries from smoke runs)
+pw-artifacts/
