@@ -21,6 +21,12 @@ from stt_providers import get_stt_provider, STTProvider
 from prompts.section_prompts import get_section_prompt, SYSTEM_BASE
 from prompts.parse_prompts import PARSE_SYSTEM_PROMPT, GAP_ANALYSIS_SUFFIX, INTERACTIVE_SUFFIX
 from prompts.gap_check_prompts import GAP_CHECK_SYSTEM_PROMPT
+from prompts.wft_prompts import WFT_SYSTEM_PROMPT, build_wft_user_message
+from prompts.brd_prompts import BRD_SYSTEM_PROMPT, build_brd_user_message
+from prompts.an_prompts import AN_SYSTEM_PROMPT, build_an_user_message
+from prompts.brand_extraction_prompts import BRAND_EXTRACTION_SYSTEM_PROMPT
+from prompts.wireframe_prompts import WIREFRAME_SYSTEM_PROMPT, build_wireframe_user_message
+from prompts.hifi_prompts import HIFI_SYSTEM_PROMPT, build_hifi_user_message
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -341,6 +347,985 @@ async def transcribe(
     logger.info("Transcribed %d chars via %s", len(text), settings.STT_PROVIDER)
 
     return TranscribeResponse(text=text, provider=settings.STT_PROVIDER)
+
+
+# ─── Discovery Track: WFT generation (Stage 2) ─────────────────────────────
+
+class WftConcept(BaseModel):
+    name: str
+    context: str
+
+
+class WftRequest(BaseModel):
+    rawTranscript: str = Field(..., min_length=1, max_length=200_000)
+    domainContext: str = Field(default="", max_length=500)
+    languageHint: str = Field(default="auto", max_length=20)
+
+
+class WftResponse(BaseModel):
+    cleanedText: str | None = None
+    paraphrased: str | None = None
+    concepts: list[WftConcept] = []
+    actionItems: list[str] = []
+    openQuestions: list[str] = []
+    detectedLanguage: str | None = None
+    model: str | None = None
+
+
+@app.post("/wft-generate", response_model=WftResponse, tags=["discovery"])
+async def wft_generate(
+    body: WftRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> WftResponse:
+    """
+    Stage 2 of the Discovery Track. Convert one or more concatenated raw audio
+    transcripts into a 7-section Well-formed Text artefact per skill 01.
+    Returns structured JSON for the NestJS backend to persist as a BaWft.
+    """
+    user_message = build_wft_user_message(
+        body.rawTranscript, body.domainContext, body.languageHint
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": WFT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            # Override the global OPENAI_MAX_TOKENS=1024 default — a structured
+            # 7-section WFT can run a few thousand tokens for a long transcript.
+            max_tokens=4096,
+            temperature=settings.OPENAI_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed during WFT generation: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit hit during WFT generation: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error during WFT generation: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse WFT JSON: %s — raw=%r", exc, raw[:200])
+        raise HTTPException(status_code=502, detail="WFT generator returned invalid JSON") from exc
+
+    logger.info(
+        "WFT generated: %d concepts · %d actions · %d open questions",
+        len(parsed.get("concepts") or []),
+        len(parsed.get("actionItems") or []),
+        len(parsed.get("openQuestions") or []),
+    )
+
+    return WftResponse(
+        cleanedText=parsed.get("cleanedText"),
+        paraphrased=parsed.get("paraphrased"),
+        concepts=[WftConcept(**c) for c in (parsed.get("concepts") or [])],
+        actionItems=list(parsed.get("actionItems") or []),
+        openQuestions=list(parsed.get("openQuestions") or []),
+        detectedLanguage=parsed.get("detectedLanguage"),
+        model=settings.OPENAI_MODEL,
+    )
+
+
+# ─── Discovery Track: BRD generation (Stage 3) ─────────────────────────────
+
+class FrTableRow(BaseModel):
+    id: str
+    requirement: str
+    testable: bool = True
+
+
+class BrdRequest(BaseModel):
+    wftParaphrased: str = Field(default="", max_length=60_000)
+    wftConcepts: list[dict] = Field(default_factory=list)
+    wftActionItems: list[str] = Field(default_factory=list)
+    wftOpenQuestions: list[str] = Field(default_factory=list)
+    productName: str = Field(default="", max_length=200)
+    audience: str = Field(default="", max_length=50)
+
+
+class BrdResponse(BaseModel):
+    sections: dict[str, str] = Field(default_factory=dict)
+    frTable: list[FrTableRow] = Field(default_factory=list)
+    openItems: list[str] = Field(default_factory=list)
+    detectedAudience: str | None = None
+    model: str | None = None
+
+
+@app.post("/brd-generate", response_model=BrdResponse, tags=["discovery"])
+async def brd_generate(
+    body: BrdRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> BrdResponse:
+    """
+    Stage 3 of the Discovery Track. Convert a Well-formed Text artefact into a
+    15-section Business Requirements Document per skill 02. Returns structured
+    JSON for the NestJS backend to persist as a BaBrd.
+    """
+    user_message = build_brd_user_message(
+        body.wftParaphrased,
+        body.wftConcepts,
+        body.wftActionItems,
+        body.wftOpenQuestions,
+        body.productName,
+        body.audience,
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": BRD_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            # 15-section BRD with FR table + open items easily exceeds the global
+            # OPENAI_MAX_TOKENS=1024 default. Bump well above the worst case so
+            # JSON is never truncated mid-stream.
+            max_tokens=8192,
+            temperature=settings.OPENAI_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed during BRD generation: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit hit during BRD generation: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error during BRD generation: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse BRD JSON: %s — raw=%r", exc, raw[:200])
+        raise HTTPException(status_code=502, detail="BRD generator returned invalid JSON") from exc
+
+    sections_raw = parsed.get("sections") or {}
+    sections: dict[str, str] = {str(k): str(v) for k, v in sections_raw.items() if isinstance(v, str)}
+
+    fr_rows_raw = parsed.get("frTable") or []
+    fr_rows: list[FrTableRow] = []
+    for row in fr_rows_raw:
+        if not isinstance(row, dict):
+            continue
+        try:
+            fr_rows.append(
+                FrTableRow(
+                    id=str(row.get("id", "")),
+                    requirement=str(row.get("requirement", "")),
+                    testable=bool(row.get("testable", True)),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed FR row: %s — %s", row, exc)
+
+    logger.info(
+        "BRD generated: %d sections · %d FRs · %d open items",
+        len(sections),
+        len(fr_rows),
+        len(parsed.get("openItems") or []),
+    )
+
+    return BrdResponse(
+        sections=sections,
+        frTable=fr_rows,
+        openItems=list(parsed.get("openItems") or []),
+        detectedAudience=parsed.get("detectedAudience"),
+        model=settings.OPENAI_MODEL,
+    )
+
+
+# ─── Discovery Track: Approach Note generation (Stage 3) ──────────────────
+
+class AnDecision(BaseModel):
+    question: str
+    decision: str
+
+
+class AnOpenQuestion(BaseModel):
+    number: int
+    question: str
+    default: str = ""
+
+
+class AnBrandTokens(BaseModel):
+    primary: str = "#0B1B2E"
+    surface: str = "#FFFFFF"
+    cta: str = "#F97316"
+    logo: str | None = None
+    productName: str = "—"
+
+
+# ─── §12 PRD-Readiness Bridge models ─────────────────────────────────────
+# Skill 03 §12 — structured form mirrors the §12 markdown narrative so the
+# downstream PRD generator can lift items directly without manual re-keying.
+
+class AnActor(BaseModel):
+    role: str
+    type: str = ""  # internal / external / system
+    description: str = ""
+    permissions: str = ""
+
+
+class AnIntegration(BaseModel):
+    name: str
+    type: str = ""  # API / SDK / webhook / SSO / payment / messaging
+    purpose: str = ""
+    criticality: str = ""  # must-have / nice-to-have
+    phase: str = ""
+
+
+class AnCustomerJourney(BaseModel):
+    name: str
+    primaryActor: str = ""
+    trigger: str = ""
+    steps: list[str] = Field(default_factory=list)
+    successOutcome: str = ""
+    failureModes: list[str] = Field(default_factory=list)
+
+
+class AnFunctionalLandscapeRow(BaseModel):
+    module: str
+    purpose: str = ""
+    frRefs: list[str] = Field(default_factory=list)
+
+
+class AnUiUxRequirements(BaseModel):
+    interactionPatterns: str = ""
+    accessibility: str = ""
+    responsive: str = ""
+    emptyErrorStates: str = ""
+    microcopyTone: str = ""
+    internationalization: str = ""
+
+
+class AnComplianceRow(BaseModel):
+    standard: str
+    applicability: str = ""
+    phase1Controls: str = ""
+
+
+class AnTestType(BaseModel):
+    coverageTarget: str = ""
+    tools: str = ""
+    owner: str = ""
+
+
+class AnTestingRequirements(BaseModel):
+    unit: AnTestType = Field(default_factory=AnTestType)
+    integration: AnTestType = Field(default_factory=AnTestType)
+    e2e: AnTestType = Field(default_factory=AnTestType)
+    evalHarness: AnTestType = Field(default_factory=AnTestType)
+    accessibility: AnTestType = Field(default_factory=AnTestType)
+    performance: AnTestType = Field(default_factory=AnTestType)
+    security: AnTestType = Field(default_factory=AnTestType)
+
+
+class AnReceivable(BaseModel):
+    item: str
+    ownerClient: str = ""
+    neededByWeek: int | None = None
+    blocking: bool = False
+
+
+class AnEnvironment(BaseModel):
+    environment: str
+    purpose: str = ""
+    phase1Hosting: str = ""
+    phase2Hosting: str = ""
+
+
+class AnPrdReadiness(BaseModel):
+    actors: list[AnActor] = Field(default_factory=list)
+    integrations: list[AnIntegration] = Field(default_factory=list)
+    customerJourneys: list[AnCustomerJourney] = Field(default_factory=list)
+    functionalLandscape: list[AnFunctionalLandscapeRow] = Field(default_factory=list)
+    uiUxRequirements: AnUiUxRequirements = Field(default_factory=AnUiUxRequirements)
+    complianceRequirements: list[AnComplianceRow] = Field(default_factory=list)
+    testingRequirements: AnTestingRequirements = Field(default_factory=AnTestingRequirements)
+    keyDeliverables: list[str] = Field(default_factory=list)
+    receivables: list[AnReceivable] = Field(default_factory=list)
+    environmentList: list[AnEnvironment] = Field(default_factory=list)
+    miscellaneous: str = ""
+
+
+class AnRequest(BaseModel):
+    brdSections: dict[str, str] = Field(default_factory=dict)
+    brdFrTable: list[dict] = Field(default_factory=list)
+    brdOpenItems: list[str] = Field(default_factory=list)
+    productName: str = Field(default="", max_length=200)
+    audience: str = Field(default="", max_length=50)
+    changesRequested: str = Field(default="", max_length=4000)
+
+
+class AnResponse(BaseModel):
+    sections: dict[str, str] = Field(default_factory=dict)
+    brandTokens: AnBrandTokens = Field(default_factory=AnBrandTokens)
+    decisionsLocked: list[AnDecision] = Field(default_factory=list)
+    openQuestions: list[AnOpenQuestion] = Field(default_factory=list)
+    prdReadiness: AnPrdReadiness = Field(default_factory=AnPrdReadiness)
+    detectedAudience: str | None = None
+    model: str | None = None
+
+
+@app.post("/an-generate", response_model=AnResponse, tags=["discovery"])
+async def an_generate(
+    body: AnRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> AnResponse:
+    """
+    Stage 3 of the Discovery Track. Convert a BRD into a 12-section Approach
+    Note per skill 03 plus structured brandTokens / decisionsLocked /
+    openQuestions / prdReadiness (the §12 bridge for downstream PRD bootstrap).
+    Append-only versioning is handled on the NestJS side.
+    """
+    user_message = build_an_user_message(
+        body.brdSections,
+        body.brdFrTable,
+        body.brdOpenItems,
+        body.productName,
+        body.audience,
+        body.changesRequested,
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": AN_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            # A 12-section AN with brand tokens + decisions + open questions +
+            # PRD-readiness bridge is the largest single-document generation in
+            # the pipeline. Use the model's full output budget — the §12 bridge
+            # alone adds ~3000 tokens of structured JSON.
+            max_tokens=16384,
+            temperature=settings.OPENAI_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed during AN generation: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit hit during AN generation: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error during AN generation: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse AN JSON: %s — raw=%r", exc, raw[:200])
+        raise HTTPException(status_code=502, detail="AN generator returned invalid JSON") from exc
+
+    sections_raw = parsed.get("sections") or {}
+    sections: dict[str, str] = {str(k): str(v) for k, v in sections_raw.items() if isinstance(v, str)}
+
+    bt_raw = parsed.get("brandTokens") or {}
+    brand_tokens = AnBrandTokens(
+        primary=str(bt_raw.get("primary", "#0B1B2E") or "#0B1B2E"),
+        surface=str(bt_raw.get("surface", "#FFFFFF") or "#FFFFFF"),
+        cta=str(bt_raw.get("cta", "#F97316") or "#F97316"),
+        logo=bt_raw.get("logo"),
+        productName=str(bt_raw.get("productName", "—") or "—"),
+    )
+
+    decisions: list[AnDecision] = []
+    for d in parsed.get("decisionsLocked") or []:
+        if not isinstance(d, dict):
+            continue
+        try:
+            decisions.append(
+                AnDecision(question=str(d.get("question", "")), decision=str(d.get("decision", "")))
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed decision row: %s — %s", d, exc)
+
+    open_qs: list[AnOpenQuestion] = []
+    for q in parsed.get("openQuestions") or []:
+        if not isinstance(q, dict):
+            continue
+        try:
+            open_qs.append(
+                AnOpenQuestion(
+                    number=int(q.get("number", 0) or 0),
+                    question=str(q.get("question", "")),
+                    default=str(q.get("default", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed open question: %s — %s", q, exc)
+
+    prd_readiness = _parse_prd_readiness(parsed.get("prdReadiness"))
+
+    logger.info(
+        "AN generated: %d sections · %d decisions · %d open questions · "
+        "prdReadiness(actors=%d, integrations=%d, journeys=%d, modules=%d, compliance=%d, deliverables=%d, receivables=%d)",
+        len(sections),
+        len(decisions),
+        len(open_qs),
+        len(prd_readiness.actors),
+        len(prd_readiness.integrations),
+        len(prd_readiness.customerJourneys),
+        len(prd_readiness.functionalLandscape),
+        len(prd_readiness.complianceRequirements),
+        len(prd_readiness.keyDeliverables),
+        len(prd_readiness.receivables),
+    )
+
+    return AnResponse(
+        sections=sections,
+        brandTokens=brand_tokens,
+        decisionsLocked=decisions,
+        openQuestions=open_qs,
+        prdReadiness=prd_readiness,
+        detectedAudience=parsed.get("detectedAudience"),
+        model=settings.OPENAI_MODEL,
+    )
+
+
+def _parse_prd_readiness(raw: object) -> AnPrdReadiness:
+    """Tolerant parser for the §12 PRD-Readiness Bridge structured payload.
+
+    Skips malformed rows rather than failing the whole generation — the editor
+    UI can fill gaps post-hoc.
+    """
+    if not isinstance(raw, dict):
+        return AnPrdReadiness()
+
+    actors: list[AnActor] = []
+    for a in raw.get("actors") or []:
+        if not isinstance(a, dict) or not a.get("role"):
+            continue
+        try:
+            actors.append(
+                AnActor(
+                    role=str(a.get("role", "")),
+                    type=str(a.get("type", "") or ""),
+                    description=str(a.get("description", "") or ""),
+                    permissions=str(a.get("permissions", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed actor row: %s — %s", a, exc)
+
+    integrations: list[AnIntegration] = []
+    for i in raw.get("integrations") or []:
+        if not isinstance(i, dict) or not i.get("name"):
+            continue
+        try:
+            integrations.append(
+                AnIntegration(
+                    name=str(i.get("name", "")),
+                    type=str(i.get("type", "") or ""),
+                    purpose=str(i.get("purpose", "") or ""),
+                    criticality=str(i.get("criticality", "") or ""),
+                    phase=str(i.get("phase", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed integration row: %s — %s", i, exc)
+
+    journeys: list[AnCustomerJourney] = []
+    for j in raw.get("customerJourneys") or []:
+        if not isinstance(j, dict) or not j.get("name"):
+            continue
+        try:
+            steps = [str(s) for s in (j.get("steps") or []) if s]
+            failures = [str(f) for f in (j.get("failureModes") or []) if f]
+            journeys.append(
+                AnCustomerJourney(
+                    name=str(j.get("name", "")),
+                    primaryActor=str(j.get("primaryActor", "") or ""),
+                    trigger=str(j.get("trigger", "") or ""),
+                    steps=steps,
+                    successOutcome=str(j.get("successOutcome", "") or ""),
+                    failureModes=failures,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed journey row: %s — %s", j, exc)
+
+    landscape: list[AnFunctionalLandscapeRow] = []
+    for m in raw.get("functionalLandscape") or []:
+        if not isinstance(m, dict) or not m.get("module"):
+            continue
+        try:
+            fr_refs = [str(x) for x in (m.get("frRefs") or []) if x]
+            landscape.append(
+                AnFunctionalLandscapeRow(
+                    module=str(m.get("module", "")),
+                    purpose=str(m.get("purpose", "") or ""),
+                    frRefs=fr_refs,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed landscape row: %s — %s", m, exc)
+
+    ux_raw = raw.get("uiUxRequirements") or {}
+    ux = AnUiUxRequirements(
+        interactionPatterns=str(ux_raw.get("interactionPatterns", "") or ""),
+        accessibility=str(ux_raw.get("accessibility", "") or ""),
+        responsive=str(ux_raw.get("responsive", "") or ""),
+        emptyErrorStates=str(ux_raw.get("emptyErrorStates", "") or ""),
+        microcopyTone=str(ux_raw.get("microcopyTone", "") or ""),
+        internationalization=str(ux_raw.get("internationalization", "") or ""),
+    ) if isinstance(ux_raw, dict) else AnUiUxRequirements()
+
+    compliance: list[AnComplianceRow] = []
+    for c in raw.get("complianceRequirements") or []:
+        if not isinstance(c, dict) or not c.get("standard"):
+            continue
+        try:
+            compliance.append(
+                AnComplianceRow(
+                    standard=str(c.get("standard", "")),
+                    applicability=str(c.get("applicability", "") or ""),
+                    phase1Controls=str(c.get("phase1Controls", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed compliance row: %s — %s", c, exc)
+
+    test_raw = raw.get("testingRequirements") or {}
+    def _test_type(key: str) -> AnTestType:
+        sub = test_raw.get(key) if isinstance(test_raw, dict) else None
+        if not isinstance(sub, dict):
+            return AnTestType()
+        return AnTestType(
+            coverageTarget=str(sub.get("coverageTarget", "") or ""),
+            tools=str(sub.get("tools", "") or ""),
+            owner=str(sub.get("owner", "") or ""),
+        )
+
+    testing = AnTestingRequirements(
+        unit=_test_type("unit"),
+        integration=_test_type("integration"),
+        e2e=_test_type("e2e"),
+        evalHarness=_test_type("evalHarness"),
+        accessibility=_test_type("accessibility"),
+        performance=_test_type("performance"),
+        security=_test_type("security"),
+    )
+
+    deliverables = [str(d) for d in (raw.get("keyDeliverables") or []) if d]
+
+    receivables: list[AnReceivable] = []
+    for r in raw.get("receivables") or []:
+        if not isinstance(r, dict) or not r.get("item"):
+            continue
+        try:
+            week_raw = r.get("neededByWeek")
+            week_val = int(week_raw) if week_raw not in (None, "") else None
+            receivables.append(
+                AnReceivable(
+                    item=str(r.get("item", "")),
+                    ownerClient=str(r.get("ownerClient", "") or ""),
+                    neededByWeek=week_val,
+                    blocking=bool(r.get("blocking", False)),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed receivable row: %s — %s", r, exc)
+
+    envs: list[AnEnvironment] = []
+    for e in raw.get("environmentList") or []:
+        if not isinstance(e, dict) or not e.get("environment"):
+            continue
+        try:
+            envs.append(
+                AnEnvironment(
+                    environment=str(e.get("environment", "")),
+                    purpose=str(e.get("purpose", "") or ""),
+                    phase1Hosting=str(e.get("phase1Hosting", "") or ""),
+                    phase2Hosting=str(e.get("phase2Hosting", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed environment row: %s — %s", e, exc)
+
+    return AnPrdReadiness(
+        actors=actors,
+        integrations=integrations,
+        customerJourneys=journeys,
+        functionalLandscape=landscape,
+        uiUxRequirements=ux,
+        complianceRequirements=compliance,
+        testingRequirements=testing,
+        keyDeliverables=deliverables,
+        receivables=receivables,
+        environmentList=envs,
+        miscellaneous=str(raw.get("miscellaneous", "") or ""),
+    )
+
+
+# ─── Discovery Track: Wireframe set generation (Stage 4) ──────────────────
+
+class WireframeCallout(BaseModel):
+    n: int | str
+    description: str
+    mappedTo: str = ""
+
+
+class WireframeComponent(BaseModel):
+    file: str
+    purpose: str = ""
+
+
+class WireframeScreen(BaseModel):
+    sequenceNum: int
+    slug: str
+    title: str
+    pattern: str | None = None
+    callouts: list[WireframeCallout] = []
+    components: list[WireframeComponent] = []
+    mdContent: str | None = None
+    htmlContent: str | None = None
+    frRefs: list[str] = []
+
+
+class WireframeBrandTokens(BaseModel):
+    primary: str = "#0B1B2E"
+    surface: str = "#FFFFFF"
+    cta: str = "#F97316"
+    productName: str = "—"
+
+
+class WireframeRequest(BaseModel):
+    anSections: dict[str, str] = Field(default_factory=dict)
+    frTable: list[dict] = Field(default_factory=list)
+    brandTokens: WireframeBrandTokens = Field(default_factory=WireframeBrandTokens)
+    selectedPatterns: list[str] = Field(default_factory=list)
+    productName: str = Field(default="", max_length=200)
+
+
+class WireframeResponse(BaseModel):
+    screens: list[WireframeScreen] = []
+    coverageNotes: str | None = None
+    model: str | None = None
+
+
+@app.post("/wireframes-generate", response_model=WireframeResponse, tags=["discovery"])
+async def wireframes_generate(
+    body: WireframeRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> WireframeResponse:
+    """
+    Stage 4 of the Discovery Track. Convert an Approach Note into a complete
+    lo-fi wireframe set per skill 04 — 7-14 screens with markdown bodies,
+    HTML rendering, structured callouts, and components inventory.
+    """
+    user_message = build_wireframe_user_message(
+        body.anSections,
+        body.frTable,
+        body.brandTokens.model_dump(),
+        body.selectedPatterns or None,
+        body.productName,
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": WIREFRAME_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            # Largest output budget in the pipeline — full HTML for 12+ screens.
+            max_tokens=16384,
+            temperature=settings.OPENAI_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed during wireframe generation: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit hit during wireframe generation: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error during wireframe generation: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse wireframe JSON: %s — raw=%r", exc, raw[:200])
+        raise HTTPException(status_code=502, detail="Wireframe generator returned invalid JSON") from exc
+
+    raw_screens = parsed.get("screens") or []
+    screens: list[WireframeScreen] = []
+    for s in raw_screens:
+        if not isinstance(s, dict):
+            continue
+        try:
+            callouts_raw = s.get("callouts") or []
+            callouts = [
+                WireframeCallout(
+                    n=c.get("n", "?"),
+                    description=str(c.get("description", "")),
+                    mappedTo=str(c.get("mappedTo", "") or ""),
+                )
+                for c in callouts_raw
+                if isinstance(c, dict)
+            ]
+            components_raw = s.get("components") or []
+            components = [
+                WireframeComponent(
+                    file=str(c.get("file", "")),
+                    purpose=str(c.get("purpose", "") or ""),
+                )
+                for c in components_raw
+                if isinstance(c, dict)
+            ]
+            screens.append(
+                WireframeScreen(
+                    sequenceNum=int(s.get("sequenceNum", len(screens) + 1)),
+                    slug=str(s.get("slug", f"screen-{len(screens) + 1}")),
+                    title=str(s.get("title", f"Screen {len(screens) + 1}")),
+                    pattern=s.get("pattern"),
+                    callouts=callouts,
+                    components=components,
+                    mdContent=s.get("mdContent"),
+                    htmlContent=s.get("htmlContent"),
+                    frRefs=list(s.get("frRefs") or []),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed wireframe screen: %s", exc)
+
+    logger.info(
+        "Wireframe set generated: %d screens · %d total callouts",
+        len(screens),
+        sum(len(s.callouts) for s in screens),
+    )
+
+    return WireframeResponse(
+        screens=screens,
+        coverageNotes=parsed.get("coverageNotes"),
+        model=settings.OPENAI_MODEL,
+    )
+
+
+# ─── Discovery Track: Hi-fi mockup generation (Stage 5) ───────────────────
+
+class HifiCallout(BaseModel):
+    n: int | str
+    description: str
+    mappedTo: str = ""
+
+
+class HifiScreen(BaseModel):
+    sequenceNum: int
+    slug: str
+    title: str
+    callouts: list[HifiCallout] = []
+    htmlContent: str
+
+
+class HifiBrandTokens(BaseModel):
+    primary: str = "#0B1B2E"
+    surface: str = "#FFFFFF"
+    cta: str = "#F97316"
+    productName: str = "—"
+
+
+class HifiRequest(BaseModel):
+    lofiScreens: list[dict] = Field(default_factory=list)
+    brandTokens: HifiBrandTokens = Field(default_factory=HifiBrandTokens)
+    syntheticSeed: dict = Field(default_factory=dict)
+    productName: str = Field(default="", max_length=200)
+
+
+class HifiResponse(BaseModel):
+    screens: list[HifiScreen] = []
+    syntheticDataNotes: str | None = None
+    model: str | None = None
+
+
+@app.post("/hifi-generate", response_model=HifiResponse, tags=["discovery"])
+async def hifi_generate(
+    body: HifiRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> HifiResponse:
+    """
+    Stage 5 of the Discovery Track. Polish lo-fi wireframes into branded
+    high-fidelity HTML mockups per skill 05. Callout numbers preserved 1:1
+    from the lo-fi parent (skill 05 §7 invariant — server-side validator
+    enforces this).
+    """
+    user_message = build_hifi_user_message(
+        body.lofiScreens,
+        body.brandTokens.model_dump(),
+        body.syntheticSeed,
+        body.productName,
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": HIFI_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            # Even larger output budget than lo-fi: hi-fi HTML is denser due
+            # to inline styles, real content, and proper element structure.
+            max_tokens=16384,
+            temperature=settings.OPENAI_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed during hi-fi generation: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit hit during hi-fi generation: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error during hi-fi generation: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse hi-fi JSON: %s — raw=%r", exc, raw[:200])
+        raise HTTPException(status_code=502, detail="Hi-fi generator returned invalid JSON") from exc
+
+    raw_screens = parsed.get("screens") or []
+    screens: list[HifiScreen] = []
+    for s in raw_screens:
+        if not isinstance(s, dict):
+            continue
+        try:
+            callouts_raw = s.get("callouts") or []
+            callouts = [
+                HifiCallout(
+                    n=c.get("n", "?"),
+                    description=str(c.get("description", "")),
+                    mappedTo=str(c.get("mappedTo", "") or ""),
+                )
+                for c in callouts_raw
+                if isinstance(c, dict)
+            ]
+            screens.append(
+                HifiScreen(
+                    sequenceNum=int(s.get("sequenceNum", len(screens) + 1)),
+                    slug=str(s.get("slug", f"screen-{len(screens) + 1}")),
+                    title=str(s.get("title", f"Screen {len(screens) + 1}")),
+                    callouts=callouts,
+                    htmlContent=str(s.get("htmlContent", "")),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed hi-fi screen: %s", exc)
+
+    logger.info(
+        "Hi-fi set generated: %d screens · %d total callouts",
+        len(screens),
+        sum(len(s.callouts) for s in screens),
+    )
+
+    return HifiResponse(
+        screens=screens,
+        syntheticDataNotes=parsed.get("syntheticDataNotes"),
+        model=settings.OPENAI_MODEL,
+    )
+
+
+# ─── Discovery Track: Brand-tokens extraction (Stage 3 polish) ────────────
+
+class BrandTokensExtractResponse(BaseModel):
+    primary: str = "#0B1B2E"
+    surface: str = "#FFFFFF"
+    cta: str = "#F97316"
+    productName: str = "—"
+    model: str | None = None
+
+
+@app.post("/extract-brand-tokens", response_model=BrandTokensExtractResponse, tags=["discovery"])
+async def extract_brand_tokens(
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    image: UploadFile = File(...),
+) -> BrandTokensExtractResponse:
+    """
+    Extract a 3-color brand palette + product name from a reference image
+    (website screenshot / brand guide / logo). Used by the AN §3.10 brand
+    tokens editor on the frontend.
+    """
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Expected image/*, got {image.content_type or 'unknown'}",
+        )
+
+    # Encode the uploaded image as a data URL for the OpenAI Vision API.
+    import base64
+    raw = await image.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
+    data_url = f"data:{image.content_type};base64,{base64.b64encode(raw).decode()}"
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": BRAND_EXTRACTION_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract the brand palette from this reference."},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                },
+            ],
+            max_tokens=512,
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        logger.error("OpenAI auth failed during brand extraction: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        logger.warning("OpenAI rate limit during brand extraction: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error during brand extraction: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw_response = response.choices[0].message.content or "{}"
+    try:
+        parsed = _parse_ai_json(raw_response)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse brand extraction JSON: %s — raw=%r", exc, raw_response[:200])
+        raise HTTPException(status_code=502, detail="Brand extractor returned invalid JSON") from exc
+
+    def hex_or_default(value: object, fallback: str) -> str:
+        s = str(value or "").strip()
+        return s if s.startswith("#") and len(s) in (4, 7) else fallback
+
+    return BrandTokensExtractResponse(
+        primary=hex_or_default(parsed.get("primary"), "#0B1B2E"),
+        surface=hex_or_default(parsed.get("surface"), "#FFFFFF"),
+        cta=hex_or_default(parsed.get("cta"), "#F97316"),
+        productName=str(parsed.get("productName") or "—"),
+        model=settings.OPENAI_MODEL,
+    )
 
 
 # ─── BA Tool: AI Format Transcript ─────────────────────────────────────────
