@@ -20,7 +20,9 @@ async function main(): Promise<void> {
   const prisma = app.get(PrismaService);
   const exporter = app.get(BaArtifactExportService);
 
-  const targets: Array<[string, string]> = [['MOD-04', 'FRD'], ['MOD-05', 'FRD'], ['MOD-04', 'FTC'], ['MOD-05', 'FTC']];
+  const targets: Array<[string, string]> = [
+    ['MOD-06', 'FRD'], ['MOD-06', 'EPIC'], ['MOD-06', 'USER_STORY'], ['MOD-06', 'SUBTASK'],
+  ];
   for (const [moduleId, artifactType] of targets) {
     const mod = await prisma.baModule.findFirst({ where: { moduleId } });
     if (!mod) continue;

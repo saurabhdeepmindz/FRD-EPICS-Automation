@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(M, { logger: ['error'] });
   const ex = app.get(BaArtifactExportService);
   const pr = app.get(PrismaService);
-  for (const moduleId of ['MOD-04', 'MOD-05']) {
+  for (const moduleId of ['MOD-04', 'MOD-05', 'MOD-06']) {
     const m = await pr.baModule.findFirst({ where: { moduleId } });
     if (!m) continue;
     const a = await pr.baArtifact.findFirst({
