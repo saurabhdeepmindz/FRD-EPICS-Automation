@@ -53,3 +53,6 @@ prd_generator-backup-*.sql
 
 # Raw per-module JSON snapshots — high-volume (~14MB each); kept local only
 backups/db-backup/module-snapshots/
+
+# Personal local-only DB backups — never committed (kept on this machine only)
+backups/db-backup/local-only/
