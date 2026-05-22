@@ -139,6 +139,13 @@ model BaProject {
   masterDataEntries BaMasterDataEntry[]
   templates   BaTemplate[]
   sprints     BaSprint[]
+  // Discovery & Solutioning Track (Stages 1-5 of phased rollout)
+  audioFiles    BaAudioFile[]
+  wfts          BaWft[]
+  brds          BaBrd[]
+  approachNotes BaApproachNote[]
+  wireframeSets BaWireframeSet[]
+  hifiSets      BaHifiSet[]
 
   @@map("ba_projects")
 }
@@ -876,4 +883,275 @@ model BaAcCoverage {
   @@index([artifactDbId])
   @@index([artifactDbId, status])
   @@map("ba_ac_coverage")
+}
+
+// ─── Discovery & Solutioning Track ───────────────────────────────────────────
+// Project-level pipeline: Audio → WFT → BRD → Approach Note → Lo-fi → Hi-fi.
+// Stage 1 (this slice): BaAudioFile + BaWft. Subsequent slices add BaBrd,
+// BaApproachNote(+Version), BaWireframeSet(+Screen), BaHifiSet(+Screen),
+// plus extensions to BaModule and BaArtifact for EPIC context.
+// Designed per BRD-discovery-track.md and Approach-Note-discovery-track-v1.md.
+
+enum BaAudioFileStatus {
+  UPLOADED
+  TRANSCRIBING
+  TRANSCRIBED
+  FAILED
+}
+
+model BaAudioFile {
+  id             String            @id @default(uuid())
+  projectId      String
+  project        BaProject         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  durationSec    Int?
+  fileData       String            @db.Text   // base64 (Phase 1: DB; Phase 2: S3 URL)
+  rawTranscript  String?           @db.Text
+  detectedLang   String?
+  sttProvider    String?
+  status         BaAudioFileStatus @default(UPLOADED)
+  errorMessage   String?           @db.Text
+  retentionUntil DateTime?         // 90-day default per BRD §6 FR-15; null = retain indefinitely
+  uploadedById   String?
+  // Optional FK to the WFT this audio was rolled up into (set after WFT generation).
+  wftId          String?
+  wft            BaWft?            @relation(fields: [wftId], references: [id], onDelete: SetNull)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([wftId])
+  @@map("ba_audio_files")
+}
+
+enum BaWftStatus {
+  DRAFT
+  COMPLETE
+  APPROVED
+}
+
+model BaWft {
+  id            String       @id @default(uuid())
+  projectId     String
+  project       BaProject    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // 7-section WFT per skill 01:
+  // §1 raw transcript · §2 cleaned · §3 paraphrased meaning ·
+  // §4 key concepts & entities · §5 action items · §6 open questions · §7 metadata
+  rawTranscript String       @db.Text   // §1 — concatenated from source audio files
+  cleanedText   String?      @db.Text   // §2 — disfluencies removed
+  paraphrased   String?      @db.Text   // §3 — third-person prose
+  concepts      Json?        // §4 — [{name, context}]
+  actionItems   Json?        // §5 — string[]
+  openQuestions Json?        // §6 — string[]
+  meta          Json?        // §7 — {language, domainContext, model, ...}
+  status        BaWftStatus  @default(DRAFT)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  audioFiles    BaAudioFile[]
+  brds          BaBrd[]
+
+  @@index([projectId, createdAt])
+  @@map("ba_wfts")
+}
+
+enum BaBrdStatus {
+  DRAFT
+  COMPLETE
+  APPROVED
+}
+
+model BaBrd {
+  id            String       @id @default(uuid())
+  projectId     String
+  project       BaProject    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  wftId         String
+  wft           BaWft        @relation(fields: [wftId], references: [id], onDelete: Cascade)
+  // 15-section BRD per skill 02. Phase 1 stores as overwrite-on-regenerate;
+  // Phase 2 introduces append-only versioning per BRD §1.1 (skill 02 §4.1).
+  sections      Json         // { "1": "markdown body", "2": "...", ... }
+  frTable       Json?        // [{ id: "FR-1", requirement: "...", testable: bool }]
+  openItems     Json?        // string[] — items captured in §15
+  meta          Json?        // { audience, model, generatedAt, productName, ... }
+  status        BaBrdStatus  @default(DRAFT)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([wftId])
+  @@map("ba_brds")
+
+  approachNotes BaApproachNote[]
+}
+
+model BaApproachNote {
+  id               String                  @id @default(uuid())
+  projectId        String
+  project          BaProject               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  brdId            String
+  brd              BaBrd                   @relation(fields: [brdId], references: [id], onDelete: Cascade)
+  /// FK to the latest version (denormalized pointer; updated on each new-version creation).
+  currentVersionId String?                 @unique
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  versions         BaApproachNoteVersion[]
+
+  @@index([projectId, createdAt])
+  @@index([brdId])
+  @@map("ba_approach_notes")
+}
+
+enum BaApproachNoteVersionStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+}
+
+model BaApproachNoteVersion {
+  id               String                       @id @default(uuid())
+  approachNoteId   String
+  approachNote     BaApproachNote               @relation(fields: [approachNoteId], references: [id], onDelete: Cascade)
+  versionNumber    Int                          // 1, 2, 3 ...
+  /// 12-section AN per skill 03. Free-form markdown bodies keyed by section number ("1".."12").
+  sections         Json                         // { "1": "## 1. Executive Verdict ...", ..., "12": "## 12. PRD-Readiness Bridge ..." }
+  /// End-user-supplied brand tokens (per skill 03 §3.10). Cascades to lo-fi + hi-fi in later stages.
+  brandTokens      Json?                        // { primary, surface, cta, logo, productName, ... }
+  /// Closed-by-stakeholder decisions parsed from §8.1.
+  decisionsLocked  Json?                        // [{ question, decision }]
+  /// Surfaced ambiguities from §8.3 — every silent default surfaced.
+  openQuestions    Json?                        // [{ number, question, default }]
+  /// §12 PRD-Readiness Bridge — structured form of items the PRD generator lifts directly.
+  /// Mirrors the §12 markdown narrative in `sections["12"]`. See skill 03 §12.
+  prdReadiness     Json?                        // { actors, integrations, customerJourneys, functionalLandscape, uiUxRequirements, complianceRequirements, testingRequirements, keyDeliverables, receivables, environmentList, miscellaneous }
+  /// Append-only changelog. Required v2+, null on v1.
+  changesSince     String?                      @db.Text
+  /// FK to prior version this one supersedes; null on v1.
+  supersedesId     String?
+  meta             Json?                        // { audience, model, generatedAt, ... }
+  status           BaApproachNoteVersionStatus  @default(DRAFT)
+  generatedAt      DateTime                     @default(now())
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+
+  @@unique([approachNoteId, versionNumber])
+  @@index([approachNoteId])
+  @@map("ba_approach_note_versions")
+
+  wireframeSets BaWireframeSet[]
+}
+
+enum BaWireframeSetStatus {
+  DRAFT
+  COMPLETE
+  APPROVED
+}
+
+model BaWireframeSet {
+  id                    String                @id @default(uuid())
+  projectId             String
+  project               BaProject             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  approachNoteVersionId String
+  approachNoteVersion   BaApproachNoteVersion @relation(fields: [approachNoteVersionId], references: [id], onDelete: Cascade)
+  /// Snapshot of brand tokens at generation time — auditable cascade per skill 04 §4.6.
+  brandTokensSnapshot   Json
+  /// { validated: bool, orphanFrs: string[], orphanScreens: number[], issues: [...] }
+  coverageStatus        Json?
+  /// { audience, model, generatedAt, screenCount, ... }
+  meta                  Json?
+  status                BaWireframeSetStatus  @default(DRAFT)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  screens               BaWireframeScreen[]
+  hifiSets              BaHifiSet[]
+
+  @@index([projectId, createdAt])
+  @@index([approachNoteVersionId])
+  @@map("ba_wireframe_sets")
+}
+
+model BaWireframeScreen {
+  id          String         @id @default(uuid())
+  setId       String
+  set         BaWireframeSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  sequenceNum Int            // 1..N display order
+  slug        String         // "landing", "main-chat", "customer-list", ...
+  title       String         // human-readable screen name
+  /// Skill 04 §4 pattern reference, e.g. "§4.1 Landing", "§4.2 Conversational chat".
+  pattern     String?
+  /// [{ n: number|string, description: string, mappedTo: string }]
+  callouts    Json
+  /// [{ file: string, purpose: string }] — references AN §3.12.5 frontend folder structure
+  components  Json?
+  /// Markdown source per skill 04 §5.2 — the canonical readable artefact.
+  mdContent   String?        @db.Text
+  /// HTML rendering per skill 04 §5.3 — sandboxed iframe-renderable.
+  htmlContent String?        @db.Text
+  /// { frRefs: string[], generationOrder: number, ... }
+  meta        Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([setId, sequenceNum])
+  @@index([setId])
+  @@map("ba_wireframe_screens")
+}
+
+enum BaHifiSetStatus {
+  DRAFT
+  COMPLETE
+  APPROVED
+}
+
+model BaHifiSet {
+  id               String              @id @default(uuid())
+  projectId        String
+  project          BaProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  wireframeSetId   String
+  wireframeSet     BaWireframeSet      @relation(fields: [wireframeSetId], references: [id], onDelete: Cascade)
+  /// Brand tokens snapshot at hi-fi generation time (typically same as the lo-fi parent's,
+  /// but captured separately so brand changes between Stage 4 and Stage 5 are auditable).
+  brandTokensSnapshot Json
+  /// Synthetic seed data shared across all hi-fi screens for demo coherence
+  /// (per skill 05 §3 — same Mr Sharma everywhere).
+  syntheticDataSeed Json?
+  /// Per-set parity check vs the lo-fi parent — { validated: bool, mismatches: [...] }
+  parityStatus     Json?
+  /// { audience, model, generatedAt, screenCount, ... }
+  meta             Json?
+  status           BaHifiSetStatus     @default(DRAFT)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  screens          BaHifiScreen[]
+
+  @@index([projectId, createdAt])
+  @@index([wireframeSetId])
+  @@map("ba_hifi_sets")
+}
+
+model BaHifiScreen {
+  id          String     @id @default(uuid())
+  setId       String
+  set         BaHifiSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  sequenceNum Int        // Mirrors the lo-fi sequenceNum 1:1 (same screen order)
+  slug        String
+  title       String
+  /// Polished branded HTML per skill 05 §5.2 — sandboxed iframe-renderable.
+  htmlContent String     @db.Text
+  /// Callouts MUST equal the lo-fi parent's 1:1 (skill 05 §7 invariant).
+  /// Hi-fi-only annotations use letter suffixes (e.g. "3a") — never renumber existing.
+  callouts    Json
+  /// Per-screen parity status — { validated: bool, mismatches: [...] }
+  parityStatus Json?
+  meta        Json?      // { loFiScreenId, frRefs: string[], ... }
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([setId, sequenceNum])
+  @@index([setId])
+  @@map("ba_hifi_screens")
 }
