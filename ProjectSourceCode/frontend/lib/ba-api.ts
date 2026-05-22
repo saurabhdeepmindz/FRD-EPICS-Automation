@@ -2823,3 +2823,74 @@ export async function updateDiscoveryHifiScreen(
   );
   return data;
 }
+
+// ─── Wireframe / Hi-fi screen exports (download) ────────────────────────────
+
+export type ScreenExportKind = 'lofi' | 'hifi';
+export type ScreenExportFormat = 'png' | 'html' | 'pdf';
+
+/** Pull a filename out of `Content-Disposition: attachment; filename="..."`. */
+function parseFilename(header: string | undefined, fallback: string): string {
+  if (!header) return fallback;
+  const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(header);
+  if (!match) return fallback;
+  try {
+    return decodeURIComponent(match[1].replace(/"/g, ''));
+  } catch {
+    return match[1].replace(/"/g, '');
+  }
+}
+
+/** Trigger a browser download for a Blob. */
+function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Download an individual lo-fi or hi-fi screen in the chosen format. */
+export async function downloadDiscoveryScreen(
+  projectId: string,
+  kind: ScreenExportKind,
+  screenId: string,
+  format: ScreenExportFormat,
+): Promise<void> {
+  const segment = kind === 'hifi' ? 'hifi' : 'wireframes';
+  const response = await api.get<Blob>(
+    `/ba/projects/${projectId}/discovery/${segment}/screens/${screenId}/export/${format}`,
+    { responseType: 'blob', timeout: 180_000 },
+  );
+  const fallbackExt = format === 'pdf' ? 'pdf' : format === 'html' ? 'html' : 'png';
+  const filename = parseFilename(
+    response.headers['content-disposition'] as string | undefined,
+    `${kind}-screen.${fallbackExt}`,
+  );
+  triggerBrowserDownload(response.data, filename);
+}
+
+/** Download the entire set in bulk: png/html → ZIP, pdf → single combined PDF. */
+export async function downloadDiscoverySet(
+  projectId: string,
+  kind: ScreenExportKind,
+  setId: string,
+  format: ScreenExportFormat,
+): Promise<void> {
+  const segment = kind === 'hifi' ? 'hifi' : 'wireframes';
+  const response = await api.get<Blob>(
+    `/ba/projects/${projectId}/discovery/${segment}/${setId}/export/${format}`,
+    // PNG bulk renders sequentially via Puppeteer (~2-4s per screen × 7-14
+    // screens), so allow up to 10 minutes for the full set.
+    { responseType: 'blob', timeout: 600_000 },
+  );
+  const fallbackExt = format === 'pdf' ? 'pdf' : `${format}.zip`;
+  const filename = parseFilename(
+    response.headers['content-disposition'] as string | undefined,
+    `${kind === 'hifi' ? 'hifi-mockups' : 'lofi-wireframes'}.${fallbackExt}`,
+  );
+  triggerBrowserDownload(response.data, filename);
+}
