@@ -50,3 +50,6 @@ pw-artifacts/
 # Raw uncompressed Postgres dumps — track .sql.gz only (see backups/db-backup/README.md)
 backups/db-backup/*.sql
 prd_generator-backup-*.sql
+
+# Raw per-module JSON snapshots — high-volume (~14MB each); kept local only
+backups/db-backup/module-snapshots/
