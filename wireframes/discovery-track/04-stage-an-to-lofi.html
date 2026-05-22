@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe 04 — Stage 4: Approach Note → Lo-fi Wireframes</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 04 — Stage 4: Approach Note → Lo-fi Wireframes</h1>
+  <div class="sub">Pattern-driven screen generation · Per-screen MD + HTML · Traceability matrix is the spine</div>
+  <table>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/discovery/wireframes</code></td></tr>
+    <tr><td>Stage</td><td>4 of 6 (Discovery)</td></tr>
+    <tr><td>Skill reference</td><td>skills/04-approach-note-to-lofi-wireframes.md</td></tr>
+    <tr><td>Inherits</td><td>Branding from AN §3.10 · FRs from AN §3 · Frontend folders from AN §3.12.5</td></tr>
+  </table>
+</div>
+
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/discovery/wireframes</span>
+  </div>
+
+  <div class="app-header">
+    <div class="brand"><span class="logo">LOGO</span><span>FRD-EPICS Automation</span></div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#" class="active">Discovery</a>
+      <a href="#">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user"><span>Saurabh V.</span><span class="avatar"></span></div>
+  </div>
+
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> › <a href="#">Acme CRM</a> ›
+      <a href="00-main-pipeline.html">Discovery</a> ›
+      <span class="current">Stage 4: Lo-fi Wireframes</span>
+    </div>
+    <div class="stage-status">Stage <strong>4 of 6</strong> · Discovery</div>
+  </div>
+
+  <div class="layout">
+
+    <aside class="sidebar">
+      <h4>Discovery Track</h4>
+      <div class="nav-item"><span class="dot done"></span> 1. Audio → Text</div>
+      <div class="nav-item"><span class="dot done"></span> 2. Well-formed Text</div>
+      <div class="nav-item"><span class="dot done"></span> 3. BRD</div>
+      <div class="nav-item"><span class="dot done"></span> 4. Approach Note (v3)</div>
+      <div class="nav-item active"><span class="dot active"></span> 5. Lo-fi Wireframes</div>
+      <div class="nav-item"><span class="dot"></span> 6. Hi-fi Mockups</div>
+      <h4 style="margin-top:18px">BA Tool Flow</h4>
+      <div class="nav-item"><span class="dot"></span> 7. FRD</div>
+      <div class="nav-item"><span class="dot"></span> 8. PRD</div>
+      <div class="nav-item"><span class="dot"></span> 9. EPICs</div>
+      <div class="nav-item"><span class="dot"></span> 10. User Stories</div>
+      <div class="nav-item"><span class="dot"></span> 11. Sub Tasks</div>
+      <div class="nav-item"><span class="dot"></span> 12. LLD</div>
+      <div class="nav-item"><span class="dot"></span> 13. FTC</div>
+    </aside>
+
+    <main class="main-pane">
+
+      <h3 style="margin:0 0 4px; font-size:18px;">Stage 4 — Approach Note → Lo-fi Wireframes</h3>
+      <p style="color:var(--gray-500); font-size:13px; margin:0 0 16px;">
+        Generate one wireframe per screen using the 13-pattern catalogue. Every UI element has a numbered callout traceable to a FR / §.
+      </p>
+
+      <!-- AN input + branding inherited -->
+      <div class="card info" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:13px;">
+            📄 Inputs: <code>Approach-Note-acme-crm-v3.md</code> <span class="badge done">v3</span> ·
+            FRs from §3 (5) · Branding from §3.10 · Frontend folders from §3.12.5
+          </div>
+          <button class="btn outline" style="font-size:11px;">↗ Open AN</button>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+          <strong>Branding inherited:</strong>
+          <span class="swatch" style="background:#0B1B2E;"></span> #0B1B2E
+          <span class="swatch" style="background:#FFFFFF;"></span> #FFFFFF
+          <span class="swatch" style="background:#F97316;"></span> #F97316
+          <span style="color:var(--gray-500);">— change in AN §3.10</span>
+        </div>
+        <span class="callout" style="top:8px; right:8px;">1</span>
+        <span class="callout" style="bottom:6px; left:140px;">2</span>
+      </div>
+
+      <!-- Screen catalogue picker -->
+      <div class="card solid" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="card-title" style="margin:0;">Screen catalogue · 13 patterns (skill 04 §4)</div>
+          <span class="badge active">12 selected · 1 custom</span>
+        </div>
+
+        <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:6px; font-size:12px;">
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.1 Landing</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.2 Conversational chat</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.3 Read-only browse</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.4 Detail / drill-down</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.5 Search / catalogue</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.6 Setup wizard</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.7 Admin home</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.8 CRUD form</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.9 Audio-assisted form</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.10 Modal</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.11 Configuration</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox" checked> §4.12 Observability</label>
+          <label style="padding:6px 8px; background:var(--gray-50); border-radius:4px;"><input type="checkbox"> §4.13 Analytics</label>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:6px;">
+          <button class="btn outline" style="font-size:11px;">+ Add custom screen</button>
+          <button class="btn primary" style="font-size:11px;">🔄 (Re)generate selected</button>
+        </div>
+        <span class="callout" style="top:8px; right:140px;">3</span>
+        <span class="callout" style="bottom:6px; left:140px;">4</span>
+      </div>
+
+      <!-- Generated screen gallery -->
+      <div class="card solid" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="card-title" style="margin:0;">Generated screens (12 of 12)</div>
+          <span style="font-size:11px; color:var(--gray-500);">Click any tile to open per-screen wireframe editor</span>
+        </div>
+
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:var(--gray-400);">[01 thumb]</div>
+            <div style="margin-top:6px; font-weight:600;">01 Landing</div>
+            <div style="color:var(--gray-500);">10 callouts · §4.1</div>
+            <span class="badge done" style="position:absolute; top:4px; right:4px;">✓</span>
+          </div>
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:var(--gray-400);">[02 thumb]</div>
+            <div style="margin-top:6px; font-weight:600;">02 Main Chat</div>
+            <div style="color:var(--gray-500);">14 callouts · §4.2</div>
+            <span class="badge done" style="position:absolute; top:4px; right:4px;">✓</span>
+          </div>
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:var(--gray-400);">[03 thumb]</div>
+            <div style="margin-top:6px; font-weight:600;">03 Customer List</div>
+            <div style="color:var(--gray-500);">7 callouts · §4.3</div>
+            <span class="badge done" style="position:absolute; top:4px; right:4px;">✓</span>
+          </div>
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:var(--gray-400);">[04 thumb]</div>
+            <div style="margin-top:6px; font-weight:600;">04 Customer Detail</div>
+            <div style="color:var(--gray-500);">9 callouts · §4.4</div>
+            <span class="badge done" style="position:absolute; top:4px; right:4px;">✓</span>
+          </div>
+          <div style="border:1px dashed var(--gray-400); border-style: solid; border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer; background:var(--discovery-tint);">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:var(--gray-400);">[05 thumb]</div>
+            <div style="margin-top:6px; font-weight:600;">05 Stock Browser</div>
+            <div style="color:var(--gray-500);">7 callouts · §4.5</div>
+            <span class="badge active" style="position:absolute; top:4px; right:4px;">▶ open</span>
+          </div>
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px;"></div>
+            <div style="margin-top:6px; font-weight:600;">06 Style Ingestion</div>
+            <div style="color:var(--gray-500);">15 callouts · §4.6</div>
+            <span class="badge done" style="position:absolute; top:4px; right:4px;">✓</span>
+          </div>
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px;"></div>
+            <div style="margin-top:6px; font-weight:600;">07 Admin Panel</div>
+            <div style="color:var(--gray-500);">13 callouts · §4.7</div>
+            <span class="badge warn" style="position:absolute; top:4px; right:4px;">⚠ review</span>
+          </div>
+          <div style="border:1px dashed var(--gray-300); border-radius:4px; padding:8px; font-size:11px; position:relative; cursor:pointer;">
+            <div style="background:var(--gray-100); height:60px; border-radius:3px;"></div>
+            <div style="margin-top:6px; font-weight:600;">08 Add/Edit Customer</div>
+            <div style="color:var(--gray-500);">8 callouts · §4.8</div>
+            <span class="badge done" style="position:absolute; top:4px; right:4px;">✓</span>
+          </div>
+        </div>
+        <div style="margin-top:6px; font-size:11px; color:var(--gray-500); text-align:center;">+ 4 more screens (09-12)</div>
+        <span class="callout" style="top:8px; right:8px;">5</span>
+        <span class="callout" style="top:140px; right:14px;">6</span>
+      </div>
+
+      <!-- Traceability matrix -->
+      <div class="card cta" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="card-title" style="margin:0; color:var(--brand-cta);">Traceability matrix · the spine</div>
+          <span class="badge done">✓ Coverage: 100%</span>
+        </div>
+
+        <div style="overflow-x:auto;">
+          <table style="width:100%; font-size:10px; border-collapse:collapse;">
+            <thead>
+              <tr style="background:white;">
+                <th style="text-align:left; padding:4px 6px; border:1px solid var(--gray-200);">Feature / FR</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">01</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">02</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">03</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">04</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">05</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">06</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">07</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">08</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">09</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">10</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">11</th>
+                <th style="padding:2px; border:1px solid var(--gray-200);">12</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td style="padding:4px 6px; border:1px solid var(--gray-200);">FR-1 CRM read</td><td></td><td style="text-align:center; border:1px solid var(--gray-200);">·</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="border:1px solid var(--gray-200);"></td><td style="text-align:center; border:1px solid var(--gray-200);">·</td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td></tr>
+              <tr><td style="padding:4px 6px; border:1px solid var(--gray-200);">FR-2 Chat UI</td><td></td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td></tr>
+              <tr><td style="padding:4px 6px; border:1px solid var(--gray-200);">FR-3 Customer context</td><td></td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="border:1px solid var(--gray-200);"></td><td style="text-align:center; border:1px solid var(--gray-200);">·</td><td style="border:1px solid var(--gray-200);"></td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="border:1px solid var(--gray-200);"></td></tr>
+              <tr><td style="padding:4px 6px; border:1px solid var(--gray-200);">§3.10 Branding</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td><td style="text-align:center; border:1px solid var(--gray-200); color:var(--color-success); font-weight:bold;">✓</td></tr>
+              <tr><td style="padding:4px 6px; border:1px solid var(--gray-200); font-style:italic; color:var(--gray-500);">…6 more FRs (truncated)</td><td colspan="12" style="border:1px solid var(--gray-200); text-align:center; padding:4px;">↓ scroll for full matrix</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:8px; font-size:11px;">
+          Legend: <strong style="color:var(--color-success);">✓</strong> primary surface · <strong>·</strong> secondary
+        </div>
+        <span class="callout" style="top:8px; right:140px;">7</span>
+      </div>
+
+      <!-- Coverage validation -->
+      <div class="card success" style="position:relative;">
+        <div class="card-title" style="color:var(--color-success);">Coverage validation (skill 04 §8 quality criteria)</div>
+        <ul style="margin:4px 0; padding-left:18px; font-size:12px;">
+          <li>✓ Every FR / § has at least one ✓ in some screen column (no orphan FRs)</li>
+          <li>✓ Every screen column has at least one ✓ (no orphan screens)</li>
+          <li>✓ Every numbered callout has a row in the screen's annotations table</li>
+          <li>✓ Every component referenced exists in AN §3.12.5 frontend folder structure</li>
+        </ul>
+        <span class="callout" style="top:8px; right:8px;">8</span>
+      </div>
+
+      <!-- Action bar -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; position:relative;">
+        <div style="display:flex; gap:6px;">
+          <button class="btn outline">📥 Download bundle (.zip)</button>
+          <button class="btn outline">↗ Open per-screen editor</button>
+        </div>
+        <button class="btn primary" style="padding:8px 20px;">Continue to Hi-fi Mockups ▶</button>
+        <span class="callout" style="bottom:36px; right:14px;">9</span>
+      </div>
+
+    </main>
+
+    <aside class="rightrail">
+      <h4>Reference template</h4>
+      <div style="font-size:12px; padding:8px; background:var(--existing-tint); border-radius:4px; border-left:3px solid var(--color-info); margin-bottom:14px;">
+        See what a polished lo-fi set looks like:<br>
+        <a href="#" style="color:var(--color-info);">📄 Shivam Jewels CRM (14 screens)</a>
+        <div style="font-size:10px; color:var(--gray-500); margin-top:4px;">Bundled as default template</div>
+      </div>
+      <span class="callout" style="top:34px; right:14px;">10</span>
+
+      <h4>Inputs</h4>
+      <div style="font-size:12px; margin-bottom:14px;">
+        📄 <code>Approach-Note-acme-crm-v3.md</code><br>
+        <span style="color:var(--gray-500); font-size:11px;">Locked at lo-fi-set creation</span>
+      </div>
+
+      <h4>Output</h4>
+      <div style="font-size:12px;">
+        Will produce: <code>wireframes/</code><br>
+        ├ <code>00-screen-navigation-flow.{md,html}</code><br>
+        ├ <code>{NN}-{slug}.{md,html}</code> × 12<br>
+        └ <code>wireframes.css</code><br>
+        <a href="#" style="color:var(--brand-cta); font-size:11px;">↗ View bundle preview</a>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Element</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td><td>AN-as-input chip — locked snapshot of v3. Re-deriving the wireframe set from a newer AN version requires explicit user action.</td><td>NEW · <code>ArtifactRefChip.tsx</code></td></tr>
+      <tr><td><span class="num">2</span></td><td><strong>Branding inherited from AN §3.10</strong> — color swatches, logo, product name flow downstream automatically. Read-only here; edit in AN §3.10 to change.</td><td>NEW · reads from <code>ApproachNoteVersion.brandTokens</code> JSON</td></tr>
+      <tr><td><span class="num">3</span></td><td><strong>Screen catalogue picker</strong> — 13 patterns from skill 04 §4. User picks which to generate. AI auto-suggests based on AN §3 FRs and §10 Screen Inventory.</td><td>NEW · <code>ScreenCataloguePicker.tsx</code></td></tr>
+      <tr><td><span class="num">4</span></td><td>"Add custom screen" — for screens that don't fit any pattern. User specifies name + section mappings; falls back to a generic template.</td><td>NEW</td></tr>
+      <tr><td><span class="num">5</span></td><td>Screen gallery — thumbnail grid. Each tile shows screen ID, name, callout count, status badge.</td><td>NEW · <code>ScreenGallery.tsx</code></td></tr>
+      <tr><td><span class="num">6</span></td><td>Per-screen status badges: ✓ done · ⚠ needs review (e.g. quality criteria not met) · ▶ open (user is editing this one). Click any to open the per-screen wireframe editor.</td><td>NEW · per-screen status logic in service</td></tr>
+      <tr><td><span class="num">7</span></td><td><strong>Traceability matrix · the spine</strong> — FRs × screens with ✓ / · cells. Auto-derived from per-screen annotations. Skill 04 §8 says this is the single source of truth.</td><td>NEW · <code>TraceabilityMatrix.tsx</code> (computed view)</td></tr>
+      <tr><td><span class="num">8</span></td><td>Coverage validation — runs the 4 skill-04 §8 quality checks. Surfaces orphan FRs / orphan screens before user proceeds.</td><td>NEW · <code>coverage.validator.ts</code></td></tr>
+      <tr><td><span class="num">9</span></td><td>Continue CTA — advances to Stage 5. Advisory gating: warns if coverage incomplete but allows override.</td><td>NEW</td></tr>
+      <tr><td><span class="num">10</span></td><td><strong>Reference template panel</strong> — links to the bundled Shivam Jewels example (14 screens). End user can study it to understand what a polished output looks like.</td><td>NEW · static template registry</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Components Inventory</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/wireframes/page.tsx</code></td><td>Gallery + matrix view (this screen)</td><td>NEW</td></tr>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/wireframes/[screenId]/page.tsx</code></td><td>Per-screen wireframe editor (separate detail page)</td><td>NEW (separate wireframe later)</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ScreenCataloguePicker.tsx</code></td><td>13-pattern checkbox grid + custom add</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ScreenGallery.tsx</code></td><td>Thumbnail grid with status</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/TraceabilityMatrix.tsx</code></td><td>FRs × screens grid (computed view)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/CoverageValidator.tsx</code></td><td>Quality-check panel</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ReferenceTemplateLink.tsx</code></td><td>Reusable "View example" panel (used in stages 4, 5)</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/wireframe.service.ts</code></td><td><code>generateSet(anVersionId, patterns), addCustomScreen, computeMatrix, validateCoverage, exportBundle</code></td><td>NEW</td></tr>
+      <tr><td>Prisma: <code>WireframeSet</code> + <code>WireframeScreen</code></td><td>Set has {anVersionId, brandTokens, ...}; Screen has {pattern, sequenceNum, slug, callouts JSON, annotations JSON, components JSON, mdContent, htmlContent}</td><td>NEW (1 migration, 2 tables)</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/templates/</code></td><td>Bundled default templates — Shivam Jewels example artifacts shipped as static files</td><td>NEW</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>Empty</strong> — AN locked but no wireframes yet → catalogue picker prominent, gallery empty, "Generate selected" CTA</li>
+    <li><strong>Generating</strong> — LLM running per-screen → progress bar, gallery fills sequentially with ⟳ indicators</li>
+    <li><strong>All green</strong> — coverage validation passes → Continue enabled, no warnings</li>
+    <li><strong>With warnings</strong> — orphan FR or orphan screen → red banner with specific issue, jump-to-fix link, Continue still allowed (advisory)</li>
+    <li><strong>Branding changed in AN</strong> — banner: "Branding tokens have changed in AN v4 since this set was generated · Re-render with new branding"</li>
+    <li><strong>Per-screen editing</strong> — clicking a tile opens the per-screen editor (separate wireframe — to be detailed later)</li>
+    <li><strong>Custom screen added</strong> — user adds a non-catalogue screen; matrix updates; quality check warns if it has 0 FR mappings</li>
+  </ul>
+</section>
+
+<nav class="pager">
+  <a href="03-stage-brd-to-an.html">◀ Stage 3: BRD → Approach Note</a>
+  <span class="counter">Wireframe 04 of 06 · Stage 4 detail</span>
+  <a href="05-stage-lofi-to-hifi.html">Stage 5: Lo-fi → Hi-fi ▶</a>
+</nav>
+
+</body>
+</html>

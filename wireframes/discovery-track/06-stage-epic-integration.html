@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe 06 — Stage 6: EPIC Integration (Discovery → BA Tool flow)</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 06 — Stage 6: EPIC Integration (Discovery → BA Tool flow)</h1>
+  <div class="sub">Existing module page extended with a "Discovery Context" banner · Phase 1: AN-only · Phase 2: full multi-source picker</div>
+  <table>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/module/[moduleId]</code> (existing route, additive enhancement)</td></tr>
+    <tr><td>Stage</td><td>6 of 6 (Discovery handoff into existing BA Tool flow)</td></tr>
+    <tr><td>Decision ref</td><td>#3 — Phase 1: AN-only context · Phase 2: BRD + AN + Lo-fi + Hi-fi + FRD + PRD</td></tr>
+    <tr><td>Existing flow</td><td><strong>UNCHANGED</strong> — SkillStepper, screens upload, FRD/EPIC/US/ST/LLD/FTC services not modified</td></tr>
+  </table>
+</div>
+
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/module/checkout-revamp</span>
+  </div>
+
+  <div class="app-header">
+    <div class="brand"><span class="logo">LOGO</span><span>FRD-EPICS Automation</span></div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#">Discovery</a>
+      <a href="#" class="active">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user"><span>Saurabh V.</span><span class="avatar"></span></div>
+  </div>
+
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> › <a href="#">Acme CRM</a> ›
+      <a href="#">Modules</a> › <span class="current">Checkout Revamp</span>
+    </div>
+    <div class="stage-status">Module · existing BA Tool flow</div>
+  </div>
+
+  <div class="app-body" style="padding:0;">
+
+    <!-- NEW: Discovery Context banner (the only addition to existing module page) -->
+    <div style="background: var(--discovery-tint); border-bottom: 1px solid var(--brand-cta); padding: 14px 24px; position: relative;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+        <div style="flex:1;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <strong style="font-size:13px; color:var(--brand-cta);">⚡ DISCOVERY CONTEXT</strong>
+            <span class="badge active">Phase 1 · AN-only</span>
+          </div>
+          <div style="font-size:13px; margin-bottom:6px;">
+            EPIC generation will use the project's Approach Note as additional context, layered on top of the existing screen-analysis input.
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <span style="background:white; border:1px solid var(--brand-cta); border-radius:4px; padding:4px 8px; font-size:12px;">
+              📄 <code>Approach-Note-acme-crm-v3.md</code> <span class="badge done" style="margin-left:4px;">v3</span>
+            </span>
+            <a href="#" style="font-size:11px; color:var(--brand-cta);">↗ Open AN</a>
+            <span style="font-size:11px; color:var(--gray-500); margin-left:8px;">Locked at module creation · use "Re-link" to change</span>
+            <button class="btn outline" style="font-size:11px; margin-left:auto;">🔗 Re-link AN version</button>
+          </div>
+        </div>
+      </div>
+      <span class="callout" style="top:10px; right:14px;">1</span>
+      <span class="callout" style="bottom:10px; left:14px;">2</span>
+    </div>
+
+    <!-- Phase-2 multi-source picker (visibly disabled) -->
+    <div style="background: var(--gray-50); border-bottom: 1px solid var(--gray-200); padding: 12px 24px; position: relative; opacity: 0.7;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;">
+        <strong style="color:var(--gray-600);">Add more context (Phase 2):</strong>
+        <button class="btn disabled" style="font-size:11px;">+ BRD</button>
+        <button class="btn disabled" style="font-size:11px;">+ Lo-fi wireframes</button>
+        <button class="btn disabled" style="font-size:11px;">+ Hi-fi mockups</button>
+        <button class="btn disabled" style="font-size:11px;">+ FRD</button>
+        <button class="btn disabled" style="font-size:11px;">+ PRD</button>
+        <span class="badge p2">Phase 2</span>
+      </div>
+      <span class="callout" style="top:10px; right:14px;">3</span>
+    </div>
+
+    <!-- Existing module page chrome (UNCHANGED) -->
+    <div style="padding: 24px;">
+
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; position:relative;">
+        <div>
+          <h2 style="margin:0; font-size:20px;">Checkout Revamp</h2>
+          <div style="font-size:12px; color:var(--gray-500); margin-top:2px;">module#42 · created 2026-04-22 by Saurabh V.</div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn outline">⚙ Settings</button>
+          <button class="btn outline">📊 LLD Workbench</button>
+          <button class="btn outline">🧪 FTC Workbench</button>
+        </div>
+        <span class="callout" style="top:-10px; right:14px;">4</span>
+      </div>
+
+      <!-- Existing SkillStepper (the original 8-step horizontal stepper) -->
+      <div class="card solid" style="position:relative; padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong style="font-size:13px;">Skill chain (existing · unchanged)</strong>
+          <span class="badge active">▶ Stage 4: User Stories</span>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:4px; font-size:11px; flex-wrap:nowrap; overflow-x:auto;">
+          <div style="padding:6px 8px; background:#f0fdf4; border:1px solid var(--color-success); border-radius:4px; white-space:nowrap;">✓ Screen Upload</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:#f0fdf4; border:1px solid var(--color-success); border-radius:4px; white-space:nowrap;">✓ Screen Analysis</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:#f0fdf4; border:1px solid var(--color-success); border-radius:4px; white-space:nowrap;">✓ FRD Generation</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:#f0fdf4; border:1px solid var(--color-success); border-radius:4px; white-space:nowrap;">✓ EPIC Generation</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:var(--discovery-tint); border:2px solid var(--brand-cta); border-radius:4px; white-space:nowrap; font-weight:600;">▶ User Stories</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:white; border:1px dashed var(--gray-300); border-radius:4px; white-space:nowrap; color:var(--gray-500);">○ SubTasks</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:white; border:1px dashed var(--gray-300); border-radius:4px; white-space:nowrap; color:var(--gray-500);">○ LLD</div>
+          <span style="color:var(--gray-300);">→</span>
+          <div style="padding:6px 8px; background:white; border:1px dashed var(--gray-300); border-radius:4px; white-space:nowrap; color:var(--gray-500);">○ FTC</div>
+        </div>
+        <span class="callout" style="top:8px; right:8px;">5</span>
+      </div>
+
+      <!-- EPIC artifact view (showing the integration outcome) -->
+      <div class="card solid" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong style="font-size:13px;">EPIC Artifact · Stage 4 output</strong>
+          <span class="badge done">✓ Generated · 2 hours ago</span>
+        </div>
+        <div style="font-size:12px; color:var(--gray-700); margin-bottom:8px;">
+          <strong>EPIC-1:</strong> Streamlined Checkout Flow — reduce abandonment by 30%<br>
+          <strong>EPIC-2:</strong> Mobile-first payment options — UPI, Apple Pay, Google Pay<br>
+          <strong>EPIC-3:</strong> Guest checkout with one-click conversion to account
+        </div>
+        <div style="padding:8px 10px; background:var(--existing-tint); border-left:3px solid var(--color-info); font-size:11px; border-radius:3px;">
+          🔗 <strong>Generated with Discovery context:</strong>
+          <a href="#" style="color:var(--color-info);"><code>Approach-Note-acme-crm-v3.md</code></a>
+          + 4 uploaded screens analysed<br>
+          <span style="color:var(--gray-500);">Click to view tool trace · which AN sections influenced which EPICs</span>
+        </div>
+        <span class="callout" style="top:8px; right:8px;">6</span>
+        <span class="callout" style="bottom:34px; right:14px;">7</span>
+      </div>
+
+      <!-- Existing screens uploaded -->
+      <div class="card muted" style="font-size:12px; color:var(--gray-500);">
+        <strong>Screens uploaded:</strong> 4 (existing flow · unchanged)<br>
+        checkout-cart.png · payment-options.png · order-confirm.png · email-receipt.png
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Element</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td><td><strong>Discovery Context banner — NEW.</strong> The only structural addition to the existing module page. Sits above the existing SkillStepper. Phase 1: shows the locked-in Approach Note version.</td><td>NEW · <code>DiscoveryContextBanner.tsx</code></td></tr>
+      <tr><td><span class="num">2</span></td><td>AN chip — clickable, deep-links to AN viewer with that exact version. "Re-link AN version" lets user point this module at a different AN version without breaking the existing module flow.</td><td>NEW · service method <code>relinkAn(moduleId, newVersionId)</code></td></tr>
+      <tr><td><span class="num">3</span></td><td><strong>Phase-2 multi-source picker</strong> — visibly disabled per decision #3. Phase 2 will enable BRD / Lo-fi / Hi-fi / FRD / PRD as additional context refs to layer on top of the AN.</td><td>P2 · adds optional context refs to existing services</td></tr>
+      <tr><td><span class="num">4</span></td><td>Existing module header — UNCHANGED. Module name, ID, owner, settings/LLD/FTC workbench buttons all retained.</td><td>REUSE · <code>module/[moduleId]/page.tsx</code> (existing)</td></tr>
+      <tr><td><span class="num">5</span></td><td><strong>Existing SkillStepper</strong> — UNCHANGED. The 8-step linear chain (Screen Upload → ... → FTC) and its <code>BaModuleStatus</code> state machine remain intact. Discovery context flows in as additional input to the existing EPIC service, not as a new step.</td><td>REUSE · <code>SkillStepper.tsx</code> (existing, untouched)</td></tr>
+      <tr><td><span class="num">6</span></td><td>EPIC artifact — UNCHANGED render. Existing <code>EpicArtifactView</code> component used as-is.</td><td>REUSE · <code>EpicArtifactView.tsx</code></td></tr>
+      <tr><td><span class="num">7</span></td><td><strong>"Generated with Discovery context" indicator — NEW.</strong> Small additive section inside EPIC artifact view showing which AN version was the source. Clickable to view tool trace (which AN sections influenced which EPICs).</td><td>EXTEND · small additive in <code>EpicArtifactView.tsx</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Components Inventory</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/module/[moduleId]/page.tsx</code></td><td>Existing module page</td><td>EXTEND (small) — render <code>DiscoveryContextBanner</code> above existing chrome</td></tr>
+      <tr><td><code>components/ba-tool/discovery/DiscoveryContextBanner.tsx</code></td><td>The new banner showing AN chip + Phase-2 multi-source picker</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/SkillStepper.tsx</code></td><td>Existing 8-step horizontal stepper</td><td>REUSE · UNTOUCHED</td></tr>
+      <tr><td><code>components/ba-tool/EpicArtifactView.tsx</code></td><td>Existing EPIC viewer</td><td>EXTEND (small) — add "Generated with Discovery context" footer</td></tr>
+      <tr><td><code>components/ba-tool/discovery/EpicContextTrace.tsx</code></td><td>Tool-trace panel — which AN sections influenced which EPICs</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/ba-narrative.service.ts</code></td><td>Existing EPIC generator</td><td>EXTEND (small) — accept optional <code>{approachNoteVersionId}</code> param; fold AN content into prompt; emit trace</td></tr>
+      <tr><td>Prisma: <code>BaModule</code> table</td><td>Existing</td><td>EXTEND — add nullable <code>approachNoteVersionId</code> FK column</td></tr>
+      <tr><td>Prisma: <code>EpicArtifact</code></td><td>Existing</td><td>EXTEND — add <code>contextSourcesJson</code> (which Discovery artefacts were used + per-EPIC trace)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>What is intentionally NOT changed (existing flow preserved)</h2>
+  <ul>
+    <li><strong>SkillStepper</strong> — 8 steps, same labels, same behaviour, same <code>BaModuleStatus</code> state machine</li>
+    <li><strong>FRD generation service</strong> — same prompt, same output (Discovery context optional)</li>
+    <li><strong>User Stories / Sub Tasks / LLD / FTC services</strong> — zero modifications</li>
+    <li><strong>Module creation flow</strong> — still works without a Discovery (modules can be created standalone; Discovery context is optional)</li>
+    <li><strong>Module page layout</strong> — only one structural addition (the banner above the stepper); everything else preserved</li>
+    <li><strong>Existing screen upload + analysis flow</strong> — untouched</li>
+  </ul>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>No Discovery for project</strong> — module created without AN → banner shows: "No Approach Note linked. <a>Run Discovery</a> or <a>Continue without context</a>" (advisory)</li>
+    <li><strong>Stale AN version</strong> — module linked to AN v3, but project AN is now v5 → banner shows: "AN has new versions (v4, v5). <a>Update link</a>"</li>
+    <li><strong>Phase-2 multi-source enabled</strong> — picker buttons become active; user can layer BRD / Lo-fi / Hi-fi / FRD / PRD context on top</li>
+    <li><strong>Module created from scratch (legacy flow)</strong> — banner shows minimally: just an "Add Approach Note context" CTA to opt in</li>
+    <li><strong>EPIC regenerated with different context</strong> — EPIC artifact shows version chips: "Generated with AN v3" → "Regenerated with AN v5" (audit trail)</li>
+  </ul>
+</section>
+
+<nav class="pager">
+  <a href="05-stage-lofi-to-hifi.html">◀ Stage 5: Lo-fi → Hi-fi</a>
+  <span class="counter">Wireframe 06 of 06 · Stage 6 detail · END</span>
+  <a href="00-main-pipeline.html">▲ Back to main pipeline</a>
+</nav>
+
+</body>
+</html>

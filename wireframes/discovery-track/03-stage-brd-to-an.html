@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe 03 — Stage 3: BRD → Approach Note (Versioned)</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 03 — Stage 3: BRD → Approach Note</h1>
+  <div class="sub">Versioned (append-only) — every substantive change creates a new file. Drives downstream branding, decisions, open questions.</div>
+  <table>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/discovery/approach-note</code></td></tr>
+    <tr><td>Stage</td><td>3 of 6 (Discovery)</td></tr>
+    <tr><td>Skill reference</td><td>skills/03-brd-to-approach-note.md</td></tr>
+    <tr><td>Versioning</td><td>Append-only (v1, v2, ...) — preserves audit trail</td></tr>
+    <tr><td>Client edition</td><td>Derived artifact — strips "Changes since vN-1" log</td></tr>
+  </table>
+</div>
+
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/discovery/approach-note?v=3</span>
+  </div>
+
+  <div class="app-header">
+    <div class="brand"><span class="logo">LOGO</span><span>FRD-EPICS Automation</span></div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#" class="active">Discovery</a>
+      <a href="#">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user"><span>Saurabh V.</span><span class="avatar"></span></div>
+  </div>
+
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> › <a href="#">Acme CRM</a> ›
+      <a href="00-main-pipeline.html">Discovery</a> ›
+      <span class="current">Stage 3: Approach Note v3</span>
+    </div>
+    <div class="stage-status">Stage <strong>3 of 6</strong> · Discovery</div>
+  </div>
+
+  <div class="layout">
+
+    <aside class="sidebar">
+      <h4>Discovery Track</h4>
+      <div class="nav-item"><span class="dot done"></span> 1. Audio → Text</div>
+      <div class="nav-item"><span class="dot done"></span> 2. Well-formed Text</div>
+      <div class="nav-item"><span class="dot done"></span> 3. BRD</div>
+      <div class="nav-item active"><span class="dot active"></span> 4. Approach Note (v3)</div>
+      <div class="nav-item"><span class="dot"></span> 5. Lo-fi Wireframes</div>
+      <div class="nav-item"><span class="dot"></span> 6. Hi-fi Mockups</div>
+      <h4 style="margin-top:18px">BA Tool Flow</h4>
+      <div class="nav-item"><span class="dot"></span> 7. FRD</div>
+      <div class="nav-item"><span class="dot"></span> 8. PRD</div>
+      <div class="nav-item"><span class="dot"></span> 9. EPICs</div>
+      <div class="nav-item"><span class="dot"></span> 10. User Stories</div>
+      <div class="nav-item"><span class="dot"></span> 11. Sub Tasks</div>
+      <div class="nav-item"><span class="dot"></span> 12. LLD</div>
+      <div class="nav-item"><span class="dot"></span> 13. FTC</div>
+    </aside>
+
+    <main class="main-pane">
+
+      <h3 style="margin:0 0 4px; font-size:18px;">Stage 3 — BRD → Approach Note (v3 active)</h3>
+      <p style="color:var(--gray-500); font-size:13px; margin:0 0 16px;">
+        Long-form technical solution design (~12–20 pages). Versioned append-only — each substantive change creates a new file with a "Changes since vN-1" log.
+      </p>
+
+      <!-- Version timeline (top) -->
+      <div class="card solid" style="position:relative;">
+        <div class="card-title">Version timeline (append-only)</div>
+        <div class="version-row">
+          <span class="version-chip">v1 · 2026-04-15</span>
+          <span style="color:var(--gray-300);">→</span>
+          <span class="version-chip">v2 · 2026-04-22</span>
+          <span style="color:var(--gray-300);">→</span>
+          <span class="version-chip active">v3 · 2026-04-30 (current)</span>
+          <span style="color:var(--gray-300);">→</span>
+          <span class="version-chip new">+ New version</span>
+        </div>
+        <div style="margin-top:8px; font-size:11px; color:var(--gray-500);">
+          Each version captured as separate file: <code>Approach-Note-acme-crm-v3.md</code> · prior versions preserved
+        </div>
+        <span class="callout" style="top:8px; right:8px;">1</span>
+        <span class="callout" style="top:38px; left:380px;">2</span>
+      </div>
+
+      <!-- Changes since v2 -->
+      <div class="card cta" style="position:relative;">
+        <div class="card-title" style="color:var(--brand-cta);">Changes since v2</div>
+        <ul style="margin:4px 0; padding-left:18px; font-size:12px;">
+          <li>§3.10 Branding tokens locked: Dark Blue + White + Orange (per stakeholder review)</li>
+          <li>§5.1 Model Router thresholds tuned (Haiku ≤ 200 tokens, Opus ≥ 800)</li>
+          <li>§8.1 Closed 3 open questions; §8.3 added 1 new (multi-tenancy timing)</li>
+          <li>§11.6 Embedding migration plan added (sentence-transformers → Voyage AI)</li>
+        </ul>
+        <span class="callout" style="top:8px; right:8px;">3</span>
+      </div>
+
+      <!-- Two-column: section nav + active section editor -->
+      <div style="display:flex; gap:14px;">
+
+        <div style="width: 220px; flex-shrink:0;">
+          <div class="card-title">Sections</div>
+          <div style="display:flex; flex-direction:column; gap:2px; font-size:12px;">
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§1 Executive Verdict</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§2 Feature/Model Palette</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§3 Requirement-by-req Fit</div>
+            <div style="padding:6px 8px; background:var(--discovery-tint); border:1px solid var(--brand-cta); border-radius:4px; font-weight:600;">▶ §3.10 Branding</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§3.12 Production Parity</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§4 Architecture diagrams</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§5 Model Routing</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§6 Coverage Summary</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§7 Decision Inputs</div>
+            <div style="padding:6px 8px; background:#fef3c7; border-radius:4px;">⚠ §8 Decisions &amp; Open Qs</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§9 Phase 1 PoC Scope</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§10 UI Screen Inventory</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">§11 Phase 2 Roadmap</div>
+          </div>
+        </div>
+
+        <div style="flex:1; min-width:0;">
+          <!-- Active section: §3.10 Branding (drives downstream) -->
+          <div class="card active" style="position:relative;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <strong>§3.10 Branding & UI Theme</strong>
+              <span class="badge" style="color:var(--color-info); border-color:var(--color-info); background:var(--existing-tint);">⚡ Drives Stage 4 + Stage 5</span>
+            </div>
+
+            <div class="card-title" style="margin-bottom:8px;">Brand tokens (project-scoped) — end-user input</div>
+
+            <div style="display:flex; gap:8px; margin-bottom:12px; padding:10px; background:var(--gray-50); border-radius:4px; font-size:12px; align-items:center; position:relative; flex-wrap:wrap;">
+              <strong style="color:var(--gray-700);">Source · how to set tokens:</strong>
+              <button class="btn outline" style="font-size:11px;">📷 Upload reference page</button>
+              <span style="color:var(--gray-400);">or</span>
+              <button class="btn outline" style="font-size:11px;">🎨 Pick manually below</button>
+              <div style="width:100%; font-size:11px; color:var(--gray-500); margin-top:4px;">
+                <strong>Upload reference page</strong> = drop client's website screenshot, logo, or brand guide PDF — AI extracts the palette and pre-fills the tokens below. <strong>Pick manually</strong> = use the color pickers + hex inputs in the table.
+              </div>
+              <span class="callout" style="top:-10px; right:-10px;">4a</span>
+            </div>
+
+            <table style="width:100%; font-size:12px;">
+              <tr>
+                <td style="padding:4px 8px; width:160px; color:var(--gray-500);">Primary background</td>
+                <td style="padding:4px 8px;"><span class="swatch" style="background:#0B1B2E;"></span> #0B1B2E (Dark Blue)</td>
+                <td style="padding:4px 8px;"><button class="btn outline" style="font-size:10px;">change</button></td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px; color:var(--gray-500);">Surface / cards</td>
+                <td style="padding:4px 8px;"><span class="swatch" style="background:#FFFFFF;"></span> #FFFFFF (White)</td>
+                <td style="padding:4px 8px;"><button class="btn outline" style="font-size:10px;">change</button></td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px; color:var(--gray-500);">Primary CTA</td>
+                <td style="padding:4px 8px;"><span class="swatch" style="background:#F97316;"></span> #F97316 (Orange)</td>
+                <td style="padding:4px 8px;"><button class="btn outline" style="font-size:10px;">change</button></td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px; color:var(--gray-500);">Logo asset</td>
+                <td style="padding:4px 8px;"><code>branding/acme-crm-logo.png</code></td>
+                <td style="padding:4px 8px;"><button class="btn outline" style="font-size:10px;">upload</button></td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px; color:var(--gray-500);">Product name</td>
+                <td style="padding:4px 8px;">"Ask Acme"</td>
+                <td style="padding:4px 8px;"><button class="btn outline" style="font-size:10px;">edit</button></td>
+              </tr>
+            </table>
+            <span class="callout" style="top:8px; left:170px;">4</span>
+            <span class="callout" style="top:84px; right:14px;">5</span>
+          </div>
+
+          <!-- Decisions locked (§8.1) -->
+          <div class="card success" style="position:relative;">
+            <div class="card-title" style="color:var(--color-success);">§8.1 Decisions Locked (closed by stakeholder)</div>
+            <table style="width:100%; font-size:12px;">
+              <tr><td style="padding:3px 6px; color:var(--gray-600); width:200px;">Data residency</td><td style="padding:3px 6px;">P1: laptop · P2: AWS Mumbai</td></tr>
+              <tr><td style="padding:3px 6px; color:var(--gray-600);">SDK</td><td style="padding:3px 6px;">Anthropic Python SDK (not Agent SDK)</td></tr>
+              <tr><td style="padding:3px 6px; color:var(--gray-600);">RAG / Hybrid</td><td style="padding:3px 6px;">pgvector both phases · sentence-transformers (P1) → Voyage AI (P2)</td></tr>
+              <tr><td style="padding:3px 6px; color:var(--gray-600);">Production parity</td><td style="padding:3px 6px;">Hexagonal backend · provider abstractions · tenant_id day 1</td></tr>
+            </table>
+            <span class="callout" style="top:8px; right:8px;">6</span>
+          </div>
+
+          <!-- Open questions (§8.3) -->
+          <div class="card warn" style="position:relative;">
+            <div class="card-title" style="color:var(--color-warn);">§8.3 Open Questions — please clarify (3)</div>
+            <ol style="margin:4px 0; padding-left:18px; font-size:12px; line-height:1.7;">
+              <li><strong>Multi-tenancy activation timing</strong> — Phase 2 week 3 or earlier? <em>Default: week 3, after auth.</em> <a href="#" style="color:var(--brand-cta);">Mark resolved</a></li>
+              <li><strong>Cognito vs Auth0</strong> — both are AuthProvider implementations. <em>Default: Cognito (closer to AWS stack).</em> <a href="#" style="color:var(--brand-cta);">Mark resolved</a></li>
+              <li><strong>Voice persona per user</strong> — P2 nice-to-have or required? <em>Default: deferred to P2 week 9+.</em> <a href="#" style="color:var(--brand-cta);">Mark resolved</a></li>
+            </ol>
+            <span class="callout" style="top:8px; right:8px;">7</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action bar -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; position:relative;">
+        <div style="display:flex; gap:6px;">
+          <button class="btn outline">💾 Save edits to v3</button>
+          <button class="btn outline">📥 Download v3.md</button>
+          <button class="btn outline">📋 Export client edition</button>
+          <span class="callout" style="top:-10px; left:330px;">8</span>
+        </div>
+        <button class="btn primary" style="padding:8px 20px;">Continue to Lo-fi Wireframes ▶</button>
+        <span class="callout" style="bottom:36px; right:14px;">9</span>
+      </div>
+
+    </main>
+
+    <aside class="rightrail">
+      <h4>Inputs</h4>
+      <div style="font-size:12px; margin-bottom:14px;">
+        📄 <code>BRD-acme-crm.md</code> <span class="badge done">v1</span><br>
+        <span style="color:var(--gray-500); font-size:11px;">Locked at AN v1 creation</span>
+      </div>
+      <span class="callout" style="top:34px; right:14px;">10</span>
+
+      <h4>+ New version</h4>
+      <div style="font-size:12px; margin-bottom:14px;">
+        Creates v4 from v3. Captures "Changes since v3" log on save.<br>
+        <button class="btn primary" style="margin-top:6px; font-size:11px;">+ Bump to v4</button>
+      </div>
+
+      <h4>Drives downstream</h4>
+      <div style="font-size:11px;">
+        <div style="margin-bottom:4px;">→ Stage 4 wireframes inherit §3.10 branding</div>
+        <div style="margin-bottom:4px;">→ Stage 5 hi-fi mockups inherit §3.10 + §3.8 synthetic data</div>
+        <div>→ Stage 9 EPICs (P1: AN-only context)</div>
+      </div>
+
+      <h4 style="margin-top:14px;">Stage 3 output</h4>
+      <div style="font-size:12px;">
+        <code>Approach-Note-acme-crm-v3.md</code><br>
+        Client edition: <code>Approach-Note-acme-crm-client-v3.md</code> (on demand)
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Element</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td><td><strong>Version timeline</strong> — append-only chips. Click any to switch view (read-only for old versions). Most important UX in this stage.</td><td>NEW · <code>VersionTimeline.tsx</code></td></tr>
+      <tr><td><span class="num">2</span></td><td>"+ New version" creates v(N+1) by copying v(N), opens "Changes since vN" capture modal on save.</td><td>NEW · service method <code>createNewVersion(prevId)</code></td></tr>
+      <tr><td><span class="num">3</span></td><td><strong>Changes since v(N-1) log</strong> — mandatory on v2+. Bulleted, terse, accurate. Stripped from client edition.</td><td>NEW · part of <code>ApproachNoteVersion</code> entity</td></tr>
+      <tr><td><span class="num">4</span></td><td>Active section editor — §3.10 Branding. Marked as "Drives Stage 4 + 5" because color tokens flow downstream.</td><td>NEW · <code>SectionEditor.tsx</code></td></tr>
+      <tr><td><span class="num">5</span></td><td><strong>Brand tokens table</strong> — color pickers, logo upload, product name. These tokens are read by Stage 4 wireframe generator and Stage 5 hi-fi generator.</td><td>NEW · <code>BrandTokensEditor.tsx</code></td></tr>
+      <tr><td><span class="num">6</span></td><td>Decisions Locked panel (§8.1) — closed-by-stakeholder rows. Reads from <code>decisions_locked</code> field.</td><td>NEW · <code>DecisionsTable.tsx</code></td></tr>
+      <tr><td><span class="num">7</span></td><td><strong>Open Questions panel (§8.3)</strong> — every silent default surfaced with a "Mark resolved" action. Per skill 03 §6 quality criterion.</td><td>NEW · <code>OpenQuestionsPanel.tsx</code></td></tr>
+      <tr><td><span class="num">8</span></td><td><strong>Export client edition</strong> — derived artifact that strips the "Changes since vN-1" sections from each version. Per decision #6 + skill 03 §10.</td><td>NEW · <code>exportClientEdition(versionId)</code> service method</td></tr>
+      <tr><td><span class="num">9</span></td><td>Continue CTA — advances to Stage 4. Branding + section §10 (Screen Inventory) feed the wireframe generator.</td><td>NEW</td></tr>
+      <tr><td><span class="num">10</span></td><td>BRD input — locked-in chip. Snapshot of BRD at AN-v1-creation time; subsequent BRD edits don't auto-update AN (use "Re-derive from BRD" if needed).</td><td>NEW · snapshot semantic in service</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Components Inventory</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/approach-note/page.tsx</code></td><td>This route (with optional ?v= param)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ApproachNoteEditor.tsx</code></td><td>Top-level — version timeline + section nav + editor</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/VersionTimeline.tsx</code></td><td>Append-only version chips, "+ New version" button</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ChangesSinceModal.tsx</code></td><td>Capture changelog on save</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/BrandTokensEditor.tsx</code></td><td>§3.10 color/logo/product-name editor</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/DecisionsTable.tsx</code></td><td>§8.1 closed decisions</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/OpenQuestionsPanel.tsx</code></td><td>§8.3 open questions with resolve action</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/approach-note.service.ts</code></td><td><code>generate(brdId), createNewVersion(prevId), exportClientEdition(versionId), regenerate(versionId)</code></td><td>NEW</td></tr>
+      <tr><td>Prisma: <code>ApproachNote</code> + <code>ApproachNoteVersion</code></td><td>Append-only versioning. <code>Version</code> has {n, sections JSON, brandTokens JSON, decisionsLocked[], openQuestions[], changesSince, supersedesId, ...}</td><td>NEW (1 migration, 2 tables)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>No AN yet</strong> — BRD present, no AN → "Generate Approach Note v1" CTA prominent</li>
+    <li><strong>v1 created</strong> — single chip in timeline, no "Changes since" panel</li>
+    <li><strong>v2+</strong> — multiple chips, "Changes since v(N-1)" panel always present</li>
+    <li><strong>Viewing old version</strong> — read-only mode, banner: "Viewing v1 (superseded by v3) · <a>Switch to v3</a>"</li>
+    <li><strong>Editing</strong> — autosave to current version (v3); on "+ New version" copies v3 → v4 and clears changelog</li>
+    <li><strong>Open questions all resolved</strong> — §8.3 panel shows "✓ All open questions closed"</li>
+    <li><strong>Client edition export</strong> — modal preview of stripped version before download</li>
+    <li><strong>BRD changed since AN created</strong> — banner: "BRD has been edited since v1 was generated · <a>Re-derive AN from latest BRD</a>"</li>
+  </ul>
+</section>
+
+<nav class="pager">
+  <a href="02-stage-wft-to-brd.html">◀ Stage 2: WFT → BRD</a>
+  <span class="counter">Wireframe 03 of 06 · Stage 3 detail</span>
+  <a href="04-stage-an-to-lofi.html">Stage 4: AN → Lo-fi Wireframes ▶</a>
+</nav>
+
+</body>
+</html>

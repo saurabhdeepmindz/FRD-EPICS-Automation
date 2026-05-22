@@ -1,0 +1,44 @@
+LLD-PseudoCode/  (MOD-04)
+│
+├── Frontend / app/  (3)
+│   ├── route.ts  [US-052 · ST-US052-FE-01]
+│   ├── page.tsx  [US-052 · ST-US052-FE-01]
+│   └── page.tsx  [US-054 · ST-US054-FE-01]
+│
+├── Frontend / components/  (2)
+│   ├── SearchPreviousChatsComponent.tsx  [US-052 · ST-US052-FE-01]
+│   └── ChatDetailsPanel.tsx  [US-054 · ST-US054-FE-01]
+│
+├── Frontend / features/  (1)
+│   └── researchchatsapi.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / controller/  (1)
+│   └── research-chat.controller.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / service/  (1)
+│   └── research-chat.service.ts  [US-053 · ST-US053-BE-02]
+│
+├── Backend / DTO/  (3)
+│   ├── get-research-chats-request.dto.ts  [US-053 · ST-US053-BE-01]
+│   ├── get-research-chats-response.dto.ts  [US-053 · ST-US053-BE-01]
+│   └── research-chat-summary.dto.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / entities/  (1)
+│   └── research-chat.entity.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / middleware/  (1)
+│   └── auth.middleware.ts  [US-053 · ST-US053-BE-03]
+│
+├── Database / schema (consolidated)/  (1)
+│   └── mod-04-schema.sql  [— · ST-US053-BE-01]
+│
+├── Database / migrations/  (1)
+│   └── 036_create_research_chats.sql  [US-053 · ST-US053-BE-01]
+│
+├── Tests / frontend/  (1)
+│   └── SearchPreviousChatsComponent.test.tsx  [US-052 · ST-US052-FE-01]
+│
+└── Tests / backend/  (3)
+    ├── research-chat-filtering.testplan.md  [US-053 · ST-US053-BE-01]
+    ├── research-chat.controller.spec.ts  [US-053 · ST-US053-BE-04]
+    └── research-chat.service.spec.ts  [US-053 · ST-US053-BE-04]

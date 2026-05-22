@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>MOD-04 — SubTask LLD RTM</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, sans-serif; color: #0F172A; margin: 0; padding: 0; background: #F8FAFC; }
+  header { background: #fff; border-bottom: 1px solid #E2E8F0; padding: 16px 24px; }
+  header h1 { font-size: 18pt; margin: 0 0 4px; color: #0F172A; }
+  header .sub { color: #64748B; font-size: 11pt; }
+  .stats { display: flex; gap: 16px; margin-top: 12px; }
+  .stats .card { background: #F1F5F9; border-radius: 6px; padding: 8px 14px; font-size: 10pt; }
+  .stats .card .num { font-size: 16pt; font-weight: 700; color: #0F172A; margin-right: 6px; }
+  .stats .card.done .num { color: #166534; }
+  .stats .card.todo .num { color: #B91C1C; }
+  .stats .card.wip .num { color: #B45309; }
+  .filterbar { background: #fff; border-bottom: 1px solid #E2E8F0; padding: 12px 24px; display: flex; gap: 12px; align-items: center; font-size: 10pt; }
+  .filterbar label { color: #64748B; margin-right: 6px; }
+  .filterbar select, .filterbar input { font: inherit; padding: 4px 8px; border: 1px solid #CBD5E1; border-radius: 4px; }
+  .filterbar input[type="search"] { min-width: 240px; }
+  main { display: flex; height: calc(100vh - 200px); }
+  aside { width: 42%; overflow-y: auto; background: #fff; border-right: 1px solid #E2E8F0; padding: 12px 0; }
+  section.detail { width: 58%; overflow-y: auto; padding: 16px 24px; }
+  aside .feature { margin: 6px 12px; }
+  aside .feature > .head { font-weight: 600; color: #0F172A; padding: 6px 8px; cursor: pointer; background: #F1F5F9; border-radius: 4px; user-select: none; }
+  aside .feature > .head::before { content: '▶ '; transition: transform .15s; display: inline-block; }
+  aside .feature.open > .head::before { transform: rotate(90deg); }
+  aside .story { margin: 4px 0 4px 16px; }
+  aside .story > .head { color: #1E293B; padding: 4px 8px; font-size: 10pt; cursor: pointer; user-select: none; }
+  aside .story > .head::before { content: '▶ '; }
+  aside .story.open > .head::before { content: '▼ '; }
+  aside .subtask { margin: 3px 0 3px 30px; padding: 4px 8px; font-size: 9.5pt; color: #475569; cursor: pointer; border-radius: 3px; }
+  aside .subtask:hover { background: #F1F5F9; }
+  aside .subtask.selected { background: #DBEAFE; color: #1E40AF; }
+  aside .files-inline { margin: 2px 0 2px 46px; font-size: 8.5pt; color: #94A3B8; }
+  aside .badge { display: inline-block; font-size: 7.5pt; padding: 1px 5px; border-radius: 8px; margin-left: 4px; vertical-align: middle; }
+  aside .badge.done { background: #DCFCE7; color: #166534; }
+  aside .badge.todo { background: #FEE2E2; color: #B91C1C; }
+  aside .badge.wip  { background: #FEF3C7; color: #B45309; }
+  aside .badge.synth { background: #DDD6FE; color: #5B21B6; }
+  section.detail h2 { font-size: 13pt; margin: 0 0 4px; color: #0F172A; }
+  section.detail .meta { color: #64748B; font-size: 10pt; margin-bottom: 12px; }
+  section.detail .meta span { margin-right: 14px; }
+  section.detail .traceability { background: #FAFBFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 12px; margin: 10px 0; font-size: 9.5pt; }
+  section.detail .traceability b { color: #5B21B6; font-family: 'SFMono-Regular',Consolas,monospace; }
+  section.detail pre.code { background: #F8FAFC; border: 1px solid #E2E8F0; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 9pt; font-family: 'SFMono-Regular',Consolas,monospace; max-height: 480px; }
+  section.detail .empty { color: #94A3B8; font-style: italic; padding: 40px 0; text-align: center; }
+  .table-view { display: none; padding: 16px 24px; overflow-x: auto; }
+  .table-view.active { display: block; }
+  .table-view table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+  .table-view th, .table-view td { border: 1px solid #E2E8F0; padding: 5px 8px; text-align: left; vertical-align: top; }
+  .table-view th { background: #F1F5F9; font-weight: 600; color: #1E293B; position: sticky; top: 0; }
+  .table-view tr:hover td { background: #FAFBFC; }
+  .tabs { display: flex; gap: 4px; background: #fff; border-bottom: 1px solid #E2E8F0; padding: 0 24px; }
+  .tabs button { background: none; border: none; padding: 10px 16px; font: inherit; font-size: 10pt; color: #64748B; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabs button.active { color: #0F172A; border-bottom-color: #F97316; font-weight: 600; }
+  .tree-view { display: none; padding: 16px 24px; }
+  .tree-view.active { display: block; }
+  .tree-view pre { background: #fff; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px 16px; font-family: 'SFMono-Regular',Consolas,monospace; font-size: 9pt; white-space: pre; overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MOD-04 — SubTask LLD RTM Checklist</h1>
+  <div class="sub">research-verification · Generated 2026-05-15</div>
+  <div class="stats">
+    <div class="card"><span class="num">19</span>Total rows</div>
+    <div class="card done"><span class="num">19</span>Done (100%)</div>
+    <div class="card todo"><span class="num">0</span>ToDo</div>
+    <div class="card wip"><span class="num">0</span>WIP</div>
+  </div>
+</header>
+<div class="tabs">
+  <button class="tab-btn active" data-view="explorer">Explorer</button>
+  <button class="tab-btn" data-view="table">Flat table</button>
+  <button class="tab-btn" data-view="tree">Project tree</button>
+</div>
+<div class="filterbar">
+  <label>Team:</label>
+  <select id="filter-team">
+    <option value="">all</option><option>FE</option><option>BE</option><option>QA</option><option>IN</option>
+  </select>
+  <label>Status:</label>
+  <select id="filter-status">
+    <option value="">all</option><option>Done</option><option>ToDo</option><option>WIP</option><option>Failed</option>
+  </select>
+  <label>Search:</label>
+  <input type="search" id="filter-search" placeholder="file / subtask / story"/>
+</div>
+<div id="view-explorer">
+<main>
+  <aside id="tree-root"></aside>
+  <section class="detail" id="detail-pane">
+    <div class="empty">Click a SubTask or file in the left tree to view details.</div>
+  </section>
+</main>
+</div>
+<div class="table-view" id="view-table">
+  <table>
+    <thead>
+      <tr>
+        <th>Feature</th><th>Story</th><th>SubTask</th><th>Team</th>
+        <th>Folder</th><th>File</th><th>Type</th><th>Generated</th><th>Status</th><th>Notes</th>
+      </tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+</div>
+<div class="tree-view" id="view-tree">
+  <pre>LLD-PseudoCode/  (MOD-04)
+│
+├── Frontend / app/  (3)
+│   ├── route.ts  [US-052 · ST-US052-FE-01]
+│   ├── page.tsx  [US-052 · ST-US052-FE-01]
+│   └── page.tsx  [US-054 · ST-US054-FE-01]
+│
+├── Frontend / components/  (2)
+│   ├── SearchPreviousChatsComponent.tsx  [US-052 · ST-US052-FE-01]
+│   └── ChatDetailsPanel.tsx  [US-054 · ST-US054-FE-01]
+│
+├── Frontend / features/  (1)
+│   └── researchchatsapi.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / controller/  (1)
+│   └── research-chat.controller.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / service/  (1)
+│   └── research-chat.service.ts  [US-053 · ST-US053-BE-02]
+│
+├── Backend / DTO/  (3)
+│   ├── get-research-chats-request.dto.ts  [US-053 · ST-US053-BE-01]
+│   ├── get-research-chats-response.dto.ts  [US-053 · ST-US053-BE-01]
+│   └── research-chat-summary.dto.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / entities/  (1)
+│   └── research-chat.entity.ts  [US-053 · ST-US053-BE-01]
+│
+├── Backend / middleware/  (1)
+│   └── auth.middleware.ts  [US-053 · ST-US053-BE-03]
+│
+├── Database / schema (consolidated)/  (1)
+│   └── mod-04-schema.sql  [— · ST-US053-BE-01]
+│
+├── Database / migrations/  (1)
+│   └── 036_create_research_chats.sql  [US-053 · ST-US053-BE-01]
+│
+├── Tests / frontend/  (1)
+│   └── SearchPreviousChatsComponent.test.tsx  [US-052 · ST-US052-FE-01]
+│
+└── Tests / backend/  (3)
+    ├── research-chat-filtering.testplan.md  [US-053 · ST-US053-BE-01]
+    ├── research-chat.controller.spec.ts  [US-053 · ST-US053-BE-04]
+    └── research-chat.service.spec.ts  [US-053 · ST-US053-BE-04]
+</pre>
+</div>
+<script>
+const ROWS = [{"feature":"F-04-01","story":"—","subtask":"ST-US053-BE-01","subtaskName":"Consolidated database schema (synthesized from migrations)","team":"BE","folder":"database/schema","file":"mod-04-schema.sql","fileType":"sql","generated":"YES_SYNTHESIZED","status":"Done","notes":"Concatenated from 8 migration files","content":"-- ════════════════════════════════════════════════════════════════\n-- Consolidated module schema (synthesized at RTM-generation time)\n-- Source: 8 migration file(s) from LLD-PseudoCode/database/migrations/\n-- Generated: 2026-05-15T02:37:47.872Z\n-- ════════════════════════════════════════════════════════════════\n\n\n-- ─── LLD-PseudoCode/database/migrations/001_create_research_conversation.sql ───\n-- Migration: Create research_conversation table\n-- Traceability: FRD: F-04-02 / EPIC: EPIC-04 / US: US-056 / ST: ST-US056-BE-03\n-- Data Model Reference: §10 Schema Diagram, §9 Data Model Definitions\n\nCREATE TABLE research_conversation (\n    research_id UUID PRIMARY KEY,\n    user_id UUID NOT NULL,\n    query TEXT NOT NULL,\n    status VARCHAR(32) NOT NULL,\n    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),\n    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id)\n);\n\nCREATE INDEX idx_research_conversation_user_id ON research_conversation(user_id);\nCREATE INDEX idx_research_conversation_status ON research_conversation(status);\n\n-- ─── LLD-PseudoCode/database/migrations/002_create_ai_response.sql ───\n-- Migration: Create ai_response table\n-- Traceability: FRD: F-04-02 / EPIC: EPIC-04 / US: US-056 / ST: ST-US056-BE-03\n-- Data Model Reference: §10 Schema Diagram, §9 Data Model Definitions\n\nCREATE TABLE ai_response (\n    response_id UUID PRIMARY KEY,\n    research_id UUID NOT NULL,\n    response_text TEXT NOT NULL,\n    confidence VARCHAR(16) NOT NULL,\n    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),\n    CONSTRAINT fk_research FOREIGN KEY (research_id) REFERENCES research_conversation(research_id)\n);\n\nCREATE INDEX idx_ai_response_research_id ON ai_response(research_id);\nCREATE INDEX idx_ai_response_confidence ON ai_response(confidence);\n\n-- ─── LLD-PseudoCode/database/migrations/036_create_research_chats.sql ───\n-- Migration: Create research_chats table for F-04-01 — Search Previous Research Chats\n-- Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-053 / ST: ST-US053-BE-01\n-- Data Model: See §10 Schema Diagram and §9 Data Model Definitions\n\nCREATE TABLE research_chats (\n    chat_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    user_id UUID NOT NULL,\n    title VARCHAR(255) NOT NULL,\n    date TIMESTAMP WITH TIME ZONE NOT NULL,\n    status VARCHAR(32) NOT NULL, -- OPEN | VERIFIED | ARCHIVED\n    last_message TEXT,\n    archived_flag BOOLEAN DEFAULT FALSE,\n    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id)\n);\n\nCREATE INDEX idx_research_chats_user_id_date ON research_chats (user_id, date DESC);\nCREATE INDEX idx_research_chats_user_id_status ON research_chats (user_id, status);\n\n-- ─── LLD-PseudoCode/database/migrations/037_create_research_conversation.sql ───\n-- @file        database/migrations/037_create_research_conversation.sql\n-- @module      research-verification\n-- @layer       migration\n--\n-- @description\n-- Creates the research_conversation table with filterable fields and indices for hot lookup columns.\n--\n-- @frd       F-04-03\n-- @epic      EPIC-04\n-- @userStory US-059\n-- @subTask   ST-US059-BE-01\n--\n-- @frdContext\n-- Table for storing research conversations, filterable by user, date, status, verificationStatus, and archived flag.\n--\nCREATE TABLE research_conversation (\n  conversation_id UUID PRIMARY KEY,\n  user_id UUID NOT NULL,\n  title VARCHAR(255) NOT NULL,\n  date TIMESTAMP NOT NULL,\n  status VARCHAR(32) NOT NULL,\n  verification_status VARCHAR(32) NOT NULL,\n  is_archived BOOLEAN NOT NULL DEFAULT FALSE\n);\n\nCREATE INDEX idx_research_conversation_user_id ON research_conversation(user_id);\nCREATE INDEX idx_research_conversation_date ON research_conversation(date);\nCREATE INDEX idx_research_conversation_status ON research_conversation(status);\nCREATE INDEX idx_research_conversation_verification_status ON research_conversation(verification_status);\nCREATE INDEX idx_research_conversation_is_archived ON research_conversation(is_archived);\n\n-- ─── LLD-PseudoCode/database/migrations/041_create_research_"},{"feature":"F-04-01","story":"US-052","subtask":"ST-US052-FE-01","subtaskName":"Design SearchPreviousChatsComponent UI with Search and Filter Fields","team":"FE","folder":"frontend/app","file":"frontend/app/api/research-chats/route.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * GET /api/research-chats — list previous research conversations.\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-053\n */\nexport async function GET(req: Request): Promise<Response> {\n  // TODO: Forward to backend ResearchChatController.listChats\n  return Response.json({ chats: [] });\n}"},{"feature":"F-04-01","story":"US-052","subtask":"ST-US052-FE-01","subtaskName":"Design SearchPreviousChatsComponent UI with Search and Filter Fields","team":"FE","folder":"frontend/app","file":"frontend/app/research-chats/page.tsx","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"import { SearchPreviousChatsComponent } from '@/components/researchchats/SearchPreviousChatsComponent';\n/**\n * App Router page for Research Chats.\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-052 / ST: ST-US052-FE-01\n */\nexport default function ResearchChatsPage() {\n  return (\n    <main className=\"container mx-auto p-6\">\n      <SearchPreviousChatsComponent />\n    </main>\n  );\n}"},{"feature":"F-04-01","story":"US-052","subtask":"ST-US052-FE-01","subtaskName":"Design SearchPreviousChatsComponent UI with Search and Filter Fields","team":"FE","folder":"frontend/components","file":"frontend/components/researchchats/SearchPreviousChatsComponent.tsx","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * SearchPreviousChatsComponent\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-052 / ST: ST-US052-FE-01\n */\nexport function SearchPreviousChatsComponent() {\n  // TODO: Render search/filter fields, call RTK Query hook, display chat list\n}"},{"feature":"F-04-01","story":"US-052","subtask":"ST-US052-FE-01","subtaskName":"Design SearchPreviousChatsComponent UI with Search and Filter Fields","team":"FE","folder":"tests/frontend","file":"frontend/tests/frontend/components/researchchats/SearchPreviousChatsComponent.test.tsx","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * Tests for SearchPreviousChatsComponent\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-052 / ST: ST-US052-FE-01\n */\ndescribe('SearchPreviousChatsComponent', () => {\n  it('renders search and filter fields', () => {\n    // TODO: Render and assert fields\n  });\n});"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"backend/controller","file":"backend/controller/research-chat.controller.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"import { Controller, Get, Query } from '@nestjs/common';\n/**\n * ResearchChatController\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-053 / ST: ST-US053-BE-01\n */\n@Controller('api/research-chats')\nexport class ResearchChatController {\n  @Get()\n  async listChats(@Query() filters) {\n    // TODO: Validate filters, call ResearchChatService.filterChats()\n    // Return ResearchChatSummaryDTO[]\n  }\n  @Get(':chatId')\n  async getChatDetails() {\n    // TODO: Fetch chat details by chatId\n  }\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"backend/dto","file":"backend/dto/get-research-chats-request.dto.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/dto/get-research-chats-request.dto.ts\n * @module      research-verification\n * @layer       dto\n *\n * @description\n * Data Transfer Object for GET /api/research-chats request query parameters.\n * Encapsulates filtering and search parameters for retrieving previous research chats.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-01, ST-US053-BE-02\n * @acceptanceCriteria\n *  - AC-1: Only chats for authenticated user returned\n *  - AC-2: All filters combinable and validated\n *  - AC-3: Invalid params → 400\n *  - AC-4: Empty result → []\n *\n * @frdContext\n * This DTO is used to validate and parse query parameters for the research chats list endpoint.\n * It supports search by keyword, date range, and status. All fields are optional except userId,\n * which is injected from the authenticated session. Validation ensures correct types and value ranges.\n *\n * @since 2026-04-28\n */\nimport { IsOptional, IsString, IsUUID, IsEnum, ValidateNested, IsDateString } from 'class-validator';\nimport { Type } from 'class-transformer';\n\nexport enum ResearchChatStatus {\n  OPEN = 'OPEN',\n  VERIFIED = 'VERIFIED',\n  ARCHIVED = 'ARCHIVED',\n}\n\nexport class DateRangeDto {\n  /** ISO8601 date string for range start */\n  @IsDateString()\n  from: string;\n\n  /** ISO8601 date string for range end */\n  @IsDateString()\n  to: string;\n}\n\n/**\n * DTO for GET /api/research-chats query params.\n */\nexport class GetResearchChatsRequestDto {\n  /** Authenticated user ID (injected from session) */\n  @IsUUID()\n  userId: string;\n\n  /** Optional search keyword (applies to title and lastMessage) */\n  @IsOptional()\n  @IsString()\n  search?: string;\n\n  /** Optional date range filter */\n  @IsOptional()\n  @ValidateNested()\n  @Type(() => DateRangeDto)\n  dateRange?: DateRangeDto;\n\n  /** Optional status filter */\n  @IsOptional()\n  @IsEnum(ResearchChatStatus)\n  status?: ResearchChatStatus;\n\n  /** Optional pagination: page number (1-based) */\n  @IsOptional()\n  page?: number;\n\n  /** Optional pagination: page size (default 50, max 100) */\n  @IsOptional()\n  pageSize?: number;\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"backend/dto","file":"backend/dto/get-research-chats-response.dto.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/dto/get-research-chats-response.dto.ts\n * @module      research-verification\n * @layer       dto\n *\n * @description\n * Data Transfer Object for GET /api/research-chats response payload.\n * Contains a list of ResearchChatSummaryDto.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-01\n * @acceptanceCriteria\n *  - AC-4: Empty result → []\n *\n * @frdContext\n * The API returns an array of chat summaries matching the user's filters.\n * Pagination metadata may be added in future.\n *\n * @since 2026-04-28\n */\nimport { ResearchChatSummaryDto } from './research-chat-summary.dto';\n\nexport class GetResearchChatsResponseDto {\n  /** List of chat summaries */\n  chats: ResearchChatSummaryDto[];\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"backend/dto","file":"backend/dto/research-chat-summary.dto.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/dto/research-chat-summary.dto.ts\n * @module      research-verification\n * @layer       dto\n *\n * @description\n * Data Transfer Object representing a summary of a research chat for list display.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-01\n * @acceptanceCriteria\n *  - AC-1: Only chats for authenticated user returned\n *  - AC-2: All filters combinable and validated\n *\n * @frdContext\n * This DTO is returned in the list of research chats. It exposes only summary fields needed for list display.\n * The full chat details are fetched separately.\n *\n * @since 2026-04-28\n */\nimport { ResearchChatStatus } from './get-research-chats-request.dto';\n\nexport class ResearchChatSummaryDto {\n  /** Unique chat ID (UUID v4) */\n  chatId: string;\n\n  /** Title of the chat */\n  title: string;\n\n  /** ISO8601 date string of chat creation or last activity */\n  date: string;\n\n  /** Status: OPEN | VERIFIED | ARCHIVED */\n  status: ResearchChatStatus;\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"backend/entities","file":"backend/entities/research-chat.entity.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/entities/research-chat.entity.ts\n * @module      research-verification\n * @layer       entity\n *\n * @description\n * ORM Entity representing a research chat record in the database.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-01\n * @acceptanceCriteria\n *  - AC-1: Only chats for authenticated user returned\n *  - AC-2: All filters combinable and validated\n *\n * @frdContext\n * This entity is mapped to the ResearchChats table. It supports filtering by userId, title, lastMessage, date, and status.\n * The archivedFlag is used for soft-deletion/archiving.\n *\n * @since 2026-04-28\n */\nimport { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';\n\n@Entity('research_chats')\n@Index(['userId', 'date'])\n@Index(['userId', 'status'])\nexport class ResearchChatEntity {\n  @PrimaryGeneratedColumn('uuid')\n  chatId: string;\n\n  @Column({ type: 'uuid' })\n  userId: string;\n\n  @Column({ type: 'varchar', length: 255 })\n  title: string;\n\n  @Column({ type: 'timestamp with time zone' })\n  date: Date;\n\n  @Column({ type: 'varchar', length: 32 })\n  status: string; // OPEN | VERIFIED | ARCHIVED\n\n  @Column({ type: 'text', nullable: true })\n  lastMessage: string;\n\n  @Column({ type: 'boolean', default: false })\n  archivedFlag: boolean;\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"database/migrations","file":"database/migrations/036_create_research_chats.sql","fileType":"sql","generated":"YES","status":"Done","notes":"","content":"-- Migration: Create research_chats table for F-04-01 — Search Previous Research Chats\n-- Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-053 / ST: ST-US053-BE-01\n-- Data Model: See §10 Schema Diagram and §9 Data Model Definitions\n\nCREATE TABLE research_chats (\n    chat_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    user_id UUID NOT NULL,\n    title VARCHAR(255) NOT NULL,\n    date TIMESTAMP WITH TIME ZONE NOT NULL,\n    status VARCHAR(32) NOT NULL, -- OPEN | VERIFIED | ARCHIVED\n    last_message TEXT,\n    archived_flag BOOLEAN DEFAULT FALSE,\n    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id)\n);\n\nCREATE INDEX idx_research_chats_user_id_date ON research_chats (user_id, date DESC);\nCREATE INDEX idx_research_chats_user_id_status ON research_chats (user_id, status);"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"frontend/features","file":"frontend/features/researchchats/researchchatsapi.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * RTK Query endpoints for Research Chats\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-053 / ST: ST-US053-BE-01\n */\nexport const researchChatsApi = /* TODO: injectEndpoints for chat list, details */;"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-01","subtaskName":"Implement ResearchChatService filtering logic","team":"BE","folder":"tests/backend","file":"backend/tests/US053/research-chat-filtering.testplan.md","fileType":"markdown","generated":"YES","status":"Done","notes":"","content":"<!--\n * ============================================================\n * TRACEABILITY\n * ============================================================\n * Module:          MOD-04 — research-verification\n * Package:         research-verification\n * Feature:         F-04-01 — Search Previous Research Chats\n * Feature Status:  CONFIRMED\n * Epic:            EPIC-04 — Research Verification Workflow\n * User Story:      US-053 — System retrieves and filters previous research chats (Backend)\n * Story Status:    CONFIRMED\n * Screen:          SCR-01 — Start Research, SCR-06 — Good Confidence Response\n * Test Cases:      TC-US053-BE-001, TC-US053-BE-002, TC-US053-BE-003, TC-US053-BE-004, TC-US053-BE-005\n * Generated:       LLD-MOD-04-nestjs-next-js-and-tailwind\n * ============================================================\n-->\n\n# Test Plan: Research Chat Filtering API\n\n## Scope\n\nCovers all acceptance criteria and business rules for F-04-01 research chat search/filtering API.\n\n## Test Cases\n\n- **TC-US053-BE-001**: Happy path — valid user, all filters, returns correct chats\n- **TC-US053-BE-002**: No results — valid user/filters, returns empty array\n- **TC-US053-BE-003**: Invalid params — invalid UUID, invalid status, returns 400\n- **TC-US053-BE-004**: Unauthenticated — no auth, returns 401\n- **TC-US053-BE-005**: DB error — simulate DB failure, returns 500\n\n## Steps\n\n1. Setup test DB with research_chats for multiple users, statuses, and dates.\n2. For each test case:\n   - Prepare request (query params, auth)\n   - Call GET /api/research-chats\n   - Assert response code and body\n3. For error cases, simulate error conditions and assert correct error response.\n\n## Traceability\n\n- FRD: F-04-01\n- EPIC: EPIC-04\n- US: US-053\n- ST: ST-US053-BE-01, ST-US053-BE-02, ST-US053-BE-03, ST-US053-BE-04"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-02","subtaskName":"Expose GET /api/research-chats endpoint in ResearchChatController","team":"BE","folder":"backend/service","file":"backend/service/research-chat.service.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * ResearchChatService\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-053 / ST: ST-US053-BE-02\n */\nexport class ResearchChatService {\n  async filterChats(userId: string, filters: any) {\n    // TODO: Query DB for chats matching filters\n  }\n  async getChatById(chatId: string, userId: string) {\n    // TODO: Fetch chat details, validate ownership\n  }\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-03","subtaskName":"Integrate authentication middleware","team":"BE","folder":"backend/middleware","file":"backend/middleware/auth.middleware.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/middleware/auth.middleware.ts\n * @module      research-verification\n * @layer       guard\n *\n * @description\n * Authentication middleware for securing research chat endpoints.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-03\n * @acceptanceCriteria\n *  - AC-1: Only chats for authenticated user returned\n *\n * @frdContext\n * Ensures that only authenticated users can access research chat endpoints.\n * Injects userId into request context for downstream use.\n *\n * @security\n * Enforces JWT/session authentication for all research chat routes.\n *\n * @since 2026-04-28\n */\nimport { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';\n\n@Injectable()\nexport class AuthMiddleware implements CanActivate {\n  /**\n   * Validates user authentication for incoming requests.\n   *\n   * @param context - ExecutionContext for the current request\n   * @returns true if authenticated, throws otherwise\n   * @throws {UnauthorizedException} if user is not authenticated\n   *\n   * @frd                F-04-01\n   * @userStory          US-053\n   * @subTask            ST-US053-BE-03\n   * @acceptanceCriteria AC-1\n   * @frdContext\n   * Used as a guard for all research chat endpoints.\n   *\n   * @algorithm\n   *  1. Check for valid JWT/session in request.\n   *  2. If valid, extract userId and attach to request.\n   *  3. If missing/invalid, throw UnauthorizedException.\n   */\n  canActivate(context: ExecutionContext): boolean {\n    // TODO: Implement authentication check and userId injection.\n  }\n}"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-04","subtaskName":"Write unit and integration tests for filtering, validation, and error handling","team":"BE","folder":"tests/backend","file":"backend/tests/controller/research-chat.controller.spec.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/tests/controller/research-chat.controller.spec.ts\n * @module      research-verification\n * @layer       test\n *\n * @description\n * Jest integration tests for ResearchChatController GET /api/research-chats endpoint.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-04\n * @acceptanceCriteria\n *  - AC-1: Only chats for authenticated user returned\n *  - AC-2: All filters combinable and validated\n *  - AC-3: Invalid params → 400\n *  - AC-4: Empty result → []\n *  - AC-5: DB error → 500\n *\n * @frdContext\n * Tests the REST endpoint end-to-end, including authentication, validation, and error scenarios.\n *\n * @since 2026-04-28\n */\nimport request from 'supertest';\n\ndescribe('ResearchChatController [FRD-F-04-01 / US-053 / ST-US053-BE-04]', () => {\n  it('should return 200 and filtered chats for valid request', async () => {\n    // TODO: Test happy path\n  });\n\n  it('should return 400 for invalid query parameters', async () => {\n    // TODO: Test validation error\n  });\n\n  it('should return 401 for unauthenticated request', async () => {\n    // TODO: Test authentication error\n  });\n\n  it('should return 200 and empty array if no chats match', async () => {\n    // TODO: Test empty result\n  });\n\n  it('should return 500 on DB error', async () => {\n    // TODO: Simulate DB error\n  });\n});"},{"feature":"F-04-01","story":"US-053","subtask":"ST-US053-BE-04","subtaskName":"Write unit and integration tests for filtering, validation, and error handling","team":"BE","folder":"tests/backend","file":"backend/tests/service/research-chat.service.spec.ts","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * @file        backend/tests/service/research-chat.service.spec.ts\n * @module      research-verification\n * @layer       test\n *\n * @description\n * Jest unit and integration tests for ResearchChatService filtering, validation, and error handling.\n *\n * @frd                F-04-01 — Search Previous Research Chats\n * @epic               EPIC-04 — Research Verification Workflow\n * @userStory          US-053 — System retrieves and filters previous research chats (Backend)\n * @subTask            ST-US053-BE-04\n * @acceptanceCriteria\n *  - AC-1: Only chats for authenticated user returned\n *  - AC-2: All filters combinable and validated\n *  - AC-3: Invalid params → 400\n *  - AC-4: Empty result → []\n *  - AC-5: DB error → 500\n *\n * @frdContext\n * Tests cover all business rules and edge cases for research chat search/filter logic.\n *\n * @since 2026-04-28\n */\nimport { ResearchChatService } from '../../service/research-chat.service';\n\ndescribe('ResearchChatService.getFilteredChats [FRD-F-04-01 / US-053 / ST-US053-BE-04]', () => {\n  it('should return filtered chats for valid user and filters', () => {\n    // TODO: Test happy path with all filters\n  });\n\n  it('should return empty array when no chats match filters', () => {\n    // TODO: Test empty result\n  });\n\n  it('should throw ValidationException for invalid params', () => {\n    // TODO: Test invalid input\n  });\n\n  it('should throw DatabaseException on DB error', () => {\n    // TODO: Simulate DB error\n  });\n\n  it('should only return chats for the authenticated user', () => {\n    // TODO: Test user isolation\n  });\n});"},{"feature":"F-04-01","story":"US-054","subtask":"ST-US054-FE-01","subtaskName":"Design ChatDetailsPanel UI to Display Chat Details and Message History","team":"FE","folder":"frontend/app","file":"frontend/app/research-chats/[chatId]/page.tsx","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"import { ChatDetailsPanel } from '@/components/researchchats/ChatDetailsPanel';\n/**\n * App Router page for Chat Details.\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-054 / ST: ST-US054-FE-01\n */\nexport default function ChatDetailsPage() {\n  // TODO: Fetch chatId param, render ChatDetailsPanel\n  return (\n    <main className=\"container mx-auto p-6\">\n      <ChatDetailsPanel />\n    </main>\n  );\n}"},{"feature":"F-04-01","story":"US-054","subtask":"ST-US054-FE-01","subtaskName":"Design ChatDetailsPanel UI to Display Chat Details and Message History","team":"FE","folder":"frontend/components","file":"frontend/components/researchchats/ChatDetailsPanel.tsx","fileType":"typescript","generated":"YES","status":"Done","notes":"","content":"/**\n * ChatDetailsPanel\n * Traceability: FRD: F-04-01 / EPIC: EPIC-04 / US: US-054 / ST: ST-US054-FE-01\n */\nexport function ChatDetailsPanel() {\n  // TODO: Fetch and display chat details, handle loading/error\n}"}];
+const $ = (id) => document.getElementById(id);
+
+function statusBadge(r) {
+  if (r.status === 'Done' && r.generated === 'YES_SYNTHESIZED') return '<span class="badge synth">synth</span>';
+  if (r.status === 'Done') return '<span class="badge done">Done</span>';
+  if (r.status === 'ToDo') return '<span class="badge todo">ToDo</span>';
+  if (r.status === 'WIP')  return '<span class="badge wip">WIP</span>';
+  if (r.status === 'Failed') return '<span class="badge todo">Failed</span>';
+  return '';
+}
+
+function rowMatches(r, f) {
+  if (f.team && r.team !== f.team) return false;
+  if (f.status && r.status !== f.status) return false;
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    if (![r.feature, r.story, r.subtask, r.subtaskName, r.file].some((s) => s && s.toLowerCase().includes(q))) return false;
+  }
+  return true;
+}
+
+function rebuildTree() {
+  const filter = { team: $('filter-team').value, status: $('filter-status').value, q: $('filter-search').value };
+  const visible = ROWS.filter((r) => rowMatches(r, filter));
+  const byFeature = new Map();
+  for (const r of visible) {
+    if (!byFeature.has(r.feature)) byFeature.set(r.feature, new Map());
+    const bs = byFeature.get(r.feature);
+    if (!bs.has(r.story)) bs.set(r.story, new Map());
+    const bst = bs.get(r.story);
+    if (!bst.has(r.subtask)) bst.set(r.subtask, []);
+    bst.get(r.subtask).push(r);
+  }
+  const root = $('tree-root');
+  root.innerHTML = '';
+  for (const [feat, stories] of byFeature) {
+    const fEl = document.createElement('div');
+    fEl.className = 'feature open';
+    const head = document.createElement('div');
+    head.className = 'head';
+    let featTotal = 0; for (const m of stories.values()) for (const arr of m.values()) featTotal += arr.length;
+    head.textContent = feat + '  (' + featTotal + ' files)';
+    head.onclick = () => fEl.classList.toggle('open');
+    fEl.appendChild(head);
+    for (const [story, sts] of stories) {
+      const sEl = document.createElement('div');
+      sEl.className = 'story open';
+      const sHead = document.createElement('div');
+      sHead.className = 'head';
+      let stCount = 0; for (const arr of sts.values()) stCount += arr.length;
+      sHead.textContent = story + '  (' + stCount + ' files)';
+      sHead.onclick = () => sEl.classList.toggle('open');
+      sEl.appendChild(sHead);
+      for (const [stId, files] of sts) {
+        const stEl = document.createElement('div');
+        stEl.className = 'subtask';
+        const stName = files[0].subtaskName || '';
+        stEl.innerHTML = '<b>' + stId + '</b> <span style="color:#94A3B8">' + (stName ? '— ' + stName.slice(0,40) + (stName.length>40?'…':'') : '') + '</span> (' + files.length + ')';
+        stEl.onclick = () => {
+          document.querySelectorAll('aside .subtask').forEach(e => e.classList.remove('selected'));
+          stEl.classList.add('selected');
+          showSubtaskDetail(stId, files);
+        };
+        sEl.appendChild(stEl);
+        const filesDiv = document.createElement('div');
+        filesDiv.className = 'files-inline';
+        filesDiv.innerHTML = files.map(f => '<div>• ' + (f.folder || 'unmapped') + '/ <b>' + (f.file.split('/').pop()) + '</b> ' + statusBadge(f) + '</div>').join('');
+        sEl.appendChild(filesDiv);
+      }
+      fEl.appendChild(sEl);
+    }
+    root.appendChild(fEl);
+  }
+}
+
+function showSubtaskDetail(stId, files) {
+  const r = files[0];
+  let html = '<h2>' + stId + '</h2>';
+  html += '<div class="meta"><span><b>Team:</b> ' + r.team + '</span><span><b>Feature:</b> ' + r.feature + '</span><span><b>Story:</b> ' + r.story + '</span></div>';
+  html += '<div class="traceability"><b>SubTask:</b> ' + (r.subtaskName || '—') + '</div>';
+  html += '<h3 style="font-size:11pt;margin-top:14px;">Files (' + files.length + ')</h3>';
+  for (const f of files) {
+    html += '<div style="margin:10px 0;padding:10px;border:1px solid #E2E8F0;border-radius:6px;background:#fff;">';
+    html += '<div style="margin-bottom:6px;"><b style="font-family:Consolas,monospace;">' + f.file + '</b> ' + statusBadge(f) + '</div>';
+    html += '<div style="font-size:9pt;color:#64748B;">Folder: <b>' + f.folder + '</b> · Type: ' + f.fileType + ' · Generated: ' + f.generated + '</div>';
+    if (f.notes) html += '<div style="font-size:9pt;color:#B45309;margin-top:4px;">⚠ ' + f.notes + '</div>';
+    if (f.content) {
+      html += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:9pt;color:#64748B;">View content (first 4 KB)</summary>';
+      html += '<pre class="code">' + f.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre></details>';
+    }
+    html += '</div>';
+  }
+  $('detail-pane').innerHTML = html;
+}
+
+function rebuildTable() {
+  const filter = { team: $('filter-team').value, status: $('filter-status').value, q: $('filter-search').value };
+  const visible = ROWS.filter((r) => rowMatches(r, filter));
+  const tbody = $('table-body');
+  tbody.innerHTML = visible.map(r => {
+    return '<tr>' + ['feature','story','subtask','team','folder','file','fileType','generated','status','notes'].map(k => {
+      const v = (r[k] != null) ? String(r[k]) : '';
+      const cls = k === 'status' ? ' style="color:' + (r.status==='Done'?'#166534':r.status==='ToDo'?'#B91C1C':r.status==='WIP'?'#B45309':'#475569') + ';font-weight:600;"' : '';
+      return '<td' + cls + '>' + v.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+function applyFilters() {
+  rebuildTree();
+  rebuildTable();
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const view = btn.dataset.view;
+    ['view-explorer', 'view-table', 'view-tree'].forEach(id => {
+      const el = $(id);
+      if (id === 'view-' + view) {
+        el.style.display = '';
+        el.classList.add('active');
+      } else {
+        el.style.display = 'none';
+        el.classList.remove('active');
+      }
+    });
+  };
+});
+['filter-team','filter-status','filter-search'].forEach(id => $(id).addEventListener('input', applyFilters));
+applyFilters();
+</script>
+</body>
+</html>

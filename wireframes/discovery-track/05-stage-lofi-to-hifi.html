@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe 05 — Stage 5: Lo-fi → Hi-fi Mockups</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 05 — Stage 5: Lo-fi → Hi-fi Mockups</h1>
+  <div class="sub">Polished branded HTML mockups · Sandboxed iframe preview · Callout numbers preserved 1:1 from lo-fi</div>
+  <table>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/discovery/hifi</code></td></tr>
+    <tr><td>Stage</td><td>5 of 6 (Discovery)</td></tr>
+    <tr><td>Skill reference</td><td>skills/05-lofi-to-hifi-mockups.md</td></tr>
+    <tr><td>Invariant</td><td>Callout numbers MUST equal lo-fi's (skill 05 §7) — verified by parity check</td></tr>
+  </table>
+</div>
+
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/discovery/hifi</span>
+  </div>
+
+  <div class="app-header">
+    <div class="brand"><span class="logo">LOGO</span><span>FRD-EPICS Automation</span></div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#" class="active">Discovery</a>
+      <a href="#">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user"><span>Saurabh V.</span><span class="avatar"></span></div>
+  </div>
+
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> › <a href="#">Acme CRM</a> ›
+      <a href="00-main-pipeline.html">Discovery</a> ›
+      <span class="current">Stage 5: Hi-fi Mockups</span>
+    </div>
+    <div class="stage-status">Stage <strong>5 of 6</strong> · Discovery</div>
+  </div>
+
+  <div class="layout">
+
+    <aside class="sidebar">
+      <h4>Discovery Track</h4>
+      <div class="nav-item"><span class="dot done"></span> 1. Audio → Text</div>
+      <div class="nav-item"><span class="dot done"></span> 2. Well-formed Text</div>
+      <div class="nav-item"><span class="dot done"></span> 3. BRD</div>
+      <div class="nav-item"><span class="dot done"></span> 4. Approach Note</div>
+      <div class="nav-item"><span class="dot done"></span> 5. Lo-fi Wireframes</div>
+      <div class="nav-item active"><span class="dot active"></span> 6. Hi-fi Mockups</div>
+      <h4 style="margin-top:18px">BA Tool Flow</h4>
+      <div class="nav-item"><span class="dot"></span> 7. FRD</div>
+      <div class="nav-item"><span class="dot"></span> 8. PRD</div>
+      <div class="nav-item"><span class="dot"></span> 9. EPICs</div>
+      <div class="nav-item"><span class="dot"></span> 10. User Stories</div>
+      <div class="nav-item"><span class="dot"></span> 11. Sub Tasks</div>
+      <div class="nav-item"><span class="dot"></span> 12. LLD</div>
+      <div class="nav-item"><span class="dot"></span> 13. FTC</div>
+    </aside>
+
+    <main class="main-pane">
+
+      <h3 style="margin:0 0 4px; font-size:18px;">Stage 5 — Lo-fi → Hi-fi Mockups</h3>
+      <p style="color:var(--gray-500); font-size:13px; margin:0 0 16px;">
+        Polish each lo-fi wireframe into a branded high-fidelity HTML mockup. Callout numbers preserved 1:1 — that's the spine of the spec.
+      </p>
+
+      <!-- Inputs panel -->
+      <div class="card info" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:13px;">
+            📁 Inputs: <code>wireframes/</code> · 12 lo-fi screens · Branding from AN §3.10 · Synthetic data from AN §3.8
+          </div>
+          <button class="btn outline" style="font-size:11px;">↗ Open lo-fi gallery</button>
+        </div>
+        <span class="callout" style="top:8px; right:8px;">1</span>
+      </div>
+
+      <!-- Synthetic data + branding state -->
+      <div style="display:flex; gap:12px;">
+        <div class="card solid" style="flex:1; position:relative;">
+          <div class="card-title">Synthetic data seed</div>
+          <div style="font-size:12px;">
+            Same characters / values across all hi-fi screens for coherent demo:<br>
+            <code style="font-size:11px;">Mr Rajesh Sharma · cust#142 · 22K bangle DB-2241 · ₹1.42L · ...</code>
+          </div>
+          <div style="margin-top:6px; font-size:11px; color:var(--gray-500);">
+            Same Mr Sharma appears on chat / detail / list screens with consistent attributes
+          </div>
+          <span class="callout" style="top:8px; right:8px;">2</span>
+        </div>
+        <div class="card solid" style="flex:1; position:relative;">
+          <div class="card-title">Branding (read-only · from AN §3.10)</div>
+          <div style="display:flex; gap:6px; align-items:center; font-size:12px; flex-wrap:wrap;">
+            <span class="swatch" style="background:#0B1B2E;"></span> primary
+            <span class="swatch" style="background:#FFFFFF;"></span> surface
+            <span class="swatch" style="background:#F97316;"></span> CTA
+            <span class="swatch" style="background:#14b8a6;"></span> Haiku
+            <span class="swatch" style="background:#6366f1;"></span> Sonnet
+            <span class="swatch" style="background:#a855f7;"></span> Opus
+          </div>
+          <span class="callout" style="top:8px; right:8px;">3</span>
+        </div>
+      </div>
+
+      <!-- Hi-fi gallery (sandboxed iframes) -->
+      <div class="card solid" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="card-title" style="margin:0;">Hi-fi Gallery (12 screens)</div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn outline" style="font-size:11px;">View · grid</button>
+            <button class="btn outline" style="font-size:11px;">View · single</button>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
+          <div class="iframe-frame" style="position:relative;">
+            <div style="margin-top:14px;"><strong>05 Stock Browser · Hi-fi</strong></div>
+            <div style="margin-top:8px; font-size:11px; opacity:0.6;">[ Polished hi-fi mock with branding · sandboxed iframe ]</div>
+            <span class="callout" style="top:6px; right:6px;">4</span>
+          </div>
+          <div class="iframe-frame">
+            <div style="margin-top:14px;"><strong>02 Main Chat · Hi-fi</strong></div>
+            <div style="margin-top:8px; font-size:11px; opacity:0.6;">[ Polished hi-fi mock with branding · sandboxed iframe ]</div>
+          </div>
+          <div class="iframe-frame">
+            <div style="margin-top:14px;"><strong>04 Customer Detail · Hi-fi</strong></div>
+            <div style="margin-top:8px; font-size:11px; opacity:0.6;">[ Polished hi-fi mock with branding · sandboxed iframe ]</div>
+          </div>
+          <div class="iframe-frame">
+            <div style="margin-top:14px;"><strong>07 Admin Panel · Hi-fi</strong></div>
+            <div style="margin-top:8px; font-size:11px; opacity:0.6;">[ Polished hi-fi mock with branding · sandboxed iframe ]</div>
+          </div>
+        </div>
+        <div style="text-align:center; margin-top:8px; font-size:11px; color:var(--gray-500);">+ 8 more screens (scroll)</div>
+      </div>
+
+      <!-- Per-screen drill: state variants + annotations drawer -->
+      <div class="card active" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="card-title" style="margin:0; color:var(--brand-cta);">▶ Active screen: 05 Stock Browser</div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn outline" style="font-size:11px;">▢ Default</button>
+            <button class="btn outline" style="font-size:11px;">⟳ Loading</button>
+            <button class="btn outline" style="font-size:11px;">∅ Empty</button>
+            <button class="btn outline" style="font-size:11px;">⚠ Error</button>
+          </div>
+        </div>
+        <span class="callout" style="top:8px; right:140px;">5</span>
+
+        <div class="iframe-frame" style="min-height:280px; position:relative;">
+          <div style="margin-top:18px; text-align:center;">
+            <div style="background:#0B1B2E; color:#F97316; padding:8px; border-radius:4px; display:inline-block; font-weight:bold;">[ HI-FI · Stock Browser ]</div>
+            <div style="margin-top:14px; font-size:11px; opacity:0.7;">14 callouts overlaid (matching lo-fi 05) · branded · synthetic data populated · sandboxed iframe with same-origin off</div>
+          </div>
+          <span class="callout" style="top:6px; left:6px;">6</span>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+          <button class="btn outline" style="font-size:11px;">📋 Show annotations drawer</button>
+          <span style="font-size:11px; color:var(--gray-500);">— side panel listing all 14 callouts with descriptions; off by default for clean visual review</span>
+        </div>
+        <span class="callout" style="bottom:36px; left:160px;">7</span>
+      </div>
+
+      <!-- Callout parity check (the invariant) -->
+      <div class="card success" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="card-title" style="margin:0; color:var(--color-success);">Callout parity check · skill 05 §7 invariant</div>
+          <span class="badge done">✓ 12/12 screens match</span>
+        </div>
+        <div style="font-size:12px; margin-top:6px;">
+          Every hi-fi screen has the same callout numbers as its lo-fi counterpart. New hi-fi-only annotations use letter suffixes (e.g. <code>3a</code>) — never renumber.
+        </div>
+        <table style="width:100%; margin-top:6px; font-size:11px;">
+          <tr><td style="padding:3px 6px; color:var(--gray-600);">05 Stock Browser</td><td style="padding:3px 6px;">14 callouts in lo-fi · 14 in hi-fi · <span style="color:var(--color-success);">✓ match</span></td></tr>
+          <tr><td style="padding:3px 6px; color:var(--gray-600);">02 Main Chat</td><td style="padding:3px 6px;">14 in lo-fi · 14 in hi-fi · <span style="color:var(--color-success);">✓ match</span></td></tr>
+          <tr><td style="padding:3px 6px; color:var(--gray-600);">04 Customer Detail</td><td style="padding:3px 6px;">9 in lo-fi · 10 in hi-fi (added <code>3a</code> for keyboard shortcut) · <span style="color:var(--color-success);">✓ match (suffix used)</span></td></tr>
+        </table>
+        <span class="callout" style="top:8px; right:140px;">8</span>
+      </div>
+
+      <!-- Phase-2 design system overrides -->
+      <div class="card warn" style="position:relative; opacity:0.65;">
+        <div class="card-title">🎨 Design system overrides (Phase 2)</div>
+        <div style="font-size:12px; color:var(--gray-500);">
+          Phase 2 will add: per-tenant theme overrides, dark/light variants, mobile / tablet adaptations, Figma token export.
+        </div>
+        <span class="badge p2" style="position:absolute; top:8px; right:8px;">Phase 2</span>
+        <span class="callout" style="top:8px; left:240px;">9</span>
+      </div>
+
+      <!-- Action bar -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; position:relative;">
+        <div style="display:flex; gap:6px;">
+          <button class="btn outline">📥 Download bundle (.zip)</button>
+          <button class="btn outline">🖨 Print to PDF (per @media print)</button>
+        </div>
+        <button class="btn primary" style="padding:8px 20px;">Continue to FRD / PRD / EPICs ▶ <span style="font-size:10px; opacity:0.8; margin-left:4px;">(BA Tool flow)</span></button>
+        <span class="callout" style="bottom:36px; right:14px;">10</span>
+      </div>
+
+    </main>
+
+    <aside class="rightrail">
+      <h4>Reference template</h4>
+      <div style="font-size:12px; padding:8px; background:var(--existing-tint); border-radius:4px; border-left:3px solid var(--color-info); margin-bottom:14px;">
+        See what a polished hi-fi gallery looks like:<br>
+        <a href="#" style="color:var(--color-info);">📄 Shivam Jewels CRM (14 hi-fi screens)</a>
+        <div style="font-size:10px; color:var(--gray-500); margin-top:4px;">Bundled as default template</div>
+      </div>
+      <span class="callout" style="top:34px; right:14px;">11</span>
+
+      <h4>Lo-fi parity</h4>
+      <div style="font-size:12px; margin-bottom:14px;">
+        <div>Lo-fi callouts: <strong>148 total</strong></div>
+        <div>Hi-fi callouts: <strong>149 total</strong> (1 suffix added)</div>
+        <div style="color:var(--color-success); margin-top:4px;">✓ Invariant holds</div>
+      </div>
+
+      <h4>Output</h4>
+      <div style="font-size:12px;">
+        Will produce: <code>hifi-mockups/</code><br>
+        ├ <code>00-overview.html</code><br>
+        ├ <code>{NN}-{slug}.html</code> × 12<br>
+        └ <code>hifi.css</code><br>
+        <span style="font-size:11px; color:var(--gray-500);">No .md files at this stage — hi-fi is HTML-only</span>
+      </div>
+
+      <h4 style="margin-top:14px;">Handoff</h4>
+      <div style="font-size:11px; color:var(--gray-600);">
+        After this stage, Discovery is complete. Discovery artefacts (BRD, AN, lo-fi, hi-fi) become available as context for the existing BA Tool module flow (Stages 7–13).
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Element</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td><td>Lo-fi-as-input chip — locked snapshot of the wireframe set. Re-rendering hi-fi from a newer lo-fi requires explicit user action.</td><td>NEW · <code>ArtifactRefChip.tsx</code></td></tr>
+      <tr><td><span class="num">2</span></td><td><strong>Synthetic data seed</strong> — same characters/values used across all hi-fi screens for demo coherence. Per skill 05 §3 step 2.</td><td>NEW · seeded from AN §3.8 or per-project</td></tr>
+      <tr><td><span class="num">3</span></td><td>Branding (read-only) — inherited from AN §3.10. Includes model-badge tints (Haiku=teal, Sonnet=indigo, Opus=violet) per skill 05 §6 hifi.css.</td><td>NEW · reads from AN</td></tr>
+      <tr><td><span class="num">4</span></td><td><strong>Sandboxed iframe per hi-fi screen</strong> — same-origin off, preserves callout interactivity, prevents XSS from generated HTML. Per decision #4.</td><td>NEW · extends <code>ArtifactViewer</code></td></tr>
+      <tr><td><span class="num">5</span></td><td><strong>State variant toggles</strong> — Default · Loading · Empty · Error. Each screen ships with all 4 states. Per skill 05 §9 quality criteria.</td><td>NEW · <code>StateVariantToggle.tsx</code></td></tr>
+      <tr><td><span class="num">6</span></td><td>Active sandboxed iframe — full hi-fi rendering with synthetic data, branding, and original callout numbers overlaid as floating badges.</td><td>NEW</td></tr>
+      <tr><td><span class="num">7</span></td><td>Annotations drawer toggle — side panel lists all callouts with descriptions; off by default. Skill 05 §7 rule 3.</td><td>NEW · <code>AnnotationsDrawer.tsx</code></td></tr>
+      <tr><td><span class="num">8</span></td><td><strong>Callout parity check · the invariant</strong> — verifies hi-fi callout numbers equal lo-fi 1:1. Letter suffixes (e.g. <code>3a</code>) allowed for hi-fi-only additions. Per skill 05 §7 rule 1.</td><td>NEW · <code>parity.validator.ts</code></td></tr>
+      <tr><td><span class="num">9</span></td><td><strong>Phase-2 design system overrides</strong> — visibly disabled. Per-tenant themes, dark mode, mobile/tablet, Figma token export.</td><td>P2 placeholder</td></tr>
+      <tr><td><span class="num">10</span></td><td>Continue CTA — handoff to BA Tool flow (Stage 7 FRD onwards). Discovery artefacts become available as multi-source context for EPIC generation (Phase 1: AN-only).</td><td>NEW · cross-track navigation</td></tr>
+      <tr><td><span class="num">11</span></td><td><strong>Reference template panel</strong> — links to bundled Shivam Jewels hi-fi example (14 screens). End user sees what a polished output looks like.</td><td>NEW · static template registry</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Components Inventory</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/hifi/page.tsx</code></td><td>Gallery + active-screen view</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/HifiGallery.tsx</code></td><td>Sandboxed iframe grid</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/StateVariantToggle.tsx</code></td><td>4-state toggle (default/loading/empty/error)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/AnnotationsDrawer.tsx</code></td><td>Side drawer listing callouts</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ParityCheckPanel.tsx</code></td><td>Callout parity status</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/ArtifactViewer.tsx</code></td><td>Existing viewer extended for sandboxed iframe</td><td>EXTEND (small)</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/hifi.service.ts</code></td><td><code>generateSet(wireframeSetId), validateParity, exportBundle</code></td><td>NEW</td></tr>
+      <tr><td>Prisma: <code>HifiSet</code> + <code>HifiScreen</code></td><td>Set has {wireframeSetId, brandTokens, syntheticDataSeed}; Screen has {sequenceNum, slug, htmlContent, calloutsJson, parityStatus}</td><td>NEW (1 migration, 2 tables)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>Empty</strong> — lo-fi locked but hi-fi not yet generated → "Generate hi-fi from lo-fi" CTA prominent</li>
+    <li><strong>Generating</strong> — LLM running per-screen → progress bar, gallery fills sequentially</li>
+    <li><strong>Parity check passes</strong> — Continue CTA enabled</li>
+    <li><strong>Parity check fails</strong> — red banner: "Screen 04 has callout 5 in hi-fi but not in lo-fi" → must fix before Continue</li>
+    <li><strong>State variant view</strong> — user toggles to "Loading" → all gallery iframes swap to skeleton state</li>
+    <li><strong>Annotations drawer open</strong> — overlay shows callout list; clicking a callout scrolls iframe to that element</li>
+    <li><strong>Lo-fi changed</strong> — banner: "Lo-fi has been edited since hi-fi was generated · Re-render hi-fi to keep in sync"</li>
+    <li><strong>Print mode</strong> — <code>@media print</code> hides drawer, state toggles, pager — clean PDF export per skill 05 §6</li>
+  </ul>
+</section>
+
+<nav class="pager">
+  <a href="04-stage-an-to-lofi.html">◀ Stage 4: AN → Lo-fi</a>
+  <span class="counter">Wireframe 05 of 06 · Stage 5 detail</span>
+  <a href="06-stage-epic-integration.html">Stage 6: EPIC Integration ▶</a>
+</nav>
+
+</body>
+</html>

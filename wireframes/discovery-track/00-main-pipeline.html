@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe — Discovery & Solutioning Track (Main Pipeline)</title>
+<style>
+  :root {
+    --brand-primary: #0B1B2E;     /* Dark blue */
+    --brand-surface: #FFFFFF;     /* White */
+    --brand-cta: #F97316;         /* Orange — used for CTA + callouts */
+    --brand-cta-hover: #EA670D;
+    --gray-50:#fafafa; --gray-100:#f4f4f5; --gray-200:#e4e4e7;
+    --gray-300:#d4d4d8; --gray-400:#a1a1aa; --gray-500:#71717a;
+    --gray-600:#52525b; --gray-700:#3f3f46; --gray-800:#27272a;
+    --color-success:#16a34a; --color-warn:#d97706; --color-info:#2563eb;
+    --discovery-tint:#fff7ed;     /* peach — visually marks "new" stages */
+    --existing-tint:#eff6ff;      /* sky — visually marks "existing" stages */
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--gray-100);
+    color: var(--gray-800);
+    margin: 0; padding: 24px;
+    font-size: 14px; line-height: 1.5;
+  }
+  .meta {
+    background: white; border: 1px solid var(--gray-200);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.05);
+  }
+  .meta h1 { margin: 0 0 4px; font-size: 18px; }
+  .meta .sub { color: var(--gray-500); font-size: 12px; }
+  .meta table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12px; }
+  .meta td { padding: 4px 8px; border-bottom: 1px dashed var(--gray-200); }
+  .meta td:first-child { color: var(--gray-500); width: 160px; }
+
+  /* Browser-style screen frame */
+  .screen {
+    background: white; border: 1px solid var(--gray-300);
+    border-radius: 8px; overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,.06);
+    margin-bottom: 16px;
+  }
+  .browser-bar {
+    background: var(--gray-100); border-bottom: 1px solid var(--gray-200);
+    padding: 8px 12px; display: flex; align-items: center; gap: 8px;
+    font-family: monospace; font-size: 12px; color: var(--gray-600);
+  }
+  .browser-bar .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--gray-300); display: inline-block;
+  }
+  .browser-bar .url {
+    margin-left: 12px; padding: 4px 10px;
+    background: white; border: 1px solid var(--gray-200);
+    border-radius: 4px; flex: 1;
+  }
+
+  /* App header */
+  .app-header {
+    background: var(--brand-primary); color: white;
+    padding: 12px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: relative;
+  }
+  .app-header .brand { display: flex; gap: 10px; align-items: center; font-weight: 600; }
+  .app-header .logo {
+    width: 28px; height: 28px; border: 1px dashed rgba(255,255,255,.5);
+    border-radius: 4px; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: rgba(255,255,255,.7);
+  }
+  .app-header .nav-links { display: flex; gap: 18px; font-size: 13px; }
+  .app-header .nav-links a {
+    color: rgba(255,255,255,.7); text-decoration: none;
+  }
+  .app-header .nav-links a.active { color: white; border-bottom: 2px solid var(--brand-cta); padding-bottom: 2px; }
+  .app-header .user {
+    display: flex; gap: 8px; align-items: center; font-size: 13px;
+  }
+  .app-header .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(255,255,255,.15); border: 1px dashed rgba(255,255,255,.3);
+  }
+
+  /* Sub-header / breadcrumb + status */
+  .subheader {
+    background: var(--gray-50); border-bottom: 1px solid var(--gray-200);
+    padding: 14px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: relative;
+  }
+  .breadcrumb { font-size: 12px; color: var(--gray-500); }
+  .breadcrumb a { color: var(--gray-500); text-decoration: none; }
+  .breadcrumb .current { color: var(--gray-800); font-weight: 600; }
+  .subheader-actions { display: flex; gap: 8px; }
+
+  /* Body */
+  .app-body { padding: 24px; background: white; position: relative; }
+
+  /* Pipeline section */
+  .pipeline-row {
+    display: flex; align-items: stretch; gap: 0;
+    margin: 24px 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px;
+  }
+  .pipeline-row.discovery .stage-card { background: var(--discovery-tint); }
+  .pipeline-row.existing .stage-card { background: var(--existing-tint); }
+
+  .stage-card {
+    flex: 1 1 0; min-width: 95px;
+    border: 2px dashed var(--gray-300); border-radius: 8px;
+    padding: 10px 8px; margin: 0 3px;
+    position: relative;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .stage-card.solid { border-style: solid; border-color: var(--gray-400); }
+  .stage-card.active { border-color: var(--brand-cta); border-style: solid; box-shadow: 0 0 0 3px rgba(249,115,22,.15); }
+  .stage-card.locked { opacity: 0.55; }
+
+  .stage-num {
+    font-weight: 700; font-size: 10px;
+    color: var(--gray-500); letter-spacing: .04em;
+  }
+  .stage-title { font-weight: 600; font-size: 12px; line-height: 1.25; }
+  .stage-sub { font-size: 10px; color: var(--gray-500); line-height: 1.3; }
+  .stage-status { margin-top: 4px; font-size: 10px; }
+  .badge {
+    display: inline-block; padding: 1px 5px;
+    border-radius: 999px; font-size: 9px; font-weight: 600;
+    border: 1px solid; align-self: flex-start;
+  }
+  .badge.done   { color: var(--color-success); border-color: var(--color-success); background: #f0fdf4; }
+  .badge.active { color: var(--brand-cta); border-color: var(--brand-cta); background: #fff7ed; }
+  .badge.todo   { color: var(--gray-500); border-color: var(--gray-300); background: white; }
+  .badge.locked { color: var(--gray-400); border-color: var(--gray-300); background: var(--gray-100); }
+  .badge.p2     { color: var(--color-info); border-color: var(--color-info); background: #eff6ff; }
+
+  .row-label {
+    width: 100px; flex: 0 0 100px;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 0 8px; border-right: 1px dashed var(--gray-200);
+    margin-right: 4px;
+  }
+  .row-label .lbl { font-weight: 700; font-size: 11px; letter-spacing: .04em; color: var(--gray-700); }
+  .row-label .desc { font-size: 10px; color: var(--gray-500); margin-top: 2px; }
+
+  .arrow {
+    align-self: center;
+    color: var(--gray-400); font-size: 13px; padding: 0;
+  }
+
+  /* Handoff divider */
+  .handoff {
+    margin: 16px 0; padding: 8px 12px;
+    background: var(--gray-50); border: 1px dashed var(--gray-300); border-radius: 6px;
+    text-align: center; font-size: 12px; color: var(--gray-600);
+    position: relative;
+  }
+
+  /* Stage detail panel */
+  .stage-detail {
+    margin-top: 24px;
+    border: 1px dashed var(--gray-400); border-radius: 8px;
+    padding: 18px; position: relative;
+    background: var(--gray-50);
+  }
+  .stage-detail h3 { margin: 0 0 8px; font-size: 16px; }
+  .stage-detail .row { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 8px; }
+  .stage-detail .field { display: flex; flex-direction: column; gap: 2px; }
+  .stage-detail .field .lbl { font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: .04em; }
+  .stage-detail .field .val { font-size: 13px; }
+  .versions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .version-chip {
+    font-size: 11px; padding: 4px 8px; border-radius: 4px;
+    border: 1px dashed var(--gray-300); background: white;
+  }
+  .version-chip.active { border: 2px solid var(--brand-cta); background: #fff7ed; font-weight: 600; }
+  .detail-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 6px; font-size: 13px;
+    border: 1px dashed var(--gray-400); background: white; color: var(--gray-700);
+    cursor: pointer; text-decoration: none;
+  }
+  .btn.primary { background: var(--brand-cta); color: white; border: none; font-weight: 600; }
+  .btn.outline { border: 1px solid var(--gray-400); }
+  .btn.disabled { opacity: 0.5; cursor: not-allowed; background: var(--gray-100); }
+  .btn .p2-tag { font-size: 10px; padding: 1px 4px; background: var(--color-info); color: white; border-radius: 3px; margin-left: 4px; }
+
+  /* Sidebar (left rail) */
+  .layout { display: flex; gap: 0; min-height: 600px; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    border-right: 1px solid var(--gray-200);
+    padding: 16px 12px; background: var(--gray-50);
+  }
+  .sidebar h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-500); }
+  .sidebar .nav-item {
+    padding: 8px 10px; border-radius: 4px; font-size: 13px;
+    color: var(--gray-700); margin-bottom: 2px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .sidebar .nav-item.active { background: white; border: 1px solid var(--gray-200); font-weight: 600; }
+  .sidebar .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gray-300); }
+  .sidebar .nav-item .dot.done { background: var(--color-success); }
+  .sidebar .nav-item .dot.active { background: var(--brand-cta); }
+
+  .main-pane { flex: 1; padding: 0; }
+
+  /* Callouts */
+  .callout {
+    position: absolute; z-index: 10;
+    width: 20px; height: 20px;
+    background: var(--brand-cta); color: white;
+    border-radius: 50%; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,.2);
+    border: 2px solid white;
+  }
+
+  /* Annotations table */
+  .annotations {
+    background: white; border: 1px solid var(--gray-200);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .annotations h2 { margin: 0 0 12px; font-size: 16px; }
+  .annotations table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .annotations th, .annotations td {
+    padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--gray-200); vertical-align: top;
+  }
+  .annotations th { background: var(--gray-50); font-weight: 600; font-size: 12px; }
+  .annotations .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--brand-cta); color: white; font-size: 11px; font-weight: 700;
+  }
+  .annotations .ref { font-family: monospace; font-size: 11px; color: var(--gray-600); }
+
+  /* Components inventory + states */
+  .info-block {
+    background: white; border: 1px solid var(--gray-200);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .info-block h2 { margin: 0 0 12px; font-size: 16px; }
+  .info-block table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .info-block th, .info-block td { padding: 6px 10px; border-bottom: 1px solid var(--gray-200); text-align: left; }
+  .info-block th { background: var(--gray-50); font-weight: 600; font-size: 12px; }
+  .info-block code { background: var(--gray-100); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  .info-block ul { margin: 4px 0; padding-left: 20px; }
+  .info-block ul li { margin-bottom: 4px; font-size: 13px; }
+
+  .legend {
+    display: flex; gap: 16px; margin: 8px 0 16px; font-size: 12px; flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch {
+    width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--gray-300);
+  }
+
+  @media print {
+    body { background: white; padding: 0; }
+    .screen, .meta, .annotations, .info-block { box-shadow: none; page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 00 — Discovery & Solutioning Track · Main Pipeline View</h1>
+  <div class="sub">For review only · Do not start development until approved</div>
+  <table>
+    <tr><td>Document</td><td>Main pipeline view (entry point of the new track)</td></tr>
+    <tr><td>Project</td><td>FRD-EPICS-Automation — Discovery & Solutioning extension</td></tr>
+    <tr><td>Date</td><td>2026-04-30</td></tr>
+    <tr><td>Fidelity</td><td>Lo-fi (sketches; hi-fi follows after approval)</td></tr>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/discovery</code></td></tr>
+    <tr><td>Pipeline scope</td><td>13 stages = 5 new (Discovery) + 8 existing (BA Tool flow, reused)</td></tr>
+    <tr><td>Architectural intent</td><td>Parallel track at project level — does NOT modify existing module flow / SkillStepper</td></tr>
+  </table>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--discovery-tint)"></span> New stages (Discovery)</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--existing-tint)"></span> Existing BA Tool stages (reused)</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#fff7ed;border-color:var(--brand-cta)"></span> Active stage</span>
+    <span class="legend-item"><span class="callout" style="position:static;width:18px;height:18px;font-size:10px">N</span> Annotation callout</span>
+  </div>
+</div>
+
+<!-- ===================== SCREEN ===================== -->
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/discovery</span>
+  </div>
+
+  <!-- App header -->
+  <div class="app-header">
+    <div class="brand">
+      <span class="logo">LOGO</span>
+      <span>FRD-EPICS Automation</span>
+    </div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#" class="active">Discovery</a>
+      <a href="#">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user">
+      <span>Saurabh V.</span>
+      <span class="avatar"></span>
+    </div>
+    <span class="callout" style="top:14px; right:240px;">1</span>
+  </div>
+
+  <!-- Sub-header (breadcrumb + project context + actions) -->
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> ›
+      <a href="#">Acme CRM</a> ›
+      <span class="current">Discovery & Solutioning</span>
+    </div>
+    <div class="subheader-actions">
+      <button class="btn outline">Open BA Module ▶</button>
+      <button class="btn outline">Generate Budget Estimate <span class="p2-tag">P2</span></button>
+      <button class="btn outline">Share with Client <span class="p2-tag">P2</span></button>
+    </div>
+    <span class="callout" style="top:8px; left:280px;">2</span>
+    <span class="callout" style="top:8px; right:340px;">3</span>
+  </div>
+
+  <!-- Layout: sidebar + main -->
+  <div class="layout">
+
+    <!-- SIDEBAR (left rail listing all 13 stages, vertical) -->
+    <aside class="sidebar">
+      <h4 style="display:flex; align-items:center; gap:8px;">
+        <span class="callout" style="position:static; width:20px; height:20px; font-size:11px;">4</span>
+        Discovery Track
+      </h4>
+      <div class="nav-item"><span class="dot done"></span> 1. Audio → Text</div>
+      <div class="nav-item"><span class="dot done"></span> 2. Well-formed Text</div>
+      <div class="nav-item"><span class="dot done"></span> 3. BRD</div>
+      <div class="nav-item active"><span class="dot active"></span> 4. Approach Note (v2)</div>
+      <div class="nav-item"><span class="dot"></span> 5. Lo-fi Wireframes</div>
+      <div class="nav-item"><span class="dot"></span> 6. Hi-fi Mockups</div>
+
+      <h4 style="margin-top:18px">BA Tool Flow (existing)</h4>
+      <div class="nav-item"><span class="dot"></span> 7. FRD</div>
+      <div class="nav-item"><span class="dot"></span> 8. PRD</div>
+      <div class="nav-item"><span class="dot"></span> 9. EPICs</div>
+      <div class="nav-item"><span class="dot"></span> 10. User Stories</div>
+      <div class="nav-item"><span class="dot"></span> 11. Sub Tasks</div>
+      <div class="nav-item"><span class="dot"></span> 12. LLD</div>
+      <div class="nav-item"><span class="dot"></span> 13. FTC</div>
+
+    </aside>
+
+    <!-- MAIN PANE -->
+    <main class="main-pane">
+      <div class="app-body">
+
+        <!-- Pipeline visualization (horizontal) -->
+        <h3 style="margin:0 0 4px; font-size:18px;">Discovery & Solutioning Pipeline</h3>
+        <p style="color:var(--gray-500); margin: 0 0 8px; font-size:13px;">
+          Acme CRM — Status: <strong style="color:var(--brand-cta)">Stage 4 of 13</strong>
+          (Approach Note v2 active · 3 open questions)
+        </p>
+
+        <!-- Row 1: Discovery (new) -->
+        <div class="pipeline-row discovery">
+          <div class="row-label">
+            <div class="lbl" style="color:var(--brand-cta)">DISCOVERY</div>
+            <div class="desc">5 new stages</div>
+          </div>
+
+          <div class="stage-card solid">
+            <div class="stage-num">STAGE 1</div>
+            <div class="stage-title">Audio → Text</div>
+            <div class="stage-sub">Whisper / Cloud STT</div>
+            <span class="badge done">✓ DONE</span>
+            <span class="callout" style="top:6px; right:6px;">5</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card solid">
+            <div class="stage-num">STAGE 2</div>
+            <div class="stage-title">Well-formed Text</div>
+            <div class="stage-sub">Cleaned + paraphrased</div>
+            <span class="badge done">✓ DONE</span>
+            <span class="callout" style="top:6px; right:6px;">6</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card solid">
+            <div class="stage-num">STAGE 3</div>
+            <div class="stage-title">BRD</div>
+            <div class="stage-sub">15 sections · v1 signed off</div>
+            <span class="badge done">✓ DONE</span>
+            <span class="callout" style="top:6px; right:6px;">7</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card active">
+            <div class="stage-num">STAGE 4</div>
+            <div class="stage-title">Approach Note</div>
+            <div class="stage-sub">v2 (versioned, append-only)</div>
+            <span class="badge active">▶ ACTIVE</span>
+            <span class="callout" style="top:6px; right:6px;">8</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card">
+            <div class="stage-num">STAGE 5</div>
+            <div class="stage-title">Lo-fi Wireframes</div>
+            <div class="stage-sub">MD + HTML per screen</div>
+            <span class="badge todo">○ TODO</span>
+            <span class="callout" style="top:6px; right:6px;">9</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card">
+            <div class="stage-num">STAGE 6</div>
+            <div class="stage-title">Hi-fi Mockups</div>
+            <div class="stage-sub">HTML + CSS, callouts kept</div>
+            <span class="badge todo">○ TODO</span>
+            <span class="callout" style="top:6px; right:6px;">10</span>
+          </div>
+        </div>
+
+        <!-- Handoff divider -->
+        <div class="handoff">
+          ━━━━━━━━━━ HANDOFF · Discovery artefacts feed BA Tool flow as multi-source context ━━━━━━━━━━
+          <span class="callout" style="top:6px; left:12px;">11</span>
+        </div>
+
+        <!-- Row 2: existing BA flow -->
+        <div class="pipeline-row existing">
+          <div class="row-label">
+            <div class="lbl" style="color:var(--color-info)">BA TOOL FLOW</div>
+            <div class="desc">Existing · reused</div>
+          </div>
+
+          <div class="stage-card locked">
+            <div class="stage-num">STAGE 7</div>
+            <div class="stage-title">FRD</div>
+            <div class="stage-sub">Reuses ba-narrative</div>
+            <span class="badge locked">🔒 LOCKED</span>
+            <span class="callout" style="top:6px; right:6px;">12</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card locked">
+            <div class="stage-num">STAGE 8</div>
+            <div class="stage-title">PRD</div>
+            <div class="stage-sub">Reuses prd.service</div>
+            <span class="badge locked">🔒 LOCKED</span>
+            <span class="callout" style="top:6px; right:6px;">13</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card locked" style="border-color: var(--brand-cta); border-style: dashed;">
+            <div class="stage-num">STAGE 9</div>
+            <div class="stage-title">EPICs</div>
+            <div class="stage-sub">⚡ Multi-source inputs</div>
+            <span class="badge locked">🔒 LOCKED</span>
+            <span class="callout" style="top:6px; right:6px;">14</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card locked">
+            <div class="stage-num">STAGE 10</div>
+            <div class="stage-title">User Stories</div>
+            <div class="stage-sub">Existing flow</div>
+            <span class="badge locked">🔒 LOCKED</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card locked">
+            <div class="stage-num">STAGE 11</div>
+            <div class="stage-title">Sub Tasks</div>
+            <div class="stage-sub">Existing flow</div>
+            <span class="badge locked">🔒 LOCKED</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card locked">
+            <div class="stage-num">STAGE 12</div>
+            <div class="stage-title">LLD</div>
+            <div class="stage-sub">Existing workbench</div>
+            <span class="badge locked">🔒 LOCKED</span>
+          </div>
+          <div class="arrow">▶</div>
+
+          <div class="stage-card locked">
+            <div class="stage-num">STAGE 13</div>
+            <div class="stage-title">FTC</div>
+            <div class="stage-sub">Existing workbench</div>
+            <span class="badge locked">🔒 LOCKED</span>
+            <span class="callout" style="top:6px; right:6px;">15</span>
+          </div>
+        </div>
+
+        <!-- Stage Detail Panel -->
+        <div class="stage-detail">
+          <h3>📋 Stage 4 — Approach Note <span style="font-size:13px; color:var(--gray-500); font-weight:normal;">(currently selected)</span></h3>
+
+          <div class="row">
+            <div class="field"><span class="lbl">Latest version</span><span class="val">v2 · 2026-04-22</span></div>
+            <div class="field"><span class="lbl">Status</span><span class="val">▶ Active · Ready for review</span></div>
+            <div class="field"><span class="lbl">Open questions</span><span class="val">3 unresolved</span></div>
+            <div class="field"><span class="lbl">Inputs used</span><span class="val">BRD-acme-crm.md ✓</span></div>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <div class="lbl" style="font-size:11px; color:var(--gray-500); text-transform:uppercase; letter-spacing:.04em;">Versions (append-only)</div>
+            <div class="versions">
+              <span class="version-chip">v1 · 2026-04-15</span>
+              <span class="version-chip active">v2 · 2026-04-22 (current)</span>
+              <span class="version-chip" style="border-style: dashed; color: var(--gray-400);">+ New version</span>
+            </div>
+            <span class="callout" style="bottom: 90px; left: 290px;">17</span>
+          </div>
+
+          <div class="detail-actions">
+            <button class="btn outline">📄 Open in Viewer</button>
+            <button class="btn outline">⬇ Download MD</button>
+            <button class="btn outline">⬇ Download Client Edition</button>
+            <button class="btn outline">🔄 Regenerate from BRD</button>
+            <button class="btn primary">Continue to Lo-fi Wireframes ▶</button>
+            <span class="callout" style="bottom: 8px; right: 14px;">18</span>
+          </div>
+          <span class="callout" style="top: -12px; left: -12px;">16</span>
+        </div>
+
+      </div>
+    </main>
+
+  </div><!-- /.layout -->
+</div><!-- /.screen -->
+
+<!-- Phase-2 affordances note -->
+<div class="info-block">
+  <h2>Phase-2 Affordances (visibly disabled)</h2>
+  <ul>
+    <li><strong>Generate Budget Estimate</strong> — derives effort + cost from Approach Note Phase-2 roadmap. Phase 2.</li>
+    <li><strong>Share with Client</strong> — packaged share of BRD + client-edition Approach Note + hi-fi gallery URL. Phase 2.</li>
+    <li><strong>Stage 9 EPICs · Multi-source context picker</strong> — UI to mix BRD + AN + Lo-fi + Hi-fi + FRD + PRD as EPIC generation context. Phase 2 of this initiative (Phase 1 = AN-only or FRD-only).</li>
+  </ul>
+  <span class="callout" style="position:static; display:inline-flex; vertical-align:middle; margin-right:6px;">19</span>
+  <span style="font-size:12px; color:var(--gray-500)">Phase-2 items remain visibly disabled to communicate roadmap without misleading the demo audience (per skill-04 §4.7 default).</span>
+</div>
+
+<!-- ===================== ANNOTATIONS ===================== -->
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead>
+      <tr><th style="width:40px">#</th><th>Element</th><th>Maps to</th><th>Reuse / New</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td>
+        <td><strong>Global app header</strong> — logo, primary nav (Projects, <em>Discovery</em>, Modules, Sprints, RTM, Settings), user avatar. New "Discovery" tab next to "Modules".</td>
+        <td>UX pattern · header parity with existing BA Tool</td>
+        <td>Reuse existing header component; add 1 nav link</td></tr>
+
+      <tr><td><span class="num">2</span></td>
+        <td><strong>Breadcrumb</strong> — Projects › Acme CRM › Discovery & Solutioning. Confirms project scope and that this is a new track parallel to Modules.</td>
+        <td>UX pattern · matches existing project pages</td>
+        <td>Reuse breadcrumb component</td></tr>
+
+      <tr><td><span class="num">3</span></td>
+        <td><strong>Sub-header actions</strong> — "Open BA Module ▶" jumps to existing module flow (preserves continuity). "Generate Budget" + "Share with Client" are Phase-2 affordances (visibly disabled).</td>
+        <td>FR · cross-track navigation; Phase-2 hooks</td>
+        <td>New buttons; reuse <code>Button</code> primitive</td></tr>
+
+      <tr><td><span class="num">4</span></td>
+        <td><strong>Vertical stage rail (sidebar)</strong> — all 13 stages listed with status dots; visually grouped: "Discovery Track" (new) vs "BA Tool Flow" (existing). Active stage highlighted.</td>
+        <td>UX pattern · mirrors existing <code>SkillStepper</code> but vertical and 13 wide</td>
+        <td>New component <code>DiscoveryRail.tsx</code></td></tr>
+
+      <tr><td><span class="num">5</span></td>
+        <td><strong>Stage 1 — Audio → Text</strong> card. Click → `/discovery/audio`. Accepts .opus/.m4a/.wav/.mp3/.flac/.aac/.webm. Whisper local + STT provider abstraction.</td>
+        <td>Skill 01; new <code>STTProvider</code> port (LocalWhisper / OpenAI / AWSTranscribe)</td>
+        <td>NEW · service + UI</td></tr>
+
+      <tr><td><span class="num">6</span></td>
+        <td><strong>Stage 2 — Well-formed Text</strong> card. Auto-runs after audio; editable in Markdown viewer. 7-section structure.</td>
+        <td>Skill 01 §5 output template</td>
+        <td>NEW · reuses <code>MarkdownRenderer</code> + <code>AiEditableSection</code></td></tr>
+
+      <tr><td><span class="num">7</span></td>
+        <td><strong>Stage 3 — BRD</strong> card. Generated from WFT; 15 sections. Editable; sign-off-ready.</td>
+        <td>Skill 02 §5 output template</td>
+        <td>NEW · reuses <code>ArtifactViewer</code></td></tr>
+
+      <tr><td><span class="num">8</span></td>
+        <td><strong>Stage 4 — Approach Note</strong> card (ACTIVE). Versioned append-only (v1, v2, ...). Click opens version manager.</td>
+        <td>Skill 03; new versioning entity <code>ApproachNoteVersion</code></td>
+        <td>NEW · service + UI; new DB table</td></tr>
+
+      <tr><td><span class="num">9</span></td>
+        <td><strong>Stage 5 — Lo-fi Wireframes</strong> card. Generates per-screen MD+HTML + traceability matrix. ~10–14 screens typical.</td>
+        <td>Skill 04 §5 output templates</td>
+        <td>NEW · service emits .md + .html bundle to storage</td></tr>
+
+      <tr><td><span class="num">10</span></td>
+        <td><strong>Stage 6 — Hi-fi Mockups</strong> card. Polished HTML/CSS; callout numbers preserved 1:1 from lo-fi. Sandboxed iframe preview.</td>
+        <td>Skill 05 §5; <em>callout-preservation invariant</em></td>
+        <td>NEW · service + sandboxed iframe in <code>ArtifactViewer</code></td></tr>
+
+      <tr><td><span class="num">11</span></td>
+        <td><strong>Handoff divider</strong> — visually marks where new pipeline ends and existing BA Tool flow begins. Discovery artefacts pass into existing services as additional context refs.</td>
+        <td>Architectural boundary · documents reuse contract</td>
+        <td>UX pattern only</td></tr>
+
+      <tr><td><span class="num">12</span></td>
+        <td><strong>Stage 7 — FRD</strong>. Reuses existing <code>ba-narrative.service</code>. Optionally takes Approach Note as additional input.</td>
+        <td>Existing FRD generation</td>
+        <td>REUSE · small additive prompt extension</td></tr>
+
+      <tr><td><span class="num">13</span></td>
+        <td><strong>Stage 8 — PRD</strong>. Reuses existing <code>prd.service</code>. Can derive from BRD + Approach Note.</td>
+        <td>Existing PRD module</td>
+        <td>REUSE · new "create from Discovery" entry point</td></tr>
+
+      <tr><td><span class="num">14</span></td>
+        <td><strong>Stage 9 — EPICs (multi-source)</strong>. Existing EPIC generator extended to optionally accept BRD + Approach Note + Lo-fi + Hi-fi + FRD + PRD as context refs (any combination).</td>
+        <td>Existing EPIC generation; new <em>context-ref selector</em> UI</td>
+        <td>EXTEND · additive optional inputs only; existing screens-only path unchanged</td></tr>
+
+      <tr><td><span class="num">15</span></td>
+        <td><strong>Stages 10–13 (US, ST, LLD, FTC)</strong> cards. Untouched — reuse existing services and screens 100%.</td>
+        <td>Existing flow</td>
+        <td>REUSE · zero changes</td></tr>
+
+      <tr><td><span class="num">16</span></td>
+        <td><strong>Stage detail panel</strong> — context-sensitive panel that swaps content based on the selected pipeline node. Shown here in "Stage 4 Approach Note" mode.</td>
+        <td>UX pattern · single-pane workspace</td>
+        <td>NEW · <code>StageDetailPanel.tsx</code> with per-stage child components</td></tr>
+
+      <tr><td><span class="num">17</span></td>
+        <td><strong>Version chips (Approach Note)</strong> — append-only version history. Click any chip to switch view; "+ New version" creates v(N+1) preserving v(N).</td>
+        <td>Skill 03 §8 versioning rule</td>
+        <td>NEW · DB-backed versioning</td></tr>
+
+      <tr><td><span class="num">18</span></td>
+        <td><strong>Continue button (primary CTA)</strong> — advances to next stage; only enabled when current stage's quality criteria pass.</td>
+        <td>UX pattern · enforces pipeline progression</td>
+        <td>NEW · per-stage gate logic</td></tr>
+
+      <tr><td><span class="num">19</span></td>
+        <td><strong>Phase-2 affordances panel</strong> — visibly disabled buttons preserve roadmap visibility (Skill 04 §7 default).</td>
+        <td>Roadmap signal</td>
+        <td>UX pattern only</td></tr>
+
+      <tr><td><span class="num">20</span></td>
+        <td><strong>Active stage highlight</strong> — orange ring + "ACTIVE" badge on the currently in-progress stage so the user sees immediately where to resume.</td>
+        <td>UX pattern</td>
+        <td>NEW · CSS class</td></tr>
+
+      <tr><td><span class="num">21</span></td>
+        <td><strong>Stage status badges</strong> — DONE (green ✓), ACTIVE (orange ▶), TODO (grey ○), LOCKED (grey 🔒). Locked = upstream stage incomplete.</td>
+        <td>UX pattern · matches existing <code>BaModuleStatus</code> semantics</td>
+        <td>Reuse existing badge component</td></tr>
+
+      <tr><td><span class="num">22</span></td>
+        <td><strong>Visual differentiation</strong> — peach background = new Discovery stages; sky-blue background = existing BA flow. Reduces cognitive load for users familiar with the existing tool.</td>
+        <td>UX pattern</td>
+        <td>NEW · CSS</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ===================== COMPONENTS INVENTORY ===================== -->
+<section class="info-block">
+  <h2>Components Inventory (frontend) — reuse vs. new</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/page.tsx</code></td><td>This route — main pipeline view</td><td>NEW</td></tr>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/[stage]/page.tsx</code></td><td>Per-stage detail page (audio, wft, brd, approach-note, lofi, hifi)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/DiscoveryPipeline.tsx</code></td><td>13-stage pipeline visualization (this screen's centrepiece)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/DiscoveryRail.tsx</code></td><td>Vertical sidebar navigation rail</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/StageDetailPanel.tsx</code></td><td>Context-sensitive detail panel (one child per stage)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/AudioUploader.tsx</code></td><td>Audio file picker + recorder; calls STT</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/WftViewer.tsx</code></td><td>Well-formed text viewer (7-section template)</td><td>NEW (uses MarkdownRenderer)</td></tr>
+      <tr><td><code>components/ba-tool/discovery/BrdViewer.tsx</code></td><td>BRD viewer (15 sections)</td><td>NEW (uses ArtifactViewer)</td></tr>
+      <tr><td><code>components/ba-tool/discovery/ApproachNoteVersions.tsx</code></td><td>Append-only version manager (v1/v2/...)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/WireframeSetView.tsx</code></td><td>Lo-fi wireframe gallery + traceability matrix view</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/HifiMockupsView.tsx</code></td><td>Hi-fi gallery; sandboxed iframe per screen</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/ArtifactViewer.tsx</code></td><td>Existing artifact viewer (extended for sandboxed iframe)</td><td>EXTEND (small)</td></tr>
+      <tr><td><code>components/ba-tool/MarkdownRenderer.tsx</code></td><td>Markdown rendering</td><td>REUSE</td></tr>
+      <tr><td><code>components/ba-tool/AiEditableSection.tsx</code></td><td>Inline AI-assisted editing</td><td>REUSE</td></tr>
+      <tr><td><code>components/ba-tool/SkillStepper.tsx</code></td><td>Existing 8-step horizontal stepper (modules)</td><td>REUSE · UNTOUCHED</td></tr>
+      <tr><td><code>lib/ba-api.ts</code></td><td>Existing API client; add discovery endpoints</td><td>EXTEND (additive)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Backend services — reuse vs. new</h2>
+  <table>
+    <thead><tr><th>Service / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>backend/src/ba-tool/discovery/discovery.controller.ts</code></td><td>Routes for the new pipeline</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/audio-stt.service.ts</code></td><td>Stage 1 — pluggable STT (Whisper / OpenAI / AWS)</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/wft.service.ts</code></td><td>Stage 2 — well-formed-text generator (LLM)</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/brd.service.ts</code></td><td>Stage 3 — BRD generator</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/approach-note.service.ts</code></td><td>Stage 4 — versioned (append-only)</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/wireframe.service.ts</code></td><td>Stage 5 — lo-fi MD+HTML emitter</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/hifi.service.ts</code></td><td>Stage 6 — hi-fi HTML+CSS emitter (callout-preserving)</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ai/ai.service.ts</code></td><td>Existing LLM wrapper</td><td>REUSE</td></tr>
+      <tr><td><code>backend/src/ba-tool/storage/disk-storage.ts</code></td><td>Existing file storage; new keys for audio/.html bundles</td><td>REUSE (additive keys)</td></tr>
+      <tr><td><code>backend/src/ba-tool/ba-skill-orchestrator.service.ts</code></td><td>Existing orchestrator pattern; new pipeline reuses pattern</td><td>REUSE pattern · separate <code>discovery-orchestrator</code></td></tr>
+      <tr><td><code>backend/src/prd/prd.service.ts</code></td><td>Stage 8 — existing PRD service</td><td>REUSE · new "from Discovery" entry</td></tr>
+      <tr><td><code>backend/src/ba-tool/ba-narrative.service.ts</code></td><td>Stages 7/9–11 — existing FRD/EPIC/US/ST</td><td>REUSE · optional context-ref params</td></tr>
+      <tr><td><code>backend/src/ba-tool/ba-lld.service.ts</code></td><td>Stage 12 — existing</td><td>REUSE · UNTOUCHED</td></tr>
+      <tr><td><code>backend/src/ba-tool/ba-ftc.service.ts</code></td><td>Stage 13 — existing</td><td>REUSE · UNTOUCHED</td></tr>
+      <tr><td>Prisma migrations</td><td>New tables: <code>WFT</code>, <code>BRD</code>, <code>ApproachNote</code>, <code>ApproachNoteVersion</code>, <code>WireframeSet</code>, <code>HifiSet</code>; FK to existing <code>BaProject</code></td><td>NEW (3 migrations)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>Empty</strong> — no audio uploaded yet → only Stage 1 unlocked; CTA "Upload audio to start"</li>
+    <li><strong>Loading</strong> — STT running / LLM generating → stage card shows spinner + estimated time</li>
+    <li><strong>Error</strong> — STT failure / LLM rate-limit → inline error with retry; doesn't break pipeline state</li>
+    <li><strong>First-run mode</strong> — no project context → wizard prompt: "Start a new Discovery from audio?"</li>
+    <li><strong>Resumed session</strong> — user returns mid-pipeline → highlight Stage N (active), scroll into view</li>
+    <li><strong>Branched flow</strong> — user jumps to existing BA module without completing Discovery → confirm dialog ("Discovery is incomplete; some context will be missing")</li>
+    <li><strong>Concurrency</strong> — two team members editing same Approach Note → optimistic-lock check; latest version wins</li>
+    <li><strong>Phase-2 mode</strong> — disabled affordances become enabled; "Generate Budget" / "Share with Client" exposed</li>
+  </ul>
+</section>
+
+<section class="info-block">
+  <h2>Quality criteria (this wireframe)</h2>
+  <ul>
+    <li>✅ All 13 stages visible on the main screen</li>
+    <li>✅ Visual distinction between new (Discovery) and existing (BA Tool) stages</li>
+    <li>✅ Status badges on every stage</li>
+    <li>✅ Active stage clearly highlighted</li>
+    <li>✅ Stage detail panel demonstrates the per-stage workspace pattern</li>
+    <li>✅ Versioning surfaced for Approach Note (Skill 03 §8 invariant)</li>
+    <li>✅ Phase-2 affordances visibly disabled (Skill 04 §7 default)</li>
+    <li>✅ Existing components/services explicitly identified as REUSE — no rewrite</li>
+    <li>✅ Components inventory traces every UI element to a file path</li>
+    <li>✅ Cross-track navigation ("Open BA Module") preserved</li>
+  </ul>
+</section>
+
+<section class="info-block">
+  <h2>Open questions for your review</h2>
+  <ol>
+    <li><strong>STT provider for Phase 1</strong> — local Whisper (free, needs ffmpeg + ~1GB model) or cloud STT (OpenAI/AWS, requires API key, no local deps)? <em>Default: local Whisper, abstracted via <code>STTProvider</code> port so cloud swap is one env var.</em></li>
+    <li><strong>Discovery scope</strong> — is Discovery created at <em>project</em> level (one Discovery per project) or <em>module</em> level (one Discovery per module)? <em>Default: project level — a project has one set of BRD/Approach Note that fans out to multiple modules.</em></li>
+    <li><strong>EPIC multi-source UI</strong> — should the context-ref picker (BRD/AN/Lo-fi/Hi-fi/FRD/PRD) be Phase 1 or Phase 2 of this initiative? <em>Default: Phase 2 — Phase 1 = AN-only or FRD-only.</em></li>
+    <li><strong>Hi-fi mockup rendering</strong> — sandboxed iframe with same-origin off, or static .png snapshots? <em>Default: sandboxed iframe — preserves callout interactivity.</em></li>
+    <li><strong>Audio storage</strong> — keep raw audio after WFT generated, or purge for privacy? <em>Default: keep with retention policy (90d) per project setting.</em></li>
+    <li><strong>Existing PRD module integration</strong> — wire as Stage 8 of Discovery pipeline, or keep PRD as a separate top-level workspace (current behaviour)? <em>Default: link from pipeline but reuse existing PRD route — no UI duplication.</em></li>
+    <li><strong>Versioning of BRD</strong> — append-only like Approach Note, or overwrite? <em>Default: overwrite (BRDs go through review then sign-off — versioning would be cosmetic).</em></li>
+    <li><strong>Pipeline gating</strong> — strict (Stage N+1 locked until Stage N quality criteria pass) or advisory (warn but allow)? <em>Default: advisory — power users can run stages out of order.</em></li>
+  </ol>
+</section>
+
+<!-- Pager -->
+<nav style="margin-top: 24px; padding: 16px; background: white; border: 1px solid var(--gray-200); border-radius: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+  <span style="color: var(--gray-500);">◀ (start of wireframe set)</span>
+  <span style="font-weight: 600;">Screen 00 of N (next: per-stage detail wireframes — pending approval)</span>
+  <span style="color: var(--gray-500);">▶ (next screens after approval)</span>
+</nav>
+
+</body>
+</html>

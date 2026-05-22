@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe 02 — Stage 2: Well-formed Text → BRD</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 02 — Stage 2: Well-formed Text → BRD</h1>
+  <div class="sub">15-section BRD generator with section navigator and quality checks</div>
+  <table>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/discovery/brd</code></td></tr>
+    <tr><td>Stage</td><td>2 of 6 (Discovery)</td></tr>
+    <tr><td>Skill reference</td><td>skills/02-wellformed-text-to-brd.md</td></tr>
+    <tr><td>Versioning</td><td>Phase 1: overwrite · Phase 2: append-only (per decision #7)</td></tr>
+  </table>
+</div>
+
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/discovery/brd</span>
+  </div>
+
+  <div class="app-header">
+    <div class="brand"><span class="logo">LOGO</span><span>FRD-EPICS Automation</span></div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#" class="active">Discovery</a>
+      <a href="#">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user"><span>Saurabh V.</span><span class="avatar"></span></div>
+  </div>
+
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> › <a href="#">Acme CRM</a> ›
+      <a href="00-main-pipeline.html">Discovery</a> ›
+      <span class="current">Stage 2: BRD</span>
+    </div>
+    <div class="stage-status">Stage <strong>2 of 6</strong> · Discovery</div>
+  </div>
+
+  <div class="layout">
+
+    <aside class="sidebar">
+      <h4>Discovery Track</h4>
+      <div class="nav-item"><span class="dot done"></span> 1. Audio → Text</div>
+      <div class="nav-item active"><span class="dot active"></span> 2. Well-formed Text → BRD</div>
+      <div class="nav-item"><span class="dot"></span> 3. BRD → Approach Note</div>
+      <div class="nav-item"><span class="dot"></span> 4. Approach Note → Lo-fi</div>
+      <div class="nav-item"><span class="dot"></span> 5. Lo-fi Wireframes</div>
+      <div class="nav-item"><span class="dot"></span> 6. Hi-fi Mockups</div>
+      <h4 style="margin-top:18px">BA Tool Flow</h4>
+      <div class="nav-item"><span class="dot"></span> 7. FRD</div>
+      <div class="nav-item"><span class="dot"></span> 8. PRD</div>
+      <div class="nav-item"><span class="dot"></span> 9. EPICs</div>
+      <div class="nav-item"><span class="dot"></span> 10. User Stories</div>
+      <div class="nav-item"><span class="dot"></span> 11. Sub Tasks</div>
+      <div class="nav-item"><span class="dot"></span> 12. LLD</div>
+      <div class="nav-item"><span class="dot"></span> 13. FTC</div>
+    </aside>
+
+    <main class="main-pane">
+
+      <h3 style="margin:0 0 4px; font-size:18px;">Stage 2 — Well-formed Text → BRD</h3>
+      <p style="color:var(--gray-500); font-size:13px; margin:0 0 16px;">
+        Generate a 15-section Business Requirements Document from the WFT. Every FR is testable, every NFR has a measurable target.
+      </p>
+
+      <!-- Source input -->
+      <div class="card info" style="position:relative;">
+        <div class="card-title" style="color:var(--color-info);">Source · Stage 1 output</div>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:13px;">
+            📄 <code>wellformed-text-acme-crm-2026-04-30.md</code> · 7 sections · 2 open questions
+          </div>
+          <button class="btn outline" style="font-size:11px;">↗ Open in viewer</button>
+        </div>
+        <span class="callout" style="top:8px; right:8px;">1</span>
+      </div>
+
+      <!-- Generation status -->
+      <div class="card cta" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span class="badge done">✓ GENERATED</span>
+            <span style="font-size:12px; color:var(--gray-600); margin-left:8px;">
+              v1 · saved 12 min ago · 15 sections populated
+            </span>
+          </div>
+          <button class="btn outline" style="font-size:12px;">🔄 Regenerate from WFT</button>
+        </div>
+        <span class="callout" style="top:8px; right:14px;">2</span>
+      </div>
+
+      <!-- Two-column layout: section nav + editor -->
+      <div style="display:flex; gap:14px;">
+
+        <div style="width: 240px; flex-shrink:0;">
+          <div class="card-title" style="position:relative;">
+            BRD Sections
+            <span class="callout" style="top:-12px; right:-10px;">3</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:2px; font-size:12px;">
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §1 Background</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §2 Problem Statement</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §3 Business Objectives</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §4 Scope</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §5 Stakeholders</div>
+            <div style="padding:6px 8px; background:var(--discovery-tint); border:1px solid var(--brand-cta); border-radius:4px; font-weight:600;">▶ §6 Functional Requirements</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §7 Data Requirements</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §8 NFRs</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §9 Success Metrics</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §10 Assumptions</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §11 Constraints</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §12 Risks</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §13 Architecture</div>
+            <div style="padding:6px 8px; background:var(--gray-50); border-radius:4px;">✓ §14 Next Steps</div>
+            <div style="padding:6px 8px; background:#fef3c7; border-radius:4px; color:var(--color-warn);">⚠ §15 Open Items (3)</div>
+          </div>
+        </div>
+
+        <div style="flex:1; min-width:0;">
+          <!-- Active section editor -->
+          <div class="card active" style="position:relative;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <strong>§6 Functional Requirements</strong>
+              <div style="display:flex; gap:6px;">
+                <button class="btn outline" style="font-size:11px;">✏ Edit</button>
+                <button class="btn outline" style="font-size:11px;">⟳ Re-derive from WFT</button>
+              </div>
+            </div>
+            <table style="width:100%; font-size:12px; border-collapse:collapse;">
+              <thead>
+                <tr style="background:var(--gray-50);">
+                  <th style="text-align:left; padding:6px; border:1px solid var(--gray-200);">ID</th>
+                  <th style="text-align:left; padding:6px; border:1px solid var(--gray-200);">Requirement</th>
+                  <th style="text-align:left; padding:6px; border:1px solid var(--gray-200); width:60px;">Test</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">FR-1</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">System shall transcribe uploaded audio files using existing STT providers</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200); text-align:center;"><span class="badge done">✓</span></td>
+                </tr>
+                <tr>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">FR-2</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">System shall produce 7-section structured WFT from raw transcript</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200); text-align:center;"><span class="badge done">✓</span></td>
+                </tr>
+                <tr>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">FR-3</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">System shall generate 15-section BRD from WFT</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200); text-align:center;"><span class="badge done">✓</span></td>
+                </tr>
+                <tr>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">FR-4</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">System shall version Approach Note append-only (v1, v2, ...)</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200); text-align:center;"><span class="badge done">✓</span></td>
+                </tr>
+                <tr>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">FR-5</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200);">EPIC generator shall optionally accept Approach Note as additional context</td>
+                  <td style="padding:6px; border:1px solid var(--gray-200); text-align:center;"><span class="badge warn">?</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <span class="callout" style="top:8px; left:160px;">4</span>
+            <span class="callout" style="top:54px; right:-10px;">5</span>
+          </div>
+
+          <!-- Quality criteria check -->
+          <div class="card success" style="position:relative;">
+            <div class="card-title" style="color:var(--color-success);">Quality Criteria · §6</div>
+            <ul style="margin:4px 0; padding-left:18px; font-size:12px;">
+              <li>✓ Every FR has a unique ID (5/5)</li>
+              <li>✓ Every FR is testable / atomic (4/5 — FR-5 needs reword)</li>
+              <li>✓ No solution language ("uses Claude" / "uses Postgres") leaked into FRs</li>
+              <li>✓ Each FR traceable to a §1–§3 motivation</li>
+            </ul>
+            <span class="callout" style="top:8px; right:8px;">6</span>
+          </div>
+
+          <!-- Phase 2 placeholder -->
+          <div class="card warn" style="position:relative; opacity:0.65;">
+            <div class="card-title">📚 Version History (Phase 2)</div>
+            <div style="font-size:12px; color:var(--gray-500);">
+              In Phase 1 the BRD is overwritten on each regeneration. Phase 2 will introduce append-only versioning (v1, v2, ...) parallel to the Approach Note, with a "Changes since v(N-1)" log.
+            </div>
+            <span class="badge p2" style="position:absolute; top:8px; right:8px;">Phase 2</span>
+            <span class="callout" style="top:8px; left:140px;">7</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action bar -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; position:relative;">
+        <div style="display:flex; gap:6px;">
+          <button class="btn outline">💾 Save</button>
+          <button class="btn outline">📥 Download .md</button>
+          <button class="btn outline">↗ Open in viewer</button>
+        </div>
+        <button class="btn primary" style="padding:8px 20px;">Continue to Approach Note ▶</button>
+        <span class="callout" style="bottom:36px; right:14px;">8</span>
+      </div>
+
+    </main>
+
+    <aside class="rightrail">
+      <h4>Open items (§15)</h4>
+      <ul style="font-size:12px; padding-left:16px; margin:4px 0;">
+        <li>Confirm if Phase-2 EPIC multi-source picker is in or out of MVP</li>
+        <li>Confirm BRD versioning timing (Phase 1 vs Phase 2)</li>
+        <li>Decide audio retention default (90d proposed)</li>
+      </ul>
+      <span class="callout" style="top:34px; right:14px;">9</span>
+
+      <h4 style="margin-top:14px;">Stage 2 inputs</h4>
+      <div style="font-size:12px;">
+        <span class="badge done">WFT v1</span>
+        <div style="margin-top:6px;">From: <code>wellformed-text-...</code></div>
+      </div>
+
+      <h4 style="margin-top:14px;">Stage 2 output</h4>
+      <div style="font-size:12px;">
+        Will produce: <code>BRD-acme-crm.md</code><br>
+        <span style="color:var(--gray-500);">Phase 1: overwrite on regenerate</span>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Element</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td><td>WFT-as-input chip — locked link to Stage 1 output. Click to open WFT viewer in side-panel.</td><td>NEW · <code>ArtifactRefChip.tsx</code></td></tr>
+      <tr><td><span class="num">2</span></td><td>Generation status banner — shows "GENERATED" badge + timestamp. Initial state: "Click Generate to create v1 from WFT". Regenerate triggers overwrite (Phase 1).</td><td>NEW · stage controller logic</td></tr>
+      <tr><td><span class="num">3</span></td><td><strong>15-section navigator</strong> — clickable list with status checkmarks (✓ filled / ⚠ open items / ▶ active). Mirrors skill 02 §5 output template.</td><td>NEW · <code>BrdSectionNav.tsx</code></td></tr>
+      <tr><td><span class="num">4</span></td><td>Active section editor — inline edit + AI re-derive. Reuses BA Tool's existing AI-assisted editing pattern.</td><td>REUSE · <code>AiEditableSection.tsx</code></td></tr>
+      <tr><td><span class="num">5</span></td><td>FR table — every row has ID, requirement text, and a "Test" status (✓ testable / ? needs reword). Per skill 02 §6 quality criteria.</td><td>NEW · <code>FrTableEditor.tsx</code></td></tr>
+      <tr><td><span class="num">6</span></td><td><strong>Per-section quality criteria check</strong> — automatic validation per skill 02 §6. Surfaces specific issues (e.g. "FR-5 not testable").</td><td>NEW · validation rules in service</td></tr>
+      <tr><td><span class="num">7</span></td><td><strong>Version history (Phase 2)</strong> — visibly disabled placeholder per decision #7. Phase 1 overwrites; Phase 2 introduces append-only versioning.</td><td>P2 · roadmap visibility</td></tr>
+      <tr><td><span class="num">8</span></td><td>Continue CTA — advances to Stage 3. Advisory gating: warns if quality criteria fail but allows override.</td><td>NEW</td></tr>
+      <tr><td><span class="num">9</span></td><td>Open items panel — populated from §15 of the BRD; surfaces TBDs and decisions deferred to Stage 3.</td><td>NEW · part of BRD artifact schema</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Components Inventory</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/brd/page.tsx</code></td><td>This route</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/BrdEditor.tsx</code></td><td>Top-level editor (section nav + active editor)</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/BrdSectionNav.tsx</code></td><td>15-section list with status</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/FrTableEditor.tsx</code></td><td>Functional Requirements table editor with test-status column</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/QualityCheckPanel.tsx</code></td><td>Per-section validation results</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/AiEditableSection.tsx</code></td><td>Inline AI-assisted editing</td><td>REUSE</td></tr>
+      <tr><td><code>components/ba-tool/ArtifactRefChip.tsx</code></td><td>Linked-input chip (WFT → BRD, BRD → AN, etc.)</td><td>NEW (used across all stages)</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/brd.service.ts</code></td><td>generate(wftId), validate(brdId), regenerate(brdId)</td><td>NEW</td></tr>
+      <tr><td>Prisma: <code>BrdArtifact</code> table</td><td>{sections JSON, openItems[], frTable[], wftId, projectId, ...}</td><td>NEW</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>Empty</strong> — no WFT yet → shows "Complete Stage 1 first" with link back</li>
+    <li><strong>Not generated</strong> — WFT present, no BRD → "Generate BRD" CTA prominent, sections list shows all empty</li>
+    <li><strong>Generating</strong> — LLM running → progress bar, sections fill in sequentially</li>
+    <li><strong>Generated, all green</strong> — every quality check passes → Continue CTA enabled, no warnings</li>
+    <li><strong>Generated, with warnings</strong> — some quality checks fail (e.g. FR-5 not testable) → warn-state badge on §6, but Continue still enabled (advisory gating)</li>
+    <li><strong>Editing</strong> — user editing a section → unsaved-changes indicator, autosave or explicit save</li>
+    <li><strong>Regenerating</strong> — user clicked regenerate → confirmation dialog ("This will overwrite the current BRD"); Phase 2 will skip dialog and create new version</li>
+  </ul>
+</section>
+
+<nav class="pager">
+  <a href="01-stage-audio-to-wft.html">◀ Stage 1: Audio → WFT</a>
+  <span class="counter">Wireframe 02 of 06 · Stage 2 detail</span>
+  <a href="03-stage-brd-to-an.html">Stage 3: BRD → Approach Note ▶</a>
+</nav>
+
+</body>
+</html>

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lo-fi Wireframe 01 — Stage 1: Audio → Well-formed Text</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+
+<div class="meta">
+  <h1>Lo-fi Wireframe 01 — Stage 1: Audio → Well-formed Text</h1>
+  <div class="sub">Per-stage detail · Reuses existing BA-Tool transcription infrastructure</div>
+  <table>
+    <tr><td>URL (PoC)</td><td><code>/ba-tool/project/[id]/discovery/audio</code></td></tr>
+    <tr><td>Stage</td><td>1 of 6 (Discovery)</td></tr>
+    <tr><td>Skill reference</td><td>skills/01-audio-to-wellformed-text.md</td></tr>
+    <tr><td>Reuse</td><td>~80% — existing <code>/api/ai/transcribe</code> + 5 STT providers + <code>MicButton</code> + AI cleanup endpoint</td></tr>
+  </table>
+</div>
+
+<div class="screen">
+  <div class="browser-bar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="url">/ba-tool/project/acme-crm/discovery/audio</span>
+  </div>
+
+  <div class="app-header">
+    <div class="brand">
+      <span class="logo">LOGO</span>
+      <span>FRD-EPICS Automation</span>
+    </div>
+    <div class="nav-links">
+      <a href="#">Projects</a>
+      <a href="#" class="active">Discovery</a>
+      <a href="#">Modules</a>
+      <a href="#">Sprints</a>
+      <a href="#">RTM</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="user"><span>Saurabh V.</span><span class="avatar"></span></div>
+  </div>
+
+  <div class="subheader">
+    <div class="breadcrumb">
+      <a href="#">Projects</a> › <a href="#">Acme CRM</a> ›
+      <a href="00-main-pipeline.html">Discovery</a> ›
+      <span class="current">Stage 1: Audio</span>
+    </div>
+    <div class="stage-status">Stage <strong>1 of 6</strong> · Discovery</div>
+  </div>
+
+  <div class="layout">
+
+    <aside class="sidebar">
+      <h4>Discovery Track</h4>
+      <div class="nav-item active"><span class="dot active"></span> 1. Audio → Text</div>
+      <div class="nav-item"><span class="dot"></span> 2. Well-formed Text</div>
+      <div class="nav-item"><span class="dot"></span> 3. BRD</div>
+      <div class="nav-item"><span class="dot"></span> 4. Approach Note</div>
+      <div class="nav-item"><span class="dot"></span> 5. Lo-fi Wireframes</div>
+      <div class="nav-item"><span class="dot"></span> 6. Hi-fi Mockups</div>
+      <h4 style="margin-top:18px">BA Tool Flow</h4>
+      <div class="nav-item"><span class="dot"></span> 7. FRD</div>
+      <div class="nav-item"><span class="dot"></span> 8. PRD</div>
+      <div class="nav-item"><span class="dot"></span> 9. EPICs</div>
+      <div class="nav-item"><span class="dot"></span> 10. User Stories</div>
+      <div class="nav-item"><span class="dot"></span> 11. Sub Tasks</div>
+      <div class="nav-item"><span class="dot"></span> 12. LLD</div>
+      <div class="nav-item"><span class="dot"></span> 13. FTC</div>
+      <span class="callout" style="top:18px; left:8px;">1</span>
+    </aside>
+
+    <main class="main-pane">
+
+      <h3 style="margin:0 0 4px; font-size:18px;">Stage 1 — Audio → Well-formed Text</h3>
+      <p style="color:var(--gray-500); font-size:13px; margin:0 0 16px;">
+        Upload audio recordings (voice notes, meeting clips, dictated requirements) and Claude produces a structured, editable well-formed text document.
+      </p>
+
+      <!-- Audio input section -->
+      <div class="card solid" style="position:relative;">
+        <div class="card-title">Audio Input</div>
+        <div style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
+          <button class="btn primary">🎤 Record from Mic</button>
+          <span style="color:var(--gray-400); font-size:12px;">— or —</span>
+          <button class="btn outline">📁 Browse Files</button>
+        </div>
+        <span class="callout" style="top:36px; left:172px;">2</span>
+
+        <div class="dropzone">
+          <div style="font-size:24px; margin-bottom:6px;">⬇</div>
+          Drag &amp; drop audio files here<br>
+          <span style="font-size:11px;">Accepted: .opus .m4a .wav .mp3 .flac .aac .webm · Max 25 MB per file</span>
+        </div>
+        <span class="callout" style="top:84px; right:14px;">3</span>
+
+        <div class="card-title" style="margin-top: 14px;">Uploaded files (3)</div>
+        <div class="file-list">
+          <div class="file-row">
+            <span class="file-name">📎 requirements-meeting-26apr.opus</span>
+            <span class="file-status done">✓ Transcribed · en+hi · 4m 22s</span>
+          </div>
+          <div class="file-row">
+            <span class="file-name">📎 stakeholder-voicenote.m4a</span>
+            <span class="file-status done">✓ Transcribed · en · 1m 18s</span>
+          </div>
+          <div class="file-row" style="position:relative;">
+            <span class="file-name">📎 followup-questions.wav</span>
+            <span class="file-status progress">⟳ Transcribing... 60%</span>
+            <span class="callout" style="top:-12px; right:-10px;">4</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings row -->
+      <div style="display:flex; gap:12px; margin-bottom:12px;">
+        <div class="card solid" style="flex:1; position:relative;">
+          <div class="card-title">Language hint</div>
+          <select style="width:100%; padding:6px; border:1px dashed var(--gray-300); border-radius:4px; font-size:13px;">
+            <option>en+hi (Hinglish — auto-detected)</option>
+            <option>en</option>
+            <option>hi</option>
+            <option>auto</option>
+          </select>
+          <span class="callout" style="top:8px; right:8px;">5</span>
+        </div>
+        <div class="card solid" style="flex:1; position:relative;">
+          <div class="card-title">Domain context (improves cleanup)</div>
+          <input type="text" placeholder="e.g. AI / CRM / jewelry sales" style="width:100%; padding:6px; border:1px dashed var(--gray-300); border-radius:4px; font-size:13px;" value="AI / CRM / sales automation">
+          <span class="callout" style="top:8px; right:8px;">6</span>
+        </div>
+      </div>
+
+      <!-- STT provider info -->
+      <div class="card info" style="position:relative;">
+        <div class="card-title" style="color:var(--color-info);">STT Provider</div>
+        <div style="font-size:12px;">
+          Active: <strong>Whisper</strong> (default) · Available: Deepgram, AssemblyAI, ElevenLabs, Cartesia · Swap via <a href="#">Settings → AI</a>
+        </div>
+        <span class="callout" style="top:8px; right:8px;">7</span>
+      </div>
+
+      <!-- WFT output -->
+      <div class="card active" style="position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="card-title" style="margin:0;">Well-formed Text Preview</div>
+          <span class="badge active">DRAFT · 7-section template</span>
+        </div>
+
+        <div class="tabs" style="position:relative;">
+          <span class="tab">1. Raw transcript</span>
+          <span class="tab">2. Cleaned</span>
+          <span class="tab active">3. Paraphrased meaning</span>
+          <span class="tab">4. Concepts</span>
+          <span class="tab">5. Action items</span>
+          <span class="tab">6. Open questions</span>
+          <span class="tab">7. Metadata</span>
+          <span class="callout" style="top:-12px; right:-10px;">8</span>
+        </div>
+
+        <div class="card muted" style="border-style:solid; border-color:var(--gray-300); position:relative;">
+          <div style="font-size:13px; line-height:1.6;">
+            <em>The stakeholder is requesting an extension to the existing BA Tool that adds a Discovery &amp; Solutioning track upstream of the current FRD-to-FTC flow. The new track ingests audio recordings of client requirements and produces a Business Requirements Document, an Approach Note (versioned), lo-fi wireframes, and hi-fi mockups — all of which can subsequently feed into EPIC generation as additional context.</em>
+            <br><br>
+            <em>The implementation must reuse the existing BA Tool primitives (project model, storage layer, AI service, artifact viewer) without modifying the existing 8-step module flow. PRD generation should optionally accept Approach-Note-derived context...</em>
+          </div>
+          <span class="btn outline" style="position:absolute; top:8px; right:8px; font-size:11px;">✏ Edit</span>
+          <span class="callout" style="top:-10px; left:-10px;">9</span>
+        </div>
+
+        <div style="margin-top:8px; font-size:11px; color:var(--gray-500);">
+          AI cleanup applied: removed 12 disfluencies · corrected 3 domain terms (e.g. "EPIC" instead of "epic") · flagged 2 ambiguous segments
+        </div>
+      </div>
+
+      <!-- Open questions surfaced -->
+      <div class="card warn" style="position:relative;">
+        <div class="card-title" style="color:var(--color-warn);">⚠ Open Questions Surfaced (2)</div>
+        <ul style="margin:4px 0; padding-left:18px; font-size:12px;">
+          <li>Speaker mentioned "the existing tool" without specifying which — context suggests BA Tool</li>
+          <li>Audio retention duration not stated — defaulting to 90 days per project</li>
+        </ul>
+        <span class="callout" style="top:8px; right:8px;">10</span>
+      </div>
+
+      <!-- Action bar -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; position:relative;">
+        <div style="display:flex; gap:6px;">
+          <button class="btn outline">💾 Save Draft</button>
+          <button class="btn outline">🔄 Regenerate from audio</button>
+        </div>
+        <button class="btn primary" style="padding:8px 20px;">Continue to BRD ▶</button>
+        <span class="callout" style="bottom:36px; right:14px;">11</span>
+      </div>
+
+    </main>
+
+    <aside class="rightrail">
+      <h4>Audio retention</h4>
+      <div style="font-size:12px; margin-bottom:14px;">
+        <strong>90 days</strong> after WFT generated · then auto-purged.<br>
+        <a href="#" style="color:var(--brand-cta);">Configure</a>
+        <span class="callout" style="top:34px; right:14px;">12</span>
+      </div>
+
+      <h4>Stage 1 inputs</h4>
+      <div style="font-size:12px; margin-bottom:14px;">
+        <span class="badge done">3 audio files</span>
+        <div style="margin-top:6px;">Total: 7m 23s · 1 still transcribing</div>
+      </div>
+
+      <h4>Stage 1 output</h4>
+      <div style="font-size:12px;">
+        Will produce: <code>wellformed-text-acme-crm-2026-04-30.md</code><br>
+        <span style="color:var(--gray-500);">Saved to artifact storage</span>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<section class="annotations">
+  <h2>Annotations</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Element</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><span class="num">1</span></td><td>Stage rail (sidebar) — Stage 1 active. Sticky vertical navigation across Discovery + BA Tool flow.</td><td>NEW · <code>DiscoveryRail.tsx</code></td></tr>
+      <tr><td><span class="num">2</span></td><td><strong>Mic record button</strong> — REUSED from existing BA Tool. Wraps browser MediaRecorder → POST <code>/api/ai/transcribe</code>.</td><td>REUSE · existing <code>MicButton</code></td></tr>
+      <tr><td><span class="num">3</span></td><td>Drag-drop zone — accepts .opus/.m4a/.wav/.mp3/.flac/.aac/.webm. Same constraints as existing transcribe endpoint (25 MB max).</td><td>NEW · <code>AudioDropzone.tsx</code> (light wrapper)</td></tr>
+      <tr><td><span class="num">4</span></td><td>Per-file status — transcription progress / language detection result. SSE stream from backend during transcription.</td><td>NEW · <code>useAudioTranscription</code> hook</td></tr>
+      <tr><td><span class="num">5</span></td><td>Language hint dropdown — passed as query param to <code>/transcribe</code>. Default auto-detect.</td><td>NEW · existing endpoint accepts param</td></tr>
+      <tr><td><span class="num">6</span></td><td>Domain context — passed to AI cleanup prompt to disambiguate technical terms (per skill 01 §4 mishearing table).</td><td>NEW · cleanup prompt parameter</td></tr>
+      <tr><td><span class="num">7</span></td><td><strong>STT provider info</strong> — surfaces which provider is active (Whisper default). Five providers already configured via env. Swappable per project in Phase 2.</td><td>REUSE · existing <code>ai-service/main.py</code> provider abstraction</td></tr>
+      <tr><td><span class="num">8</span></td><td><strong>WFT 7-section tabs</strong> — Raw / Cleaned / Paraphrased / Concepts / Action items / Open questions / Metadata. Per skill 01 §5 output template.</td><td>NEW · <code>WftViewer.tsx</code></td></tr>
+      <tr><td><span class="num">9</span></td><td>Inline editor on each section. Reuses existing AI-assisted edit pattern from BA Tool.</td><td>REUSE · <code>AiEditableSection.tsx</code></td></tr>
+      <tr><td><span class="num">10</span></td><td><strong>Open questions panel</strong> — ambiguities flagged by AI cleanup are surfaced here, not buried in the body. Per skill 01 §6 quality criterion.</td><td>NEW · part of WFT artifact schema</td></tr>
+      <tr><td><span class="num">11</span></td><td>Continue CTA — advances to Stage 2 (BRD). Advisory gating per decision #8: warn if open questions unresolved, allow override.</td><td>NEW · gate logic in stage controller</td></tr>
+      <tr><td><span class="num">12</span></td><td><strong>Audio retention</strong> notice — 90d default per decision #5; configurable per project setting.</td><td>NEW · project setting + scheduled purge job</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>Components Inventory</h2>
+  <table>
+    <thead><tr><th>Component / file</th><th>Purpose</th><th>Reuse / New</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ba-tool/project/[id]/discovery/audio/page.tsx</code></td><td>This route</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/discovery/AudioUploader.tsx</code></td><td>Composes MicButton + Dropzone + file list</td><td>NEW</td></tr>
+      <tr><td><code>components/ba-tool/MicButton.tsx</code></td><td>Browser MediaRecorder + transcribe</td><td>REUSE (existing)</td></tr>
+      <tr><td><code>components/ba-tool/discovery/WftViewer.tsx</code></td><td>7-section tab viewer + editor</td><td>NEW (uses MarkdownRenderer + AiEditableSection)</td></tr>
+      <tr><td><code>components/ba-tool/discovery/OpenQuestionsPanel.tsx</code></td><td>Surfaces ambiguities flagged by AI</td><td>NEW</td></tr>
+      <tr><td><code>hooks/useAudioTranscription.ts</code></td><td>Manages SSE + per-file status</td><td>NEW</td></tr>
+      <tr><td><code>backend/src/ba-tool/discovery/wft.service.ts</code></td><td>Stage 1 orchestration: transcribe → cleanup → save WFT artifact</td><td>NEW (calls existing <code>ai.service.ts:transcribe</code>)</td></tr>
+      <tr><td><code>backend/src/ai/ai.service.ts</code></td><td>Existing transcribe + parse proxy</td><td>REUSE</td></tr>
+      <tr><td><code>ai-service/main.py</code></td><td>FastAPI with 5 STT providers</td><td>REUSE</td></tr>
+      <tr><td>Prisma: <code>WftArtifact</code> table</td><td>{rawTranscript, cleanedText, paraphrased, concepts, actions, openQuestions, metadata, projectId, ...}</td><td>NEW (1 migration)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="info-block">
+  <h2>States to consider</h2>
+  <ul>
+    <li><strong>Empty</strong> — no audio uploaded yet → only dropzone + mic button visible; CTA disabled</li>
+    <li><strong>Uploading</strong> — file upload progress shown per row</li>
+    <li><strong>Transcribing</strong> — provider active, % progress, can't continue until all done</li>
+    <li><strong>Cleanup running</strong> — AI cleanup spinner; raw transcript visible, cleaned tab loading</li>
+    <li><strong>Error</strong> — STT failure (rate limit, file format, size) → inline error per row, retry available, doesn't block other files</li>
+    <li><strong>Resumed session</strong> — user returns to existing WFT; tabs pre-populated, CTA shows "Continue to BRD" or "Regenerate"</li>
+    <li><strong>Phase-2: cloud STT swap</strong> — provider dropdown in right rail surfaces alternative providers (currently in Settings)</li>
+  </ul>
+</section>
+
+<nav class="pager">
+  <a href="00-main-pipeline.html">◀ Main pipeline</a>
+  <span class="counter">Wireframe 01 of 06 · Stage 1 detail</span>
+  <a href="02-stage-wft-to-brd.html">Stage 2: WFT → BRD ▶</a>
+</nav>
+
+</body>
+</html>
