@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, HttpException } from '@nestjs/common';
+import { Injectable, NotFoundException, HttpException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BaProjectStatus, BaModuleStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,14 +8,17 @@ import { UpdateBaProjectDto } from './dto/update-project.dto';
 import { CreateBaModuleDto } from './dto/create-module.dto';
 import { UpdateBaScreenDto } from './dto/update-screen.dto';
 import { CreateBaFlowDto } from './dto/create-flow.dto';
+import { ProjectFolderService } from './pipeline/project-folder.service';
 
 @Injectable()
 export class BaToolService {
+  private readonly logger = new Logger(BaToolService.name);
   private readonly aiServiceUrl: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly projectFolders: ProjectFolderService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
   }
@@ -23,7 +26,7 @@ export class BaToolService {
   // ─── Projects ──────────────────────────────────────────────────────────
 
   async createProject(dto: CreateBaProjectDto) {
-    return this.prisma.baProject.create({
+    const project = await this.prisma.baProject.create({
       data: {
         name: dto.name,
         projectCode: dto.projectCode,
@@ -32,6 +35,20 @@ export class BaToolService {
       },
       include: { modules: true },
     });
+
+    // Create the on-disk folder tree (Projects/{ProjectName}/...). Non-blocking:
+    // a disk failure must never prevent the project record from being created.
+    try {
+      await this.projectFolders.ensureProjectFolders(project.name);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Project ${project.name} created, but folder setup failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    return project;
   }
 
   async listProjects() {

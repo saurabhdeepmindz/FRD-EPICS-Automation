@@ -131,6 +131,10 @@ model BaProject {
   // verification scripts). Values: "postgresql" | "mysql" | "sqlserver" |
   // "oracle" | "ansi". Default Postgres matches the app's own DB.
   sqlDialect  String          @default("postgresql")
+  // E2E-Flow (Track R) — project-scoped cross-module journeys. Off the module
+  // status machine (like LLD/FTC); these are additive + nullable.
+  e2eFlowCompletedAt DateTime?
+  e2eFlowActiveId    String?    // the BaE2eFlow currently driving downstream elaboration
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -146,6 +150,16 @@ model BaProject {
   approachNotes BaApproachNote[]
   wireframeSets BaWireframeSet[]
   hifiSets      BaHifiSet[]
+  // New Pipeline Track (Stages 1-9)
+  customerInputs  BaCustomerInput[]
+  projectPrds     BaProjectPrd[]
+  hlds            BaHld[]
+  implementation  BaProjectImplementation?
+  changeRequests  BaChangeRequest[]
+  // E2E-Flow (Track R)
+  e2eFlows                BaE2eFlow[]
+  e2eFlowConfig           BaE2eFlowConfig?
+  thirdPartyIntegrations  BaThirdPartyIntegration[]
 
   @@map("ba_projects")
 }
@@ -223,6 +237,9 @@ model BaModule {
   subtasks         BaSubTask[]
   lldConfig        BaLldConfig?
   ftcConfig        BaFtcConfig?
+  codeTasks        BaCodeTask[]
+  codeTestRuns     BaCodeTestRun[]
+  upstreamSyncs    BaUpstreamSync[]
 
   @@unique([projectId, moduleId])
   @@map("ba_modules")
@@ -310,6 +327,7 @@ enum BaArtifactType {
   RTM
   LLD
   FTC
+  E2E_FLOW
 }
 
 enum BaArtifactStatus {
@@ -331,6 +349,14 @@ model BaArtifact {
   // Populated when the LLD was generated via the narrative flow; null for
   // stack-only generations so existing queries are unaffected.
   sourceNarrative String?        @db.Text
+  // ── CR Foundation (Track M — traceability fields, nullable, no UI yet) ──
+  // What caused this artifact version to be created.
+  triggeredBy     BaTriggeredBy? @default(INITIAL_GENERATION)
+  // Soft FK to ba_change_requests.id — set when a Change Request produced this version.
+  changeRequestId String?
+  // Which upstream artifact versions this was generated from, e.g.
+  // { "prdVersion": 2, "hldVersion": 1, "frdArtifactId": "..." }.
+  sourceArtifactVersions Json?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
@@ -340,6 +366,7 @@ model BaArtifact {
   testCases    BaTestCase[]
   acCoverage   BaAcCoverage[]
 
+  @@index([changeRequestId])
   @@map("ba_artifacts")
 }
 
@@ -423,8 +450,14 @@ model BaRtmRow {
   ftcArtifactId     String?   // ba_artifacts.id of the active FTC bundle
   ftcTestCaseIds    String[]  @default([])  // BaTestCase.id values
   ftcTestCaseRefs   String[]  @default([])  // human-readable TC-001, TC-002-INT-01, ...
+  // CR Foundation (Track M) — soft FK to ba_change_requests.id when a CR touched this row.
+  changeRequestId   String?
   owaspWebCategories String[] @default([])  // A01, A03, ...
   owaspLlmCategories String[] @default([])  // LLM01, LLM06, ...
+  // E2E-Flow (Track R) — which cross-module journeys + steps this row participates in.
+  e2eFlowIds        String[]  @default([])  // BaE2eFlow.id values
+  e2eFlowStepRefs   String[]  @default([])  // BaE2eFlowStep.stepId values (e.g. S04)
+  e2eFlowMappingNotes String?  @db.Text
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -742,6 +775,10 @@ model BaTestCase {
   linkedStoryIds       String[]   @default([])
   linkedSubtaskIds     String[]   @default([])
   linkedPseudoFileIds  String[]   @default([])
+  // E2E-Flow (Track R) — structured links to cross-module journeys + steps.
+  // The legacy free-text `e2eFlow` field above is retained for back-compat.
+  linkedE2eFlowIds     String[]   @default([])  // BaE2eFlow.id values
+  linkedE2eStepIds     String[]   @default([])  // BaE2eFlowStep.stepId values
   linkedLldArtifactId  String?    // when the TC is white-box, which LLD it references
   tags                 String[]   @default([])
   // Raw AI output for this TC (before any human edits), and the edited copy
@@ -1154,4 +1191,479 @@ model BaHifiScreen {
   @@unique([setId, sequenceNum])
   @@index([setId])
   @@map("ba_hifi_screens")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW PIPELINE — Customer Discovery → PRD+FRD → Wireframes → HLD → EPICs → Code
+// All models below are additive — no existing model or migration is touched.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Customer Input Hub (Stage 1) ────────────────────────────────────────────
+// Polymorphic container for any customer-supplied input.
+// New input types are added by extending the enum — no schema migration needed
+// for the table itself beyond adding the enum value.
+
+enum BaCustomerInputType {
+  AUDIO              // audio recording; STT delegated to existing pipeline
+  EXTERNAL_BRD       // customer's own BRD document
+  CUSTOMER_WIREFRAME // customer's own mockup or sketch (image)
+  TEXT_CONTEXT       // free text / requirements notes
+  DOCUMENT           // any other supporting document (PDF / DOCX / TXT)
+}
+
+model BaCustomerInput {
+  id            String              @id @default(uuid())
+  projectId     String
+  project       BaProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inputType     BaCustomerInputType
+  label         String              // user-defined name, e.g. "Competitor App Screenshots"
+  fileData      String?             @db.Text  // base64-encoded file content
+  fileMetadata  Json?               // { fileName, mimeType, fileSize, pageCount }
+  extractedText String?             @db.Text  // text extracted from uploaded document
+  metadata      Json                @default("{}")  // type-specific extra data
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, inputType])
+  @@map("ba_customer_inputs")
+}
+
+// ─── Combined PRD + FRD (Stage 2) ─────────────────────────────────────────────
+// Project-level PRD generated from all customer inputs.
+// FRD is embedded under section key "functionalRequirements".
+// Section schema: { [sectionKey]: { aiContent, editedContent, lockedAt } }
+
+model BaProjectPrd {
+  id             String           @id @default(uuid())
+  projectId      String
+  project        BaProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version        Int              @default(1)
+  status         BaArtifactStatus @default(DRAFT)
+  // Section keys (22 PRD sections; FRD embedded in "functionalRequirements"):
+  // productOverview | problemStatement | objectives | scope | assumptions |
+  // userPersonas | functionalRequirements (contains FRD) | nonFunctionalRequirements |
+  // systemIntegrations | dataRequirements | securityRequirements | uxRequirements |
+  // performanceRequirements | complianceRequirements | risksMitigations |
+  // successMetrics | releaseStrategy | glossary | openItems | appendix |
+  // changeHistory | signOff
+  sections       Json             @default("{}")
+  changesSince   String?          @db.Text
+  // IDs of BaCustomerInput records used as context for this generation
+  sourceInputIds String[]
+  // ── CR Foundation (Track M — traceability fields, nullable, no UI yet) ──
+  triggeredBy            BaTriggeredBy? @default(INITIAL_GENERATION)
+  changeRequestId        String?
+  sourceArtifactVersions Json?
+  // ── Interactive authoring + forward propagation (Track S/T — v6) ──
+  // metadata.gaps:       [{ section, question }]                  — persisted AI gaps
+  // metadata.gapAnswers: [{ section, question, answer, answeredAt }] — audit trail
+  // metadata.freshness:  { computedAt, downstream:[{ artifactType, id, builtFrom, current, stale, reason }] }
+  metadata       Json             @default("{}")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, version])
+  @@index([changeRequestId])
+  @@map("ba_project_prds")
+}
+
+// ─── High Level Design / HLD (Stage 5) ─────────────────────────────────────────
+// Template derived from HRMS HLD v2.1 (63 pages, 17 sections, 4 architecture views).
+// Section schema: { [sectionKey]: { aiContent, editedContent, lockedAt } }
+// Mermaid diagrams schema: { [diagramKey]: mermaidSyntaxString }
+
+model BaHld {
+  id              String           @id @default(uuid())
+  projectId       String
+  project         BaProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version         Int              @default(1)
+  status          BaArtifactStatus @default(DRAFT)
+  // 17 section keys (from HRMS HLD v2.1 template):
+  // documentControl | executiveSummary | systemView | technicalLayersView |
+  // componentView | architectureStyleView | deploymentView |
+  // architectureStyleDecision | technologyStack | designPatterns |
+  // authDesign | aiLayer | integrations | multiTenancy |
+  // nfr | prdCoverage | projectStructure
+  sections        Json             @default("{}")
+  // Mermaid diagrams for the 4 architecture views + deployment:
+  // systemView | technicalLayers | componentView | architectureStyle | deployment
+  mermaidDiagrams Json             @default("{}")
+  changesSince    String?          @db.Text
+  // ── CR Foundation (Track M — traceability fields, nullable, no UI yet) ──
+  triggeredBy            BaTriggeredBy? @default(INITIAL_GENERATION)
+  changeRequestId        String?
+  sourceArtifactVersions Json?
+  // ── Forward propagation (Track S/T — v6): mirrors BaProjectPrd.metadata ──
+  // metadata.gaps · metadata.freshness — gaps + downstream staleness symmetry
+  metadata        Json             @default("{}")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, version])
+  @@index([changeRequestId])
+  @@map("ba_hlds")
+}
+
+// ─── Project Implementation Folder (Stage 8) ────────────────────────────────
+// Tracks the on-disk ProjectImplementation/ folder created from LLD structure.
+// One record per project; created when LLD is first confirmed.
+
+enum BaScaffoldStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETE
+  ERROR
+}
+
+enum BaContextStatus {
+  PENDING
+  GENERATING
+  COMPLETE
+  ERROR
+}
+
+model BaProjectImplementation {
+  id                       String           @id @default(uuid())
+  projectId                String           @unique
+  project                  BaProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  folderPath               String           // absolute path: Projects/{code}/ProjectImplementation/
+  scaffoldStatus           BaScaffoldStatus @default(PENDING)
+  contextEngineeringStatus BaContextStatus  @default(PENDING)
+  lldSyncedAt              DateTime?        // last time LLD was synced to/from code on disk
+  lastContextRefreshedAt   DateTime?        // last time .context/ markdown files were regenerated
+  // { lastError, filesPlaced, totalFiles, lldModuleId, pseudoFilesPlaced,
+  //   sourceCodeHashes: { "<path>": "<sha256>" }, lastSyncAt, ... }
+  metadata                 Json             @default("{}")
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  @@map("ba_project_implementations")
+}
+
+// ─── Code Task (Track O) — the /prd-generated, /dev-executed task plan ───────
+// One row per implementation task for a module. Ordered by the topological sort
+// of the subtask prerequisite graph; each task links the subtask(s) and pseudo
+// file(s) it implements so the UI can trace task → subtask → pseudo file.
+
+enum BaCodeTaskStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model BaCodeTask {
+  id             String           @id @default(uuid())
+  moduleDbId     String
+  module         BaModule         @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  projectId      String           // denormalized for project-wide task views
+  sequence       Int              // execution order (topo-sort of subtask prerequisites)
+  taskKey        String           // e.g. TASK-MOD-02-01
+  title          String
+  description    String?          @db.Text
+  status         BaCodeTaskStatus @default(PENDING)
+  // ── Linkage (O-02): what this task implements ──
+  subtaskRefs    String[]         // BaSubTask.subtaskId values
+  pseudoFileRefs String[]         // BaPseudoFile.path values
+  targetFiles    String[]         // source files this task creates/edits
+  // ── Execution bookkeeping (P-01) ──
+  runId          String?          // the /dev run that executed it
+  startedAt      DateTime?
+  completedAt    DateTime?
+  errorMessage   String?          @db.Text
+  generatedFiles Json?            // files actually written (P-01); feeds P-04 dynamic detection
+  // P-04 — created during /dev because the file wasn't in the LLD/subtasks.
+  isDynamic      Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([moduleDbId, taskKey])
+  @@index([moduleDbId, sequence])
+  @@index([projectId])
+  @@map("ba_code_tasks")
+}
+
+// ─── Code Test Run (Track P/Q) — two-tier code-gen test results + history ────
+// NOTE: named BaCodeTestRun (table ba_code_test_runs) to avoid colliding with
+// the existing BaTestRun / ba_test_runs (test-case execution tracking, above).
+// kind=DEV  → tests generated/run by /dev during code-gen (Stage 1)
+// kind=FTC  → Playwright tests derived from the module's FTC cases (Stage 2)
+// One row per execution; history = all rows for a module, newest first.
+
+enum BaCodeTestRunKind {
+  DEV
+  FTC
+}
+
+enum BaCodeTestRunStatus {
+  RUNNING
+  PASSED
+  FAILED
+  ERROR
+}
+
+model BaCodeTestRun {
+  id               String              @id @default(uuid())
+  moduleDbId       String
+  module           BaModule            @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  projectId        String
+  kind             BaCodeTestRunKind
+  framework        String              // playwright | jest | vitest | pytest | …
+  status           BaCodeTestRunStatus @default(RUNNING)
+  total            Int                 @default(0)
+  passed           Int                 @default(0)
+  failed           Int                 @default(0)
+  skipped          Int                 @default(0)
+  durationMs       Int?
+  command          String?             // the command that was executed
+  output           String?             @db.Text   // captured stdout/stderr (truncated)
+  artifacts        Json?               // { screenshots:[], videos:[], traces:[], reportPath }
+  reportPath       String?
+  triggeredByRunId String?             // the /dev or test run that produced this
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([moduleDbId, kind, createdAt])
+  @@index([projectId])
+  @@map("ba_code_test_runs")
+}
+
+// ─── Upstream Sync (Track P-04/P-05 + J) — downstream→upstream auto-drafts ────
+// When /dev creates a file not in the LLD/subtasks (a "dynamic file"), an
+// auto-draft is staged here for human approval. On approval the draft is applied
+// upstream (LLD pseudo-file + subtask + CHANGELOG + RTM). Never auto-applies.
+
+enum BaUpstreamSyncStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model BaUpstreamSync {
+  id               String               @id @default(uuid())
+  moduleDbId       String
+  module           BaModule             @relation(fields: [moduleDbId], references: [id], onDelete: Cascade)
+  projectId        String
+  status           BaUpstreamSyncStatus @default(PENDING)
+  trigger          String               // DYNAMIC_FILE | CODE_EDIT
+  filePath         String?              // the new/changed source file
+  summary          String               @db.Text   // human-readable proposed change
+  proposedLld      String?              @db.Text   // draft LLD note for the new file
+  proposedSubtask  Json?                // draft subtask fields
+  changelogEntry   String?              @db.Text   // CHANGELOG line to append on approve
+  rtmRow           Json?                // draft RTM row
+  triggeredByRunId String?
+  resolvedAt       DateTime?
+  resolvedNote     String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([moduleDbId, status])
+  @@index([projectId])
+  @@map("ba_upstream_syncs")
+}
+
+// ─── E2E-Flow (Track R) — cross-module, role-based customer journeys ─────────
+// Project-scoped (like BaHld), starts before EPICs, elaborates downstream.
+// Strictly additive: nothing here changes existing module-scoped flows/tests.
+
+// A graph node type for an E2E-flow step (full decision-graph branching).
+enum BaE2eNodeType {
+  START
+  STEP
+  DECISION
+  JOIN
+  END
+}
+
+model BaE2eFlow {
+  id               String           @id @default(uuid())
+  projectId        String
+  project          BaProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  flowKey          String           // e.g. E2E-CHECKOUT, E2E-FUND-TRANSFER
+  flowName         String           // "Banking Fund Transfer"
+  journeyType      String?          // UI | API | MIXED
+  primaryRole      String?          // Customer | Admin | Guest | API-Client
+  secondaryRoles   String[]         @default([])  // multi-actor (OTP issuer, ledger svc)
+  status           BaArtifactStatus @default(DRAFT)
+  spannedModuleIds String[]         @default([])  // BaModule.id values the flow crosses
+  // 4 diagrams keyed: functional | classMethod | dbEntities | integrations
+  mermaidDiagrams  Json             @default("{}")
+  e2eArtifactId    String?          // soft-FK to the BaArtifact (type E2E_FLOW) holding sections
+  // CR Foundation (Track M) traceability
+  triggeredBy            BaTriggeredBy? @default(INITIAL_GENERATION)
+  changeRequestId        String?
+  sourceArtifactVersions Json?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  steps            BaE2eFlowStep[]
+
+  @@unique([projectId, flowKey])
+  @@index([projectId])
+  @@index([changeRequestId])
+  @@map("ba_e2e_flows")
+}
+
+model BaE2eFlowStep {
+  id                      String        @id @default(uuid())
+  e2eFlowId               String
+  e2eFlow                 BaE2eFlow     @relation(fields: [e2eFlowId], references: [id], onDelete: Cascade)
+  sequenceNum             Int           // display ordering hint
+  stepId                  String        // e.g. S04 (stable step identity)
+  nodeType                BaE2eNodeType @default(STEP)
+  nextStepIds             String[]      @default([])  // graph edges → other stepId values
+  branchLabels            Json?         // { "<nextStepId>": "OTP valid" } for DECISION nodes
+  moduleDbId              String?       // cross-module context the old click-through lacked
+  screenId                String?       // human-readable screen ref; null for pure-API steps
+  role                    String?       // actor for this step
+  triggerLabel            String?       // reused from click-through
+  outcome                 String?       // reused from click-through
+  condition               String?       // free-text guard (complements branchLabels)
+  layer                   String?       // UI | API | DB | Integration
+  thirdPartyIntegrationId String?       // soft-FK to BaThirdPartyIntegration
+  // Optional custom screenshot for this step (base64 data-URI, like BaScreen).
+  // When absent, the UI falls back to the referenced module screen's image (screenId).
+  screenshotData          String?       @db.Text
+  screenshotName          String?
+  // Downstream elaboration store: keyed by stage (EPIC|USER_STORY|SUBTASK|LLD|FTC|WTC)
+  // → { modules, features, classes, methods, dbEntities, integrations, testCaseRefs }.
+  // Written immutably (read → new-copy → write), one stage key per skill.
+  elaborationByStage      Json          @default("{}")
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  @@unique([e2eFlowId, stepId])
+  @@index([e2eFlowId, sequenceNum])
+  @@map("ba_e2e_flow_steps")
+}
+
+// Project-scoped config for the E2E-flow skill (mirrors BaFtcConfig).
+model BaE2eFlowConfig {
+  id                String                      @id @default(uuid())
+  projectId         String                      @unique
+  project           BaProject                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  referenceJourneys String[]                    @default([])  // checkout, fund-transfer, ...
+  defaultRoles      String[]                    @default([])
+  coverageTarget    String?                     // Smoke | Regression | Full
+  targetEnv         String?                     // staging | uat | prod-like
+  baseUrl           String?
+  narrative         String?                     @db.Text
+  useAsAdditional   Boolean                     @default(true)
+  attachments       BaE2eFlowConfigAttachment[]
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+
+  @@map("ba_e2e_flow_configs")
+}
+
+model BaE2eFlowConfigAttachment {
+  id              String          @id @default(uuid())
+  configId        String
+  config          BaE2eFlowConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageBackend  String
+  storageKey      String
+  extractedText   String?         @db.Text
+  extractionNote  String?
+  createdAt       DateTime        @default(now())
+
+  @@index([configId])
+  @@map("ba_e2e_flow_config_attachments")
+}
+
+// External integration registry (fills the gap TBD-Future doesn't: 3rd-party
+// vendors). Powers the integrations Mermaid diagram + OTP/payment/email steps.
+model BaThirdPartyIntegration {
+  id               String    @id @default(uuid())
+  projectId        String
+  project          BaProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  vendorName       String    // Stripe, Twilio, SendGrid, Google OAuth
+  category         String    // PAYMENT | SMS_OTP | EMAIL | AUTH | WEBHOOK | OTHER
+  endpoint         String?
+  authScheme       String?
+  status           String?   // ASSUMED | CONFIRMED | STUBBED
+  source           String?   // HLD | E2E_SKILL | MANUAL (auto-seeded from HLD, editable)
+  mappedToFlowIds  String[]  @default([])  // BaE2eFlow.id values
+  mappedToStepIds  String[]  @default([])  // BaE2eFlowStep.stepId values
+  linkedSubtaskIds String[]  @default([])
+  notes            String?   @db.Text
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([projectId])
+  @@map("ba_third_party_integrations")
+}
+
+// ─── CR Foundation (Track M) — schema only, UI deferred ─────────────────────
+// Designed now so artifact tables carry CR traceability from day one and the
+// future Change Request feature ships without a disruptive migration.
+
+// What caused an artifact version to be created. Used on BaArtifact,
+// BaProjectPrd, BaHld so we can always answer "why does this version exist?".
+enum BaTriggeredBy {
+  INITIAL_GENERATION  // first generation from upstream inputs
+  CHANGE_REQUEST      // produced by a customer Change Request
+  DOWNSTREAM_SYNC     // produced by code→artifact sync (Track L sync agent)
+  MANUAL_EDIT         // hand-edited by a user
+}
+
+enum BaChangeRequestStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  IN_PROGRESS
+  IMPLEMENTED
+  REJECTED
+  CANCELLED
+}
+
+// The pipeline stage at which the CR was raised. A CR can arrive at ANY stage —
+// before or after any artifact exists — so impact analysis must handle all.
+enum BaChangeRequestStage {
+  CUSTOMER_INPUTS
+  PRD_FRD
+  WIREFRAMES
+  HLD
+  EPICS
+  USER_STORIES
+  SUBTASKS
+  LLD
+  SOURCE_CODE
+}
+
+model BaChangeRequest {
+  id          String                @id @default(uuid())
+  projectId   String
+  project     BaProject             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  crCode      String                // human-readable: CR-001, CR-002
+  title       String
+  description String                @db.Text
+  status      BaChangeRequestStatus @default(DRAFT)
+  // Stage at which the customer raised the change.
+  stage       BaChangeRequestStage
+  changeType  String?               // "scope" | "ui" | "data" | "integration" | "policy" | ...
+  priority    String                @default("MEDIUM")  // LOW | MEDIUM | HIGH | CRITICAL
+  requestedBy String?               // customer / stakeholder name
+  // Artifact IDs this CR is expected to (or did) impact — populated by impact
+  // analysis when the CR feature is fully built. Soft references.
+  impactedArtifactIds String[]      @default([])
+  // Free-form impact analysis + audit trail until the full CR UI lands.
+  metadata    Json                  @default("{}")
+  approvedBy  String?
+  implementedAt DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@unique([projectId, crCode])
+  @@index([projectId])
+  @@index([projectId, status])
+  @@map("ba_change_requests")
 }

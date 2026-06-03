@@ -27,6 +27,8 @@ from prompts.an_prompts import AN_SYSTEM_PROMPT, build_an_user_message
 from prompts.brand_extraction_prompts import BRAND_EXTRACTION_SYSTEM_PROMPT
 from prompts.wireframe_prompts import WIREFRAME_SYSTEM_PROMPT, build_wireframe_user_message
 from prompts.hifi_prompts import HIFI_SYSTEM_PROMPT, build_hifi_user_message
+from prompts.hld_prompts import HLD_SYSTEM_PROMPT, build_hld_user_message
+from prompts.e2e_flow_prompts import E2E_FLOW_SYSTEM_PROMPT, build_e2e_flow_user_message
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -2122,3 +2124,218 @@ async def ba_execute_skill(
     logger.info("BA skill output: %d chars", len(output))
 
     return BaExecuteSkillResponse(output=output)
+
+
+# ─── New Pipeline: Project PRD + FRD Generation (Track C) ────────────────────
+# Reuses the proven 22-section PARSE_SYSTEM_PROMPT. Section 6 (Functional
+# Requirements) IS the FRD — hierarchical modules → features (FR-IDs, acceptance
+# criteria, priorities). Input is the consolidated text of all customer inputs.
+
+class ProjectPrdRequest(BaseModel):
+    project_id: str
+    consolidated_input: str = Field(..., description="All customer-input text concatenated")
+    product_name: str | None = None
+    mode: str = "interactive"  # "interactive" | "comprehensive"
+
+class ProjectPrdGapItem(BaseModel):
+    section: int
+    question: str
+
+class ProjectPrdResponse(BaseModel):
+    sections: dict
+    gaps: list[ProjectPrdGapItem] = []
+
+@app.post("/project-prd-generate", response_model=ProjectPrdResponse, tags=["pipeline"])
+async def project_prd_generate(
+    body: ProjectPrdRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> ProjectPrdResponse:
+    """
+    Generate a combined PRD + FRD from all customer inputs (Track C).
+    The FRD is embedded as Section 6 (Functional Requirements) of the 22-section PRD.
+    """
+    if not body.consolidated_input.strip():
+        raise HTTPException(status_code=400, detail="consolidated_input is empty — add customer inputs first")
+
+    system_prompt = _build_parse_prompt(body.mode)
+    user_message = body.consolidated_input
+    if body.product_name:
+        user_message = f"Product name: {body.product_name}\n\n{user_message}"
+
+    logger.info("project-prd-generate for %s (%d input chars)", body.project_id, len(user_message))
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=16384,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw_content = (response.choices[0].message.content or "").strip()
+    logger.info("project-prd-generate response: %d chars", len(raw_content))
+
+    try:
+        parsed = _parse_ai_json(raw_content)
+    except json.JSONDecodeError:
+        logger.error("project-prd-generate invalid JSON: %s", raw_content[:500])
+        raise HTTPException(status_code=502, detail="AI returned invalid JSON")
+
+    sections = parsed.get("sections", {})
+    gaps_raw = parsed.get("gaps", [])
+    gaps = [
+        ProjectPrdGapItem(section=g.get("section", 0), question=g.get("question", ""))
+        for g in gaps_raw
+    ]
+    return ProjectPrdResponse(sections=sections, gaps=gaps)
+
+
+# ─── New Pipeline: HLD Generation (Track E) ──────────────────────────────────
+# 17-section HLD + Mermaid architecture diagrams, derived from the PRD+FRD.
+
+class HldRequest(BaseModel):
+    project_id: str
+    prd_sections: dict = Field(..., description="The 22-section PRD+FRD JSON (Section 6 = FRD)")
+    wireframe_context: str = ""
+    product_name: str | None = None
+
+class HldGapItem(BaseModel):
+    section: int
+    question: str
+
+class HldResponse(BaseModel):
+    sections: dict
+    mermaid_diagrams: dict
+    gaps: list[HldGapItem] = []
+
+@app.post("/hld-generate", response_model=HldResponse, tags=["pipeline"])
+async def hld_generate(
+    body: HldRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> HldResponse:
+    """
+    Generate a 17-section High-Level Design + Mermaid diagrams from the PRD+FRD.
+    """
+    if not body.prd_sections:
+        raise HTTPException(status_code=400, detail="prd_sections is empty — generate the PRD+FRD first")
+
+    user_message = build_hld_user_message(
+        body.prd_sections, body.wireframe_context, body.product_name or ""
+    )
+    logger.info("hld-generate for %s (%d msg chars)", body.project_id, len(user_message))
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": HLD_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=16384,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw_content = (response.choices[0].message.content or "").strip()
+    logger.info("hld-generate response: %d chars", len(raw_content))
+
+    try:
+        parsed = _parse_ai_json(raw_content)
+    except json.JSONDecodeError:
+        logger.error("hld-generate invalid JSON: %s", raw_content[:500])
+        raise HTTPException(status_code=502, detail="AI returned invalid JSON")
+
+    sections = parsed.get("sections", {})
+    diagrams = parsed.get("mermaidDiagrams", parsed.get("mermaid_diagrams", {}))
+    gaps_raw = parsed.get("gaps", [])
+    gaps = [HldGapItem(section=g.get("section", 0), question=g.get("question", "")) for g in gaps_raw]
+    return HldResponse(sections=sections, mermaid_diagrams=diagrams, gaps=gaps)
+
+
+# ─── New Pipeline: E2E-Flow Generation (Track R) ─────────────────────────────
+# Project-scoped, cross-module, decision-graph customer journeys + 4 Mermaid diagrams.
+
+class E2eFlowRequest(BaseModel):
+    project_id: str
+    frd_sections: dict = Field(default_factory=dict, description="22-section PRD+FRD JSON (Section 6 = FRD)")
+    modules: list = Field(default_factory=list, description="[{moduleId, moduleName, screens:[{screenId,title}]}]")
+    config: dict | None = None
+    product_name: str | None = None
+
+class E2eFlowGapItem(BaseModel):
+    question: str
+
+class E2eFlowResponse(BaseModel):
+    flows: list = []
+    integrations: list = []
+    gaps: list[E2eFlowGapItem] = []
+
+@app.post("/e2e-flow-generate", response_model=E2eFlowResponse, tags=["pipeline"])
+async def e2e_flow_generate(
+    body: E2eFlowRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> E2eFlowResponse:
+    """Generate cross-module E2E flows (decision-graph) + Mermaid diagrams from the FRD + modules."""
+    if not body.frd_sections:
+        raise HTTPException(status_code=400, detail="frd_sections is empty — generate the PRD+FRD first")
+    if not body.modules:
+        raise HTTPException(status_code=400, detail="no modules provided — E2E flows span modules")
+
+    user_message = build_e2e_flow_user_message(
+        body.frd_sections, body.modules, body.config, body.product_name or ""
+    )
+    logger.info("e2e-flow-generate for %s (%d msg chars)", body.project_id, len(user_message))
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": E2E_FLOW_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=16384,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw_content = (response.choices[0].message.content or "").strip()
+    logger.info("e2e-flow-generate response: %d chars", len(raw_content))
+
+    try:
+        parsed = _parse_ai_json(raw_content)
+    except json.JSONDecodeError:
+        logger.error("e2e-flow-generate invalid JSON: %s", raw_content[:500])
+        raise HTTPException(status_code=502, detail="AI returned invalid JSON")
+
+    flows = parsed.get("flows", [])
+    integrations = parsed.get("integrations", [])
+    gaps = [E2eFlowGapItem(question=g.get("question", "")) for g in parsed.get("gaps", [])]
+    return E2eFlowResponse(flows=flows, integrations=integrations, gaps=gaps)
