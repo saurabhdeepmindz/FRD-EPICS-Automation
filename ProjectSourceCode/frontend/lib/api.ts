@@ -8,6 +8,20 @@ export const api = axios.create({
   timeout: 30_000,
 });
 
+// NestJS serializes a `null` controller return value as an empty HTTP 200 body
+// (it does not write the literal `"null"`). Axios then leaves `response.data`
+// as an empty string `''` instead of `null`, which breaks `data == null` checks
+// in callers (e.g. a missing Discovery Approach Note disabled the generate
+// button). Normalize empty-string JSON bodies back to `null` here. This is safe:
+// real JSON objects/arrays are never `=== ''`, and Blob/arraybuffer export
+// responses are never `=== ''` either.
+api.interceptors.response.use((response) => {
+  if (response.data === '') {
+    response.data = null;
+  }
+  return response;
+});
+
 /* ── PRD endpoints ──────────────────────────────────────────────────────── */
 
 export interface PrdSection {

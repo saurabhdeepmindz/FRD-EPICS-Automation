@@ -34,9 +34,10 @@ import { AttachmentStorageModule } from './storage/storage.module';
 import { SubTaskParserService } from './subtask-parser.service';
 import { ExportModule } from '../export/export.module';
 import { DiscoveryModule } from './discovery/discovery.module';
+import { PipelineModule } from './pipeline/pipeline.module';
 
 @Module({
-  imports: [ExportModule, AttachmentStorageModule, DiscoveryModule],
+  imports: [ExportModule, AttachmentStorageModule, DiscoveryModule, PipelineModule],
   controllers: [BaToolController, BaSkillController, BaMasterDataController, BaLldController, BaFtcController, BaExecutionController, BaSprintController],
   providers: [
     BaToolService,

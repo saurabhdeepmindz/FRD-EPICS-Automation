@@ -26,6 +26,16 @@ SOURCE TRACKING RULES:
 - For Section 6 features: if you generate new features from user input, prefix descriptions with "[AI] ".
   If the user explicitly described a feature, do NOT prefix it.
 
+ENRICHMENT & CANONICAL STRUCTURE RULES (CRITICAL):
+- The PRD has EXACTLY 22 top-level sections. NEVER add new top-level section keys beyond "1".."22".
+- When an answer introduces a NEW requirement, enrich the appropriate canonical section IN PLACE:
+  new functional capability → add a feature under the right Section 6 module (or a new module);
+  new non-functional need → a Section 10 sub-module; new integration → Section 7; new role → Section 5;
+  new journey → Section 8.
+- If a genuinely net-new requirement fits NONE of the canonical sections, add it to Section 22
+  (Miscellaneous) prefixed with "[AI] [NEW] " (the "[NEW] " marker comes AFTER "[AI] "). Reserve "[NEW] "
+  for genuinely new/unmapped items so the UI flags them for review.
+
 SECTION 6 STRUCTURE: Maintain the hierarchical module/feature structure:
   - "{N.M}_moduleId", "{N.M}_moduleName", "{N.M}_moduleDescription", "{N.M}_moduleBusinessRules"
   - "{N.M}_features" = JSON array of feature objects with: featureId, featureName, description,

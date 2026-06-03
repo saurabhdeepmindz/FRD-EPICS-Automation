@@ -16,6 +16,7 @@ import type {
   BaApproachNoteVersion,
 } from '@prisma/client';
 import type { UpdateWireframeScreenDto } from './dto/update-wireframe-screen.dto';
+import { WireframeExportService } from '../pipeline/wireframe-export.service';
 
 interface GenerateWireframesOptions {
   projectId: string;
@@ -53,6 +54,7 @@ export class WireframeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
+    private readonly wireframeExport: WireframeExportService,
   ) {}
 
   /**
@@ -141,7 +143,10 @@ export class WireframeService {
     this.logger.log(
       `Wireframe set generated: ${result.id} · ${ai.screens.length} screens (project=${opts.projectId})`,
     );
-    return this.findById(result.id);
+    const full = await this.findById(result.id);
+    // Track D — mirror lo-fi screens to ProjectArtifacts/03-Wireframes-LoFi/
+    await this.wireframeExport.exportLoFi(opts.projectId, full.screens);
+    return full;
   }
 
   async findLatestForProject(projectId: string): Promise<BaWireframeSetWithScreens | null> {

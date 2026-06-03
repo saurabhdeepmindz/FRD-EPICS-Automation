@@ -20,7 +20,7 @@ import {
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
 import { BurndownChart } from '@/components/ba-tool/BurndownChart';
-import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock, BookOpen, Mic } from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock, BookOpen, Mic, Inbox, FileText, Layers, Code2, Workflow } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -191,6 +191,36 @@ export default function BaProjectWorkspacePage() {
             <Link href={`/ba-tool/project/${projectId}/discovery`}>
               <Mic className="h-3.5 w-3.5 mr-1" />
               Discovery
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild title="New Pipeline — Customer Inputs">
+            <Link href={`/ba-tool/project/${projectId}/customer-inputs`}>
+              <Inbox className="h-3.5 w-3.5 mr-1" />
+              Inputs
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild title="New Pipeline — Combined PRD + FRD">
+            <Link href={`/ba-tool/project/${projectId}/project-prd`}>
+              <FileText className="h-3.5 w-3.5 mr-1" />
+              PRD+FRD
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild title="New Pipeline — High Level Design">
+            <Link href={`/ba-tool/project/${projectId}/hld`}>
+              <Layers className="h-3.5 w-3.5 mr-1" />
+              HLD
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild title="New Pipeline — Cross-Module E2E Flows">
+            <Link href={`/ba-tool/project/${projectId}/e2e-flows`}>
+              <Workflow className="h-3.5 w-3.5 mr-1" />
+              E2E Flows
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild title="New Pipeline — Project Implementation + Code Generation">
+            <Link href={`/ba-tool/project/${projectId}/implementation`}>
+              <Code2 className="h-3.5 w-3.5 mr-1" />
+              Code
             </Link>
           </Button>
           <Button size="sm" variant="outline" asChild title="Architect Console — design standards & templates">

@@ -1,10 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  // Disable the default body parser so we can raise the limit. PRD creation and
+  // section saves can carry the full extracted source document (100s of KB) plus
+  // 22 sections of rich content; the Express default (100kb) returned HTTP 413.
+  // Multipart uploads (file/logo/customer inputs) are handled by Multer per-route
+  // and are unaffected.
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.use(json({ limit: '25mb' }));
+  app.use(urlencoded({ extended: true, limit: '25mb' }));
 
   // Global prefix — all routes under /api
   app.setGlobalPrefix('api');

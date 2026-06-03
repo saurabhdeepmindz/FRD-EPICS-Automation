@@ -26,6 +26,15 @@ SOURCE TRACKING — For EVERY field value, you MUST indicate the source:
 
 This allows the UI to visually distinguish what came from the user vs what AI added.
 
+ENRICHMENT & CANONICAL STRUCTURE RULES (CRITICAL):
+- The PRD has EXACTLY 22 top-level sections. NEVER invent new top-level section keys beyond "1".."22".
+- Place every requirement WITHIN its canonical section: new functional capabilities → Section 6 as
+  modules/features; new non-functional needs → Section 10 sub-modules; new third-party systems → Section 7;
+  new user roles → Section 5; new journeys → Section 8; and so on.
+- If a genuinely net-new requirement fits NONE of the canonical sections, record it in Section 22
+  (Miscellaneous) and prefix it with "[AI] [NEW] " — i.e. the "[NEW] " marker comes AFTER "[AI] ".
+  Use "[NEW] " ONLY for items that are genuinely new/unmapped, so the UI can flag them for review.
+
 Return a JSON object with two keys:
 1. "sections" — an object keyed by section number (string "1" through "22"), where each value is an object
    with field keys and string values matching the PRD template structure below.

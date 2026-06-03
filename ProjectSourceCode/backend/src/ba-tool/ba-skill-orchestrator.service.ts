@@ -7,9 +7,13 @@ import { BaLldParserService } from './ba-lld-parser.service';
 import { BaLldNarrativeService } from './ba-lld-narrative.service';
 import { BaFtcParserService } from './ba-ftc-parser.service';
 import { BaFtcNarrativeService } from './ba-ftc-narrative.service';
+import { ProjectFolderService, type ArtifactSubfolder } from './pipeline/project-folder.service';
+import { SourceCodeScaffoldService } from './pipeline/source-code-scaffold.service';
+import { ContextEngineeringService } from './pipeline/context-engineering.service';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
+import { flattenSections } from './pipeline/section-normalizer';
 
 /** Skill names in execution order */
 export const SKILL_ORDER = [
@@ -77,6 +81,9 @@ export class BaSkillOrchestratorService {
     private readonly narrative: BaLldNarrativeService,
     private readonly ftcParser: BaFtcParserService,
     private readonly ftcNarrative: BaFtcNarrativeService,
+    private readonly projectFolders: ProjectFolderService,
+    private readonly sourceScaffold: SourceCodeScaffoldService,
+    private readonly contextEngineering: ContextEngineeringService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
     // Skill files are at project root Master-Documents-Skills/ or Screen-FRD-EPICS-Automation-Skills/
@@ -408,6 +415,11 @@ export class BaSkillOrchestratorService {
         this.logger.warn(`Incremental RTM update failed for ${skillName}: ${rMsg}`);
       }
 
+      // 7a. Mirror the generated artifact markdown to ProjectArtifacts/ on disk
+      //     (Track F: EPICs · Track G: Stories/SubTasks · Track H: LLD).
+      //     Best-effort — never blocks the skill result.
+      await this.mirrorArtifactToDisk(skillName, moduleDbId, humanDocument);
+
       // 7b. SKILL-06 post-processing: parse LLD document + pseudo files, set lldCompletedAt,
       //     and extend RTM rows with pseudo-file links so the trace runs to source.
       if (skillName === 'SKILL-06-LLD' && artifact) {
@@ -422,6 +434,15 @@ export class BaSkillOrchestratorService {
             await this.extendRtmWithLld(moduleDbId, modForRtm.projectId, artifact.id);
           }
           this.logger.log(`LLD: parsed document + pseudo files + extended RTM for module ${moduleDbId}`);
+
+          // Track H — scaffold ProjectSourceCode/ from the freshly-parsed pseudo
+          // files, then refresh the .context/ bundle. Best-effort.
+          await this.sourceScaffold.scaffoldModule(moduleDbId);
+          if (modForRtm?.projectId) {
+            await this.contextEngineering
+              .seedContextFiles(modForRtm.projectId)
+              .catch((e) => this.logger.warn(`Context refresh failed: ${e instanceof Error ? e.message : e}`));
+          }
         } catch (lldErr: unknown) {
           const msg = lldErr instanceof Error ? lldErr.message : 'unknown error';
           this.logger.warn(`SKILL-06 post-processing partial failure: ${msg}`);
@@ -593,7 +614,140 @@ export class BaSkillOrchestratorService {
     // Expose the project sqlDialect to every skill; FTC actually uses it, but
     // any future SQL-emitting skill will see it automatically.
     const sqlDialect = (mod.project as { sqlDialect?: string | null })?.sqlDialect ?? 'postgresql';
-    return { ...ctx, projectMeta: { ...projectMeta, sqlDialect } };
+
+    // Track F — extend EPIC context with the new-pipeline upstream artifacts
+    // (PRD+FRD, HLD, wireframe references). No-op when those artifacts don't
+    // exist, so EPIC generation for legacy modules is unchanged.
+    let pipelineContext: Record<string, unknown> | undefined;
+    if (skillName === 'SKILL-02-S' && mod.projectId) {
+      pipelineContext = await this.assemblePipelineContext(mod.projectId);
+    }
+
+    return {
+      ...ctx,
+      projectMeta: { ...projectMeta, sqlDialect },
+      ...(pipelineContext ? { pipelineContext } : {}),
+    };
+  }
+
+  /**
+   * Track F — assembles trimmed references to the new-pipeline upstream artifacts
+   * for richer EPIC generation: the combined PRD+FRD, the HLD (architecture
+   * decisions + tech stack + project structure), and lo-fi/hi-fi wireframe screen
+   * lists. Returns `undefined` when none exist (legacy behaviour preserved).
+   */
+  private async assemblePipelineContext(
+    projectId: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const [prd, hld, wireframeSet, hifiSet] = await Promise.all([
+      this.prisma.baProjectPrd.findFirst({
+        where: { projectId },
+        orderBy: { version: 'desc' },
+        select: { version: true, sections: true },
+      }),
+      this.prisma.baHld.findFirst({
+        where: { projectId },
+        orderBy: { version: 'desc' },
+        select: { version: true, sections: true },
+      }),
+      this.prisma.baWireframeSet.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: 'desc' },
+        include: { screens: { orderBy: { sequenceNum: 'asc' }, select: { title: true, slug: true } } },
+      }),
+      this.prisma.baHifiSet.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: 'desc' },
+        include: { screens: { orderBy: { sequenceNum: 'asc' }, select: { title: true, slug: true } } },
+      }),
+    ]);
+
+    if (!prd && !hld && !wireframeSet && !hifiSet) return undefined;
+
+    const ctx: Record<string, unknown> = {
+      note:
+        'These are upstream artifacts from the Discovery→Design pipeline. Use them to ground the ' +
+        'EPIC in the product vision (PRD), the architecture (HLD), and the actual screens (wireframes). ' +
+        'The FRD feature mapping still comes from the RTM/feature data above; this is additional grounding.',
+    };
+
+    if (prd) {
+      // Flatten through the F2 seam so AI context never sees raw {aiContent} objects.
+      const s = flattenSections(prd.sections as Record<string, unknown>) as Record<
+        string,
+        Record<string, unknown>
+      >;
+      ctx.prd = {
+        version: prd.version,
+        overview: s['1'] ?? null, // Overview / Objective
+        scope: s['2'] ?? null, // High-Level Scope
+        successCriteria: s['21'] ?? null,
+        // §6 (FRD) intentionally omitted here — the EPIC already receives the FRD
+        // feature data via RTM rows; this avoids doubling a very large section.
+      };
+    }
+    if (hld) {
+      const s = flattenSections(hld.sections as Record<string, unknown>) as Record<
+        string,
+        Record<string, unknown>
+      >;
+      ctx.hld = {
+        version: hld.version,
+        executiveSummary: s.executiveSummary ?? null,
+        architectureStyleDecision: s.architectureStyleDecision ?? null,
+        technologyStack: s.technologyStack ?? null,
+        projectStructure: s.projectStructure ?? null,
+      };
+    }
+    if (wireframeSet?.screens?.length) {
+      ctx.loFiWireframes = wireframeSet.screens.map((sc) => `${sc.title} (${sc.slug})`);
+    }
+    if (hifiSet?.screens?.length) {
+      ctx.hiFiMockups = hifiSet.screens.map((sc) => `${sc.title} (${sc.slug})`);
+    }
+    return ctx;
+  }
+
+  /**
+   * Mirror a generated skill artifact (EPIC / Stories / SubTasks / LLD) to the
+   * project's ProjectArtifacts/ folder on disk. Best-effort: a disk failure must
+   * never affect the skill result. Covers Track F (EPICs), G (Stories/SubTasks),
+   * and H-01 (LLD doc).
+   */
+  private async mirrorArtifactToDisk(
+    skillName: SkillName,
+    moduleDbId: string,
+    humanDocument: string,
+  ): Promise<void> {
+    const map: Partial<Record<SkillName, { sub: ArtifactSubfolder; label: string }>> = {
+      'SKILL-02-S': { sub: '06-EPICs', label: 'EPICs' },
+      'SKILL-04': { sub: '07-UserStories', label: 'UserStories' },
+      'SKILL-05': { sub: '08-SubTasks', label: 'SubTasks' },
+      'SKILL-06-LLD': { sub: '09-LLD', label: 'LLD' },
+    };
+    const m = map[skillName];
+    if (!m || !humanDocument?.trim()) return;
+
+    try {
+      const mod = await this.prisma.baModule.findUnique({
+        where: { id: moduleDbId },
+        include: { project: { select: { name: true } } },
+      });
+      if (!mod?.project?.name) return;
+      const fileName = `${mod.moduleId}-${m.label}.md`;
+      await this.projectFolders.writeArtifactFile(mod.project.name, m.sub, fileName, humanDocument);
+      await this.projectFolders.appendChangelog(mod.project.name, {
+        summary: `Generated ${m.label} for ${mod.moduleId} (${mod.moduleName})`,
+        affectedArtifacts: [`${m.sub}/${fileName}`],
+        source: skillName,
+        timestamp: new Date().toISOString(),
+      });
+      this.logger.log(`Mirrored ${skillName} → ${m.sub}/${fileName} for ${mod.project.name}`);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Artifact disk mirror (${skillName}) failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /** SKILL-00: Screen images + BA descriptions + click-through flows
@@ -1412,6 +1566,18 @@ export class BaSkillOrchestratorService {
       '',
       'Before you finish: count your `#### Section ` headings. There should be exactly 17 (Section 1 through Section 17). Plus the EPIC Header and FRD Feature IDs Section. If your document has any of the forbidden meta-overview headings above, delete them and replace with the canonical Section N labels — the validator will reject the response otherwise.',
       '',
+      ...(contextPacket.pipelineContext
+        ? [
+            '### Upstream pipeline context (use to ground the EPIC)',
+            '',
+            'The `pipelineContext` object in the Context below carries the combined **PRD+FRD** (product overview, scope, success criteria), the **HLD** (architecture style decision, technology stack, project structure), and the **lo-fi / hi-fi wireframe** screen lists for this project. Use them to make the EPIC consistent with the agreed architecture and screens:',
+            '- Section 4 (Business Context) and Section 14 (Business Value) should reflect the PRD overview/scope.',
+            '- Section 11 (Integration Domains) and Section 13 (NFRs) should align with the HLD.',
+            '- Section 6 (High-Level Flow) and Section 9 (Scope) may reference the wireframe screens by name.',
+            'Do NOT let this context change the required 17-section structure — it is grounding, not a new format.',
+            '',
+          ]
+        : []),
       '---',
       '',
       '## Original Skill Definition (follow all rules below, constrained by the override above)',

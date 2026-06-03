@@ -33,6 +33,13 @@ ProjectSourceCode/backend/uploads/
 Taxcomp-ba-artifacts/
 Project-Documents/SubTasks/
 
+# New pipeline — per-project generated outputs (artifacts + source code + changelog)
+# Created by ProjectFolderService at Projects/{ProjectName}/. Local-only deliverables.
+Projects/
+
+# New pipeline — agentic code-gen settings (contains the API key in plaintext)
+ProjectSourceCode/backend/agent-settings.json
+
 # Prisma
 *.db
 *.db-journal

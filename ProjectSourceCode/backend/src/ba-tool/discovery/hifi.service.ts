@@ -17,6 +17,7 @@ import type {
   BaWireframeScreen,
 } from '@prisma/client';
 import type { UpdateHifiScreenDto } from './dto/update-hifi-screen.dto';
+import { WireframeExportService } from '../pipeline/wireframe-export.service';
 
 interface GenerateHifiOptions {
   projectId: string;
@@ -66,6 +67,7 @@ export class HifiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
+    private readonly wireframeExport: WireframeExportService,
   ) {}
 
   /**
@@ -169,7 +171,10 @@ export class HifiService {
     this.logger.log(
       `Hi-fi set generated: ${result.id} · ${ai.screens.length} screens · parity=${parity.validated} (project=${opts.projectId})`,
     );
-    return this.findById(result.id);
+    const full = await this.findById(result.id);
+    // Track D — mirror hi-fi screens to ProjectArtifacts/04-Wireframes-HiFi/
+    await this.wireframeExport.exportHiFi(opts.projectId, full.screens);
+    return full;
   }
 
   async findLatestForProject(projectId: string): Promise<BaHifiSetWithScreens | null> {
