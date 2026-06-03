@@ -150,6 +150,14 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  // ── V-02: canonical PRD markdown (for in-browser preview/download) ──
+
+  @Get('project-prd/markdown')
+  async getProjectPrdMarkdown(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.projectPrd.getMarkdown(id);
+    return { success: true, data };
+  }
+
   // ── T-02: forward-propagation freshness (downstream staleness vs latest PRD/HLD) ──
 
   @Get('freshness')

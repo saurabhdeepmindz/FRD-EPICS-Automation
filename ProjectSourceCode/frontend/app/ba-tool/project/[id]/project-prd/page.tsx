@@ -11,6 +11,9 @@ import {
   RefreshCw,
   ChevronRight,
   FolderOpen,
+  Eye,
+  Pencil,
+  Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,6 +21,7 @@ import {
   getProjectPrd,
   generateProjectPrd,
   getProjectPrdGaps,
+  getProjectPrdMarkdown,
   createCustomerInput,
   PRD_SECTION_NAMES,
   type ProjectPrd,
@@ -39,6 +43,7 @@ export default function ProjectPrdPage() {
   const [gaps, setGaps] = useState<PrdGap[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [seedText, setSeedText] = useState('');
+  const [view, setView] = useState<'edit' | 'preview'>('edit');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +102,23 @@ export default function ProjectPrdPage() {
     }
   };
 
+  // V-02 — download the canonical PRD as Markdown.
+  const onDownloadMd = async () => {
+    try {
+      const res = await getProjectPrdMarkdown(projectId);
+      if (!res) return;
+      const blob = new Blob([res.markdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PRD-FRD-v${res.version}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed');
+    }
+  };
+
   const sectionKeys = prd
     ? Object.keys(prd.sections).sort((a, b) => Number(a) - Number(b))
     : [];
@@ -122,13 +144,29 @@ export default function ProjectPrdPage() {
             <Button variant="outline" size="sm">← Inputs</Button>
           </Link>
           {prd ? (
-            <Button size="sm" onClick={onGenerate} disabled={generating}>
-              {generating ? (
-                <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Regenerating…</>
-              ) : (
-                <><RefreshCw className="h-4 w-4 mr-1" /> Regenerate</>
-              )}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setView((v) => (v === 'edit' ? 'preview' : 'edit'))}
+              >
+                {view === 'edit' ? (
+                  <><Eye className="h-4 w-4 mr-1" /> Preview</>
+                ) : (
+                  <><Pencil className="h-4 w-4 mr-1" /> Edit</>
+                )}
+              </Button>
+              <Button variant="outline" size="sm" onClick={onDownloadMd}>
+                <Download className="h-4 w-4 mr-1" /> .md
+              </Button>
+              <Button size="sm" onClick={onGenerate} disabled={generating}>
+                {generating ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Regenerating…</>
+                ) : (
+                  <><RefreshCw className="h-4 w-4 mr-1" /> Regenerate</>
+                )}
+              </Button>
+            </>
           ) : null}
           <Link href={`/ba-tool/project/${projectId}/hld`}>
             <Button variant="outline" size="sm">HLD →</Button>
@@ -210,8 +248,8 @@ export default function ProjectPrdPage() {
               Exported to <code className="text-xs">ProjectArtifacts/02-PRD-FRD/PRD-FRD-v{prd.version}.md</code>
             </div>
 
-            {/* Gap-answering loop (S-06) — answer in-place to enrich the PRD */}
-            {gaps.length > 0 && (
+            {/* Gap-answering loop (S-06) — answer in-place to enrich the PRD (edit view only) */}
+            {view === 'edit' && gaps.length > 0 && (
               <PrdGapPanel
                 key={`${prd.version}-${gaps.length}`}
                 projectId={projectId}
@@ -220,21 +258,26 @@ export default function ProjectPrdPage() {
               />
             )}
 
-            {/* Sections */}
-            <div className="space-y-2">
-              {sectionKeys.map((key) => (
-                <PrdSection
-                  key={key}
-                  num={key}
-                  name={PRD_SECTION_NAMES[key] ?? `Section ${key}`}
-                  body={prd.sections[key]}
-                  defaultOpen={key === '6'}
-                  projectId={projectId}
-                  prdId={prd.id}
-                  onSaved={load}
-                />
-              ))}
-            </div>
+            {view === 'preview' ? (
+              /* V-01 — canonical rendered document */
+              <PrdPreview sections={prd.sections} sectionKeys={sectionKeys} />
+            ) : (
+              /* Editable sections (V-03 — editor always shown when a section is open) */
+              <div className="space-y-2">
+                {sectionKeys.map((key) => (
+                  <PrdSection
+                    key={key}
+                    num={key}
+                    name={PRD_SECTION_NAMES[key] ?? `Section ${key}`}
+                    body={prd.sections[key]}
+                    defaultOpen={key === '6'}
+                    projectId={projectId}
+                    prdId={prd.id}
+                    onSaved={load}
+                  />
+                ))}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -262,77 +305,91 @@ function PrdSection({
   onSaved: () => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(!!defaultOpen);
-  const [editing, setEditing] = useState(false);
   const isFrd = num === '6';
 
+  // V-03 — when a section is open it shows the editor directly (AI Suggest always
+  // visible), matching the original always-editable form. Collapsing discards
+  // unsaved edits for that section.
   return (
     <Card>
-      <div className="w-full flex items-center gap-3 px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-3 text-left flex-1 min-w-0"
-        >
-          <span className="text-xs font-mono text-gray-400 w-6 shrink-0">{num}</span>
-          <span className={`text-sm font-medium ${isFrd ? 'text-blue-700' : 'text-gray-800'}`}>
-            {name}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left"
+      >
+        <span className="text-xs font-mono text-gray-400 w-6 shrink-0">{num}</span>
+        <span className={`text-sm font-medium ${isFrd ? 'text-blue-700' : 'text-gray-800'}`}>
+          {name}
+        </span>
+        {isFrd && (
+          <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">
+            FRD
           </span>
-          {isFrd && (
-            <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">
-              FRD
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(true);
-            setEditing((e) => !e);
-          }}
-          className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1 shrink-0"
-        >
-          {editing ? 'Close editor' : 'Edit'}
-        </button>
-        <button type="button" onClick={() => setOpen((o) => !o)} className="shrink-0">
-          <ChevronRight
-            className={`h-4 w-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`}
-          />
-        </button>
-      </div>
+        )}
+        <ChevronRight
+          className={`h-4 w-4 text-gray-400 ml-auto shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+      </button>
       {open && (
         <CardContent className="pt-0 pb-4 border-t">
-          {editing ? (
-            isFrd ? (
-              <FrdEditor
-                projectId={projectId}
-                prdId={prdId}
-                body={body}
-                onSaved={async () => {
-                  await onSaved();
-                  setEditing(false);
-                }}
-                onCancel={() => setEditing(false)}
-              />
-            ) : (
-              <PrdSectionEditor
-                projectId={projectId}
-                prdId={prdId}
-                sectionKey={num}
-                body={body}
-                onSaved={async () => {
-                  await onSaved();
-                  setEditing(false);
-                }}
-                onCancel={() => setEditing(false)}
-              />
-            )
-          ) : isFrd ? (
-            <FrdView body={body} />
+          {isFrd ? (
+            <FrdEditor
+              projectId={projectId}
+              prdId={prdId}
+              body={body}
+              onSaved={onSaved}
+              onCancel={() => setOpen(false)}
+            />
           ) : (
-            <GenericView body={body} />
+            <PrdSectionEditor
+              projectId={projectId}
+              prdId={prdId}
+              sectionKey={num}
+              body={body}
+              onSaved={onSaved}
+              onCancel={() => setOpen(false)}
+            />
           )}
         </CardContent>
       )}
+    </Card>
+  );
+}
+
+// ─── Canonical preview (V-01) — full read-only rendered document ──────────────
+
+function PrdPreview({
+  sections,
+  sectionKeys,
+}: {
+  sections: Record<string, Record<string, unknown>>;
+  sectionKeys: string[];
+}) {
+  return (
+    <Card>
+      <CardContent className="py-6 space-y-6">
+        <div className="text-center border-b pb-4">
+          <h2 className="text-xl font-semibold text-gray-900">Product Requirements Document (PRD + FRD)</h2>
+          <p className="text-xs text-gray-400 mt-1">Canonical view · 22 sections · §6 = FRD</p>
+        </div>
+        {sectionKeys.map((key) => {
+          const isFrd = key === '6';
+          return (
+            <section key={key}>
+              <h3 className="text-sm font-semibold text-gray-800 mb-2">
+                <span className="font-mono text-gray-400 mr-2">{key}.</span>
+                {PRD_SECTION_NAMES[key] ?? `Section ${key}`}
+                {isFrd && (
+                  <span className="ml-2 text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">
+                    FRD
+                  </span>
+                )}
+              </h3>
+              {isFrd ? <FrdView body={sections[key]} /> : <GenericView body={sections[key]} />}
+            </section>
+          );
+        })}
+      </CardContent>
     </Card>
   );
 }

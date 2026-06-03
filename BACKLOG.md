@@ -390,6 +390,30 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track V — Canonical PRD Preview & Export + Always-On AI Suggest — Sprint v6 addendum 2 (2026-06-03)
+
+> **Raised testing v6:** parity with the original `/prd` tool. (1) AI Suggest was hidden behind the per-section Edit toggle — make it always-on (old tool is an always-editable form). (2) No in-browser **canonical PRD view / download** — the old "Generate → Preview/Source" step. (3) 413 on the old tool's bulk create — fixed (body limit 100kb→25mb in `main.ts`).
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | V-03 | Frontend: **AI Suggest always visible** — expanding a section opens the editor directly (no read-only/Edit toggle) | `PrdSectionEditor`/`FrdEditor` | Matches old always-editable form |
+| ✅ | V-02 | Backend+FE: **Markdown export endpoint + Download** (`GET …/project-prd/markdown`) | `exportMarkdown` renderer + F2 seam | PDF/DOCX deferred |
+| ✅ | V-01 | Frontend: **Preview** toggle → full canonical rendered document (22 sections + §6 modules/features, AI text blue) | `FieldValue`/`FrdView` (read-only renderers) | The "generate → see full PRD canonically" view |
+| ✅ | V-00 | Backend: raise body-parser limit 100kb→25mb (fixes 413 on bulk create / large §6 save) | `main.ts` (json/urlencoded) | Done 2026-06-03 |
+
+---
+
+### Track W — Draft Review & PRD Metadata — Sprint v6 addendum 2, PLAN (DEFERRED)
+
+> Optional parity items with the old "PRD Draft Review" stage. New pipeline currently creates the PRD directly + edits inline (no accept/skip gate).
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ⬜ | W-01 | Draft-review stage — per-section Accept/Edit/Skip + progress (X/22, accepted/edited/skipped/pending) before finalize | old `/prd` review page UX | Review-before-commit gating |
+| ⬜ | W-02 | PRD-level metadata (PRD Code, Client, Submitted By) + **version history UI** (view/compare/restore) | `/project-prd/versions` API exists | Versions persisted; no UI yet |
+
+---
+
 ### HLD Template
 
 > **Status:** ✅ User shared HRMS-HLD-Consolidated-v2.1.1 (63 pages). 17 section keys derived and implemented in `BaHld` model and stub AI endpoint.

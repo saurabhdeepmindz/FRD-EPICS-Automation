@@ -211,6 +211,27 @@
 
 ---
 
+## Addendum 2 (added 2026-06-03, after Phase 4 testing) — Track V + Track W
+
+> Raised while comparing the new pipeline to the original `/prd` tool: (1) AI Suggest is hidden behind the per-section "Edit" toggle (old tool shows it always on an always-editable form); (2) there is no in-browser **canonical PRD view / download** — the old tool's "Generate → Preview/Source" step. The 413 on the old tool's "Accept All & Create PRD" was a backend body-limit (fixed: 100kb → 25mb in `main.ts`).
+
+### Track V — Canonical PRD Preview & Export + Always-On AI Suggest (BUILD)
+- [x] **V-03:** AI Suggest **always visible** — expanding a section opens the editor directly (remove the read-only/Edit toggle), matching the old always-editable form. Save per section; collapse = discard unsaved.
+  - Files: `frontend/app/ba-tool/project/[id]/project-prd/page.tsx`
+  - Effort: S
+- [x] **V-02:** Markdown **export endpoint + Download button** — `GET …/project-prd/markdown` returns the rendered canonical markdown (reuse the export renderer through the F2 seam); frontend downloads `.md`. (PDF/DOCX deferred.)
+  - Files: `backend/.../project-prd.service.ts`, `pipeline.controller.ts`, `frontend/lib/pipeline-api.ts`, `project-prd/page.tsx`
+  - Effort: S
+- [x] **V-01:** **Preview** toggle on the project-prd page → full canonical rendered document (all 22 sections + §6 modules/features, read-only, AI text blue) reusing `FieldValue`/`FrdView`; the "generate → see the full PRD canonically" view.
+  - Files: `frontend/app/ba-tool/project/[id]/project-prd/page.tsx`
+  - Effort: M
+
+### Track W — Draft Review & PRD Metadata (PLAN — DEFERRED)
+- [ ] **W-01:** Optional draft-review stage — per-section Accept/Edit/Skip + progress (X/22, accepted/edited/skipped/pending) before finalizing, matching the old "PRD Draft Review". (New pipeline currently creates directly + edits inline.)
+- [ ] **W-02:** PRD-level metadata (PRD Code, Client Name, Submitted By) on the new PRD + **version history UI** (view/compare/restore — `/project-prd/versions` API already exists).
+
+---
+
 ## Task Summary
 
 | # | Phase | Track | Priority | Effort | Deliverable |

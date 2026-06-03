@@ -249,6 +249,16 @@ export async function answerProjectPrdGaps(
   return data.data;
 }
 
+/** V-02 — canonical PRD markdown for the latest version (for preview/download). */
+export async function getProjectPrdMarkdown(
+  projectId: string,
+): Promise<{ version: number; markdown: string } | null> {
+  const { data } = await api.get<ApiEnvelope<{ version: number; markdown: string } | null>>(
+    `/ba/projects/${projectId}/project-prd/markdown`,
+  );
+  return data.data;
+}
+
 // ─── Forward propagation / freshness (Track T — T-02/T-03) ───────────────────
 
 export interface FreshnessEntry {

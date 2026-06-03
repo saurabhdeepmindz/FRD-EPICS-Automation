@@ -436,13 +436,18 @@ export class ProjectPrdService {
       .join('\n\n');
   }
 
-  /** Render the 22-section PRD to Markdown and write it to 02-PRD-FRD/. */
-  private async exportMarkdown(
-    projectName: string,
-    version: number,
-    sections: Record<string, unknown>,
-    changeSummary?: string,
-  ): Promise<void> {
+  /** V-02 — the rendered canonical Markdown for the latest PRD (for in-browser download). */
+  async getMarkdown(projectId: string): Promise<{ version: number; markdown: string } | null> {
+    const latest = await this.getLatest(projectId);
+    if (!latest) return null;
+    return {
+      version: latest.version,
+      markdown: this.renderMarkdown(latest.version, latest.sections as Record<string, unknown>),
+    };
+  }
+
+  /** Render the 22-section PRD to canonical Markdown (F2 seam flattens structured fields). */
+  private renderMarkdown(version: number, sections: Record<string, unknown>): string {
     const lines: string[] = [`# Product Requirements Document (PRD + FRD)`, ``, `_Version ${version}_`, ``];
     for (let n = 1; n <= 22; n++) {
       const key = String(n);
@@ -453,14 +458,23 @@ export class ProjectPrdService {
         lines.push('_Not generated._', '');
         continue;
       }
-      // F2 seam: flatten structured fields to flat [AI]-prefixed text for export.
       lines.push('```json', JSON.stringify(flattenValue(body), null, 2), '```', '');
     }
+    return lines.join('\n');
+  }
+
+  /** Render the 22-section PRD to Markdown and write it to 02-PRD-FRD/. */
+  private async exportMarkdown(
+    projectName: string,
+    version: number,
+    sections: Record<string, unknown>,
+    changeSummary?: string,
+  ): Promise<void> {
     await this.projectFolders.writeArtifactFile(
       projectName,
       '02-PRD-FRD',
       `PRD-FRD-v${version}.md`,
-      lines.join('\n'),
+      this.renderMarkdown(version, sections),
     );
     await this.projectFolders.appendChangelog(projectName, {
       summary: changeSummary ?? `Generated PRD + FRD v${version}`,
