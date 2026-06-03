@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "puppeteer browsers install chrome",
     "build": "nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -31,6 +32,7 @@
     "class-validator": "^0.14.1",
     "docx": "^9.6.1",
     "form-data": "^4.0.5",
+    "html-to-docx": "^1.8.0",
     "mammoth": "^1.12.0",
     "multer": "^1.4.5-lts.1",
     "pdf-parse": "^1.1.1",

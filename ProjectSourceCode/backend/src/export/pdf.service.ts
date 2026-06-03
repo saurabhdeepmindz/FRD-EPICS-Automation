@@ -32,10 +32,25 @@ export class PdfService {
       return Buffer.from(html, 'utf-8');
     }
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    let browser: import('puppeteer').Browser;
+    try {
+      browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+    } catch (err) {
+      // Most common cause: Puppeteer's Chrome was never downloaded (the cache
+      // dir is empty). Previously this threw and surfaced as an opaque HTTP 500
+      // ("Failed to download PDF…"). Degrade gracefully to the HTML buffer and
+      // log the exact remediation so it isn't a guessing game.
+      this.logger.error(
+        `Puppeteer failed to launch Chrome — falling back to HTML buffer. ` +
+          `Fix: run "npx puppeteer browsers install chrome" in the backend package. ` +
+          `Original error: ${(err as Error).message}`,
+      );
+      return Buffer.from(html, 'utf-8');
+    }
+
     try {
       const page = await browser.newPage();
       // Default 30s page navigation timeout is too tight for large FTC
