@@ -11,6 +11,12 @@ import {
   isStructuredField,
   type StructuredField,
 } from './section-normalizer';
+import {
+  computeSectionStatuses,
+  computeReviewProgress,
+  emptyReviewMap,
+  type ReviewStatus,
+} from './section-status';
 
 /**
  * The 22 PRD section names (index = section number). Section 6 is the FRD.
@@ -127,6 +133,147 @@ export class ProjectPrdService {
     return prd;
   }
 
+  // ── v7 Track X/W — guided editor + review gate ───────────────────────────────
+
+  /** Latest PRD enriched with derived authoring status + review map/progress (Task 2/5). */
+  async getLatestEnriched(projectId: string) {
+    const prd = await this.getLatest(projectId);
+    if (!prd) return null;
+    const sections = (prd.sections as Record<string, unknown>) ?? {};
+    const meta = (prd.metadata as Record<string, unknown> | null) ?? {};
+    const review = (meta.review && typeof meta.review === 'object' ? meta.review : {}) as Record<string, unknown>;
+    return {
+      ...prd,
+      sectionStatuses: computeSectionStatuses(sections),
+      review,
+      reviewProgress: computeReviewProgress(review),
+    };
+  }
+
+  /** Task 3 (D6) — the customer inputs the latest PRD was generated from. */
+  async getSource(projectId: string) {
+    const latest = await this.getLatest(projectId);
+    const ids = Array.isArray(latest?.sourceInputIds) ? latest!.sourceInputIds : [];
+    if (!ids.length) return [];
+    const inputs = await this.prisma.baCustomerInput.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, inputType: true, label: true, extractedText: true, fileMetadata: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return inputs.map((i) => ({
+      id: i.id,
+      inputType: i.inputType,
+      label: i.label,
+      textExcerpt: (i.extractedText ?? '').slice(0, 1000),
+      charCount: (i.extractedText ?? '').length,
+      fileName: (i.fileMetadata as { fileName?: string } | null)?.fileName ?? null,
+      createdAt: i.createdAt,
+    }));
+  }
+
+  /** Task 4 (D5) — clone a version into a new version (non-destructive restore). */
+  async restore(prdId: string): Promise<{ id: string; version: number }> {
+    const src = await this.get(prdId);
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: src.projectId },
+      select: { name: true },
+    });
+    if (!project) throw new NotFoundException(`Project ${src.projectId} not found`);
+    const latest = await this.getLatest(src.projectId);
+    const nextVersion = (latest?.version ?? src.version) + 1;
+    const srcMeta = (src.metadata as Record<string, unknown> | null) ?? {};
+    const record = await this.prisma.baProjectPrd.create({
+      data: {
+        projectId: src.projectId,
+        version: nextVersion,
+        status: 'DRAFT',
+        sections: src.sections as Prisma.InputJsonValue,
+        sourceInputIds: src.sourceInputIds,
+        triggeredBy: 'MANUAL_EDIT',
+        prdCode: src.prdCode,
+        clientName: src.clientName,
+        submittedBy: src.submittedBy,
+        sourceArtifactVersions: (src.sourceArtifactVersions ?? {}) as Prisma.InputJsonValue,
+        metadata: { ...srcMeta, restoredFrom: src.version } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    await this.exportMarkdown(
+      project.name,
+      record.version,
+      src.sections as Record<string, unknown>,
+      `Restored PRD from v${src.version} → v${record.version}`,
+    ).catch((e) => this.logger.warn(`PRD markdown export failed: ${e instanceof Error ? e.message : e}`));
+    await this.firePropagation(project.name, src.projectId, `PRD restored from v${src.version} → v${record.version}`);
+    return { id: record.id, version: record.version };
+  }
+
+  /** Task 5 — set one section's review status. */
+  async setReviewStatus(prdId: string, sectionKey: string, status: ReviewStatus) {
+    const valid: ReviewStatus[] = ['pending', 'accepted', 'edited', 'skipped'];
+    if (!valid.includes(status)) throw new BadRequestException(`Invalid review status: ${status}`);
+    const n = Number(sectionKey);
+    if (!Number.isInteger(n) || n < 1 || n > 22) throw new BadRequestException(`Invalid section: ${sectionKey}`);
+    return this.patchReview(prdId, (review) => ({ ...review, [sectionKey]: status }));
+  }
+
+  /** Task 5 — flip every pending section to accepted. */
+  async acceptAllReview(prdId: string) {
+    return this.patchReview(prdId, (review) => {
+      const out = { ...review };
+      for (let i = 1; i <= 22; i++) {
+        const k = String(i);
+        if ((out[k] ?? 'pending') === 'pending') out[k] = 'accepted';
+      }
+      return out;
+    });
+  }
+
+  /** Task 5 (D4) — confirm: CONFIRMED when nothing pending, else CONFIRMED_PARTIAL. */
+  async confirm(prdId: string) {
+    const prd = await this.get(prdId);
+    const meta = (prd.metadata as Record<string, unknown> | null) ?? {};
+    const review = (meta.review && typeof meta.review === 'object' ? meta.review : {}) as Record<string, unknown>;
+    const progress = computeReviewProgress(review);
+    const status = progress.pending === 0 ? 'CONFIRMED' : 'CONFIRMED_PARTIAL';
+    return this.prisma.baProjectPrd.update({ where: { id: prdId }, data: { status } });
+  }
+
+  /** Task 12 — update PRD-level metadata fields (prdCode / clientName / submittedBy). */
+  async updateMeta(
+    prdId: string,
+    fields: { prdCode?: string; clientName?: string; submittedBy?: string },
+  ) {
+    await this.get(prdId);
+    return this.prisma.baProjectPrd.update({
+      where: { id: prdId },
+      data: {
+        ...(fields.prdCode !== undefined ? { prdCode: fields.prdCode } : {}),
+        ...(fields.clientName !== undefined ? { clientName: fields.clientName } : {}),
+        ...(fields.submittedBy !== undefined ? { submittedBy: fields.submittedBy } : {}),
+      },
+    });
+  }
+
+  private async patchReview(
+    prdId: string,
+    fn: (r: Record<string, unknown>) => Record<string, unknown>,
+  ) {
+    const prd = await this.get(prdId);
+    const meta = (prd.metadata as Record<string, unknown> | null) ?? {};
+    const review = (meta.review && typeof meta.review === 'object'
+      ? { ...(meta.review as Record<string, unknown>) }
+      : emptyReviewMap()) as Record<string, unknown>;
+    return this.prisma.baProjectPrd.update({
+      where: { id: prdId },
+      data: { metadata: { ...meta, review: fn(review) } as unknown as Prisma.InputJsonValue },
+    });
+  }
+
+  private todayDDMMYYYY(): string {
+    const d = new Date();
+    return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+  }
+
   /**
    * Generate a new PRD+FRD version from the project's customer inputs.
    */
@@ -178,6 +325,8 @@ export class ProjectPrdService {
     const sections = latest
       ? (this.mergeLocked(latest.sections, ai.sections) as Record<string, unknown>)
       : ai.sections;
+    // v7 W-02 (D7) — carry PRD metadata forward; default a PRD code on first generate.
+    const prdCode = latest?.prdCode ?? `PRD${this.todayDDMMYYYY()}`;
     const record = await this.prisma.baProjectPrd.create({
       data: {
         projectId,
@@ -186,12 +335,14 @@ export class ProjectPrdService {
         sections: sections as Prisma.InputJsonValue,
         sourceInputIds: inputs.map((i) => i.id),
         triggeredBy: latest ? 'MANUAL_EDIT' : 'INITIAL_GENERATION',
+        prdCode,
+        clientName: latest?.clientName ?? null,
+        submittedBy: latest?.submittedBy ?? null,
         // M-06 — PRD sits at the top of the chain (built from customer inputs, not
         // upstream artifacts); record the input count as its provenance signal.
         sourceArtifactVersions: { inputCount: inputs.length } as Prisma.InputJsonValue,
-        // S-05 — persist the AI-flagged gaps so they survive a page refresh and
-        // drive the in-place gap-answering loop.
-        metadata: { gaps: ai.gaps ?? [] } as unknown as Prisma.InputJsonValue,
+        // S-05 gaps + v7 W-01 fresh review map (all 22 sections pending on a new generation).
+        metadata: { gaps: ai.gaps ?? [], review: emptyReviewMap() } as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -299,8 +450,16 @@ export class ProjectPrdService {
         sections: mergedSections as Prisma.InputJsonValue,
         sourceInputIds: latest.sourceInputIds,
         triggeredBy: 'MANUAL_EDIT',
+        prdCode: latest.prdCode,
+        clientName: latest.clientName,
+        submittedBy: latest.submittedBy,
         sourceArtifactVersions: { ...prevSrc, answeredFromVersion: latest.version } as Prisma.InputJsonValue,
-        metadata: { gaps: remainingGaps, gapAnswers: [...prevAnswers, ...newAnswers] } as unknown as Prisma.InputJsonValue,
+        // v7 — preserve the existing review map across a gap-merge (don't reset to pending).
+        metadata: {
+          gaps: remainingGaps,
+          gapAnswers: [...prevAnswers, ...newAnswers],
+          review: (prevMeta.review && typeof prevMeta.review === 'object' ? prevMeta.review : emptyReviewMap()),
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -330,9 +489,18 @@ export class ProjectPrdService {
     const prd = await this.get(prdId);
     const sections = { ...(prd.sections as Record<string, unknown>) };
     sections[sectionKey] = this.stampEditedFields(content);
+    // v7 — an inline edit counts as reviewed for this section.
+    const meta = (prd.metadata as Record<string, unknown> | null) ?? {};
+    const review = (meta.review && typeof meta.review === 'object'
+      ? { ...(meta.review as Record<string, unknown>) }
+      : emptyReviewMap()) as Record<string, unknown>;
+    review[sectionKey] = 'edited';
     return this.prisma.baProjectPrd.update({
       where: { id: prdId },
-      data: { sections: sections as Prisma.InputJsonValue },
+      data: {
+        sections: sections as Prisma.InputJsonValue,
+        metadata: { ...meta, review } as unknown as Prisma.InputJsonValue,
+      },
     });
   }
 

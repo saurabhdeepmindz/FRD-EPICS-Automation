@@ -23,6 +23,7 @@ import { ProjectPrdService, PRD_SECTION_NAMES, type GapAnswerInput } from './pro
 import { HldService } from './project-hld.service';
 import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
+import type { ReviewStatus } from './section-status';
 import { ModuleReadinessService } from './module-readiness.service';
 import { CodeTaskPlannerService } from './code-task-planner.service';
 import { TestRunnerService, type TestRunKind } from './test-runner.service';
@@ -126,13 +127,31 @@ export class PipelineController {
 
   @Get('project-prd')
   async getProjectPrd(@Param('id', ParseUUIDPipe) id: string) {
-    const data = await this.projectPrd.getLatest(id);
+    // v7 — enriched with derived sectionStatuses + review map/progress.
+    const data = await this.projectPrd.getLatestEnriched(id);
     return { success: true, data: data ?? null };
+  }
+
+  // ── v7 Track X — source (customer inputs the PRD was generated from) ──
+
+  @Get('project-prd/source')
+  async getProjectPrdSource(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.projectPrd.getSource(id);
+    return { success: true, data };
   }
 
   @Get('project-prd/versions')
   async listProjectPrdVersions(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.projectPrd.list(id);
+    return { success: true, data };
+  }
+
+  @Get('project-prd/version/:prdId')
+  async getProjectPrdVersion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('prdId', ParseUUIDPipe) prdId: string,
+  ) {
+    const data = await this.projectPrd.get(prdId);
     return { success: true, data };
   }
 
@@ -182,6 +201,56 @@ export class PipelineController {
     @Body() body: { sectionKey: string; fieldName: string },
   ) {
     const data = await this.projectPrd.suggestField(prdId, body.sectionKey, body.fieldName);
+    return { success: true, data };
+  }
+
+  // ── v7 Track W — version restore, review gate, confirm, metadata ──
+
+  @Post('project-prd/:prdId/restore')
+  async restoreProjectPrd(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('prdId', ParseUUIDPipe) prdId: string,
+  ) {
+    const data = await this.projectPrd.restore(prdId);
+    return { success: true, data };
+  }
+
+  @Post('project-prd/:prdId/review/accept-all')
+  async acceptAllPrdReview(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('prdId', ParseUUIDPipe) prdId: string,
+  ) {
+    const data = await this.projectPrd.acceptAllReview(prdId);
+    return { success: true, data };
+  }
+
+  @Patch('project-prd/:prdId/review/:sectionKey')
+  async setPrdReview(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('prdId', ParseUUIDPipe) prdId: string,
+    @Param('sectionKey') sectionKey: string,
+    @Body() body: { status: ReviewStatus },
+  ) {
+    const data = await this.projectPrd.setReviewStatus(prdId, sectionKey, body.status);
+    return { success: true, data };
+  }
+
+  @Post('project-prd/:prdId/confirm')
+  async confirmProjectPrd(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('prdId', ParseUUIDPipe) prdId: string,
+  ) {
+    const data = await this.projectPrd.confirm(prdId);
+    return { success: true, data };
+  }
+
+  @Patch('project-prd/:prdId/meta')
+  async updateProjectPrdMeta(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('prdId', ParseUUIDPipe) prdId: string,
+    @Body() body: { prdCode?: string; clientName?: string; submittedBy?: string },
+  ) {
+    const data = await this.projectPrd.updateMeta(prdId, body);
     return { success: true, data };
   }
 

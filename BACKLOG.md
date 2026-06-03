@@ -403,14 +403,25 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
-### Track W — Draft Review & PRD Metadata — Sprint v6 addendum 2, PLAN (DEFERRED)
+### Track X — Guided PRD Editor Shell — Sprint v7, ✅ COMPLETE (2026-06-03)
 
-> Optional parity items with the old "PRD Draft Review" stage. New pipeline currently creates the PRD directly + edits inline (no accept/skip gate).
+> UI parity with the old `/prd/[id]/edit`: brings the stepper + sidebar checklist + focused single-section authoring into the new `/ba-tool` pipeline. Full spec in `sprints/v7/`.
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | W-01 | Draft-review stage — per-section Accept/Edit/Skip + progress (X/22, accepted/edited/skipped/pending) before finalize | old `/prd` review page UX | Review-before-commit gating |
-| ⬜ | W-02 | PRD-level metadata (PRD Code, Client, Submitted By) + **version history UI** (view/compare/restore) | `/project-prd/versions` API exists | Versions persisted; no UI yet |
+| ✅ | X-1 | `computeSectionStatuses` (derived NOT_STARTED/IN_PROGRESS/COMPLETE) + exposed on GET | v6 `section-normalizer` | 12 unit tests |
+| ✅ | X-2 | `PrdStepper` (1–22 status-colored) + `PrdSidebar` ("PRD SECTIONS" + §6 feature tree) | — | |
+| ✅ | X-3 | `PrdGuidedEditor` — focused single-section + Previous / Save & Continue / Next | reuses `PrdSectionEditor`/`FrdEditor` | |
+| ✅ | X-4 | `PrdViewSource` — customer inputs the PRD was generated from | `GET …/project-prd/source` | |
+
+### Track W — Draft Review & PRD Metadata — ✅ DELIVERED in Sprint v7 (2026-06-03)
+
+> Was deferred from v6; built in v7. Per-section accept gate + metadata + version history on the persistent `BaProjectPrd`. Full spec in `sprints/v7/`.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | W-01 | Draft-review stage — per-section Accept/Edit/Skip + Accept All + progress + **Confirm** (DRAFT→CONFIRMED/_PARTIAL) | `PrdReviewMode`; review map in `metadata.review` | |
+| ✅ | W-02 | PRD-level metadata (PRD Code, Client, Submitted By) + **version history UI** (list/view/restore) | `prdCode/clientName/submittedBy` cols; `/versions` + `/restore` | diff/compare out of scope |
 
 ---
 

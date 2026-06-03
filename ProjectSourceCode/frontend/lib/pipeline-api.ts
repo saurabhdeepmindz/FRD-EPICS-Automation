@@ -130,6 +130,16 @@ export const INPUT_TYPE_CATALOGUE: InputTypeMeta[] = [
 
 export type PrdStatus = 'DRAFT' | 'CONFIRMED_PARTIAL' | 'CONFIRMED' | 'APPROVED';
 
+// v7 — authoring status (derived) + review status (draft-review gate)
+export type SectionStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE';
+export type ReviewStatus = 'pending' | 'accepted' | 'edited' | 'skipped';
+export interface ReviewProgress {
+  accepted: number;
+  edited: number;
+  skipped: number;
+  pending: number;
+}
+
 export interface ProjectPrd {
   id: string;
   projectId: string;
@@ -138,6 +148,32 @@ export interface ProjectPrd {
   sections: Record<string, Record<string, unknown>>;
   sourceInputIds: string[];
   triggeredBy: string | null;
+  // v7 metadata
+  prdCode: string | null;
+  clientName: string | null;
+  submittedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // v7 — derived/enriched on GET project-prd (optional: absent on older responses)
+  sectionStatuses?: Record<string, SectionStatus>;
+  review?: Record<string, ReviewStatus>;
+  reviewProgress?: ReviewProgress;
+}
+
+export interface PrdSourceInput {
+  id: string;
+  inputType: string;
+  label: string;
+  textExcerpt: string;
+  charCount: number;
+  fileName: string | null;
+  createdAt: string;
+}
+
+export interface PrdVersionRow {
+  id: string;
+  version: number;
+  status: PrdStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -255,6 +291,85 @@ export async function getProjectPrdMarkdown(
 ): Promise<{ version: number; markdown: string } | null> {
   const { data } = await api.get<ApiEnvelope<{ version: number; markdown: string } | null>>(
     `/ba/projects/${projectId}/project-prd/markdown`,
+  );
+  return data.data;
+}
+
+// ─── v7 Track X/W — source · versions/restore · review gate · metadata ───────
+
+/** Customer inputs the latest PRD was generated from. */
+export async function getProjectPrdSource(projectId: string): Promise<PrdSourceInput[]> {
+  const { data } = await api.get<ApiEnvelope<PrdSourceInput[]>>(
+    `/ba/projects/${projectId}/project-prd/source`,
+  );
+  return data.data;
+}
+
+export async function listProjectPrdVersions(projectId: string): Promise<PrdVersionRow[]> {
+  const { data } = await api.get<ApiEnvelope<PrdVersionRow[]>>(
+    `/ba/projects/${projectId}/project-prd/versions`,
+  );
+  return data.data;
+}
+
+/** Full content of a specific PRD version (for read-only viewing in history). */
+export async function getProjectPrdVersion(projectId: string, prdId: string): Promise<ProjectPrd> {
+  const { data } = await api.get<ApiEnvelope<ProjectPrd>>(
+    `/ba/projects/${projectId}/project-prd/version/${prdId}`,
+  );
+  return data.data;
+}
+
+/** Clone an earlier version into a new latest version. */
+export async function restoreProjectPrdVersion(
+  projectId: string,
+  prdId: string,
+): Promise<{ id: string; version: number }> {
+  const { data } = await api.post<ApiEnvelope<{ id: string; version: number }>>(
+    `/ba/projects/${projectId}/project-prd/${prdId}/restore`,
+    {},
+  );
+  return data.data;
+}
+
+/** Set one section's review status. */
+export async function setPrdReviewStatus(
+  projectId: string,
+  prdId: string,
+  sectionKey: string,
+  status: ReviewStatus,
+): Promise<ProjectPrd> {
+  const { data } = await api.patch<ApiEnvelope<ProjectPrd>>(
+    `/ba/projects/${projectId}/project-prd/${prdId}/review/${sectionKey}`,
+    { status },
+  );
+  return data.data;
+}
+
+export async function acceptAllPrdReview(projectId: string, prdId: string): Promise<ProjectPrd> {
+  const { data } = await api.post<ApiEnvelope<ProjectPrd>>(
+    `/ba/projects/${projectId}/project-prd/${prdId}/review/accept-all`,
+    {},
+  );
+  return data.data;
+}
+
+export async function confirmProjectPrd(projectId: string, prdId: string): Promise<ProjectPrd> {
+  const { data } = await api.post<ApiEnvelope<ProjectPrd>>(
+    `/ba/projects/${projectId}/project-prd/${prdId}/confirm`,
+    {},
+  );
+  return data.data;
+}
+
+export async function updateProjectPrdMeta(
+  projectId: string,
+  prdId: string,
+  fields: { prdCode?: string; clientName?: string; submittedBy?: string },
+): Promise<ProjectPrd> {
+  const { data } = await api.patch<ApiEnvelope<ProjectPrd>>(
+    `/ba/projects/${projectId}/project-prd/${prdId}/meta`,
+    fields,
   );
   return data.data;
 }

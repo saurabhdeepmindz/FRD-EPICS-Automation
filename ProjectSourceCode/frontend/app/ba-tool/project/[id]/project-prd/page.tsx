@@ -9,11 +9,12 @@ import {
   Loader2,
   Sparkles,
   RefreshCw,
-  ChevronRight,
   FolderOpen,
   Eye,
   Pencil,
   Download,
+  History,
+  ClipboardCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,8 +30,11 @@ import {
 } from '@/lib/pipeline-api';
 import { MicButton } from '@/components/forms/MicButton';
 import { PrdGapPanel } from '@/components/ba-tool/PrdGapPanel';
-import { PrdSectionEditor } from '@/components/ba-tool/PrdSectionEditor';
-import { FrdEditor } from '@/components/ba-tool/FrdEditor';
+import { PrdGuidedEditor } from '@/components/ba-tool/PrdGuidedEditor';
+import { PrdViewSource } from '@/components/ba-tool/PrdViewSource';
+import { PrdVersionHistory } from '@/components/ba-tool/PrdVersionHistory';
+import { PrdMetaEditor } from '@/components/ba-tool/PrdMetaEditor';
+import { PrdReviewMode } from '@/components/ba-tool/PrdReviewMode';
 import { toStructured, fieldText, isAi, isNewItem, isStructuredField } from '@/lib/structured-field';
 
 export default function ProjectPrdPage() {
@@ -43,7 +47,11 @@ export default function ProjectPrdPage() {
   const [gaps, setGaps] = useState<PrdGap[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [seedText, setSeedText] = useState('');
-  const [view, setView] = useState<'edit' | 'preview'>('edit');
+  const [view, setView] = useState<'edit' | 'preview' | 'review'>('edit');
+  const [showSource, setShowSource] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showMeta, setShowMeta] = useState(false);
+  const [editKey, setEditKey] = useState('1');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -133,10 +141,23 @@ export default function ProjectPrdPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">Combined PRD + FRD</h1>
+          <h1 className="text-lg font-semibold text-gray-900">
+            Combined PRD + FRD
+            {prd?.prdCode && <span className="ml-2 text-sm font-normal text-gray-500">{prd.prdCode} — v{prd.version}</span>}
+          </h1>
           <p className="text-sm text-gray-500">
-            Stage 2 · 22 sections · FRD embedded under §6 Functional Requirements
-            {prd && ` · v${prd.version} · ${prd.status}`}
+            Stage 2 · 22 sections · FRD embedded under §6
+            {prd && ` · ${prd.status}`}
+            {prd?.clientName && ` · ${prd.clientName}`}
+            {prd && (
+              <button
+                type="button"
+                onClick={() => setShowMeta(true)}
+                className="ml-2 text-xs text-blue-600 hover:underline"
+              >
+                Edit details
+              </button>
+            )}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -145,16 +166,20 @@ export default function ProjectPrdPage() {
           </Link>
           {prd ? (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setView((v) => (v === 'edit' ? 'preview' : 'edit'))}
-              >
-                {view === 'edit' ? (
-                  <><Eye className="h-4 w-4 mr-1" /> Preview</>
-                ) : (
-                  <><Pencil className="h-4 w-4 mr-1" /> Edit</>
-                )}
+              <Button variant={view === 'edit' ? 'default' : 'outline'} size="sm" onClick={() => setView('edit')}>
+                <Pencil className="h-4 w-4 mr-1" /> Edit
+              </Button>
+              <Button variant={view === 'preview' ? 'default' : 'outline'} size="sm" onClick={() => setView('preview')}>
+                <Eye className="h-4 w-4 mr-1" /> Preview
+              </Button>
+              <Button variant={view === 'review' ? 'default' : 'outline'} size="sm" onClick={() => setView('review')}>
+                <ClipboardCheck className="h-4 w-4 mr-1" /> Review
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowSource(true)}>
+                <FileText className="h-4 w-4 mr-1" /> Source
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowHistory(true)}>
+                <History className="h-4 w-4 mr-1" /> History
               </Button>
               <Button variant="outline" size="sm" onClick={onDownloadMd}>
                 <Download className="h-4 w-4 mr-1" /> .md
@@ -261,98 +286,42 @@ export default function ProjectPrdPage() {
             {view === 'preview' ? (
               /* V-01 — canonical rendered document */
               <PrdPreview sections={prd.sections} sectionKeys={sectionKeys} />
+            ) : view === 'review' ? (
+              /* v7 Track W — draft-review gate */
+              <PrdReviewMode
+                projectId={projectId}
+                prd={prd}
+                onChanged={load}
+                onEditSection={(k) => {
+                  setEditKey(k);
+                  setView('edit');
+                }}
+              />
             ) : (
-              /* Editable sections (V-03 — editor always shown when a section is open) */
-              <div className="space-y-2">
-                {sectionKeys.map((key) => (
-                  <PrdSection
-                    key={key}
-                    num={key}
-                    name={PRD_SECTION_NAMES[key] ?? `Section ${key}`}
-                    body={prd.sections[key]}
-                    defaultOpen={key === '6'}
-                    projectId={projectId}
-                    prdId={prd.id}
-                    onSaved={load}
-                  />
-                ))}
-              </div>
+              /* v7 Track X — guided single-section authoring shell */
+              <PrdGuidedEditor key={editKey} projectId={projectId} prd={prd} onChanged={load} initialKey={editKey} />
             )}
           </>
         )}
       </div>
-    </div>
-  );
-}
 
-// ─── Section renderer ────────────────────────────────────────────────────────
-
-function PrdSection({
-  num,
-  name,
-  body,
-  defaultOpen,
-  projectId,
-  prdId,
-  onSaved,
-}: {
-  num: string;
-  name: string;
-  body: Record<string, unknown>;
-  defaultOpen?: boolean;
-  projectId: string;
-  prdId: string;
-  onSaved: () => void | Promise<void>;
-}) {
-  const [open, setOpen] = useState(!!defaultOpen);
-  const isFrd = num === '6';
-
-  // V-03 — when a section is open it shows the editor directly (AI Suggest always
-  // visible), matching the original always-editable form. Collapsing discards
-  // unsaved edits for that section.
-  return (
-    <Card>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left"
-      >
-        <span className="text-xs font-mono text-gray-400 w-6 shrink-0">{num}</span>
-        <span className={`text-sm font-medium ${isFrd ? 'text-blue-700' : 'text-gray-800'}`}>
-          {name}
-        </span>
-        {isFrd && (
-          <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">
-            FRD
-          </span>
-        )}
-        <ChevronRight
-          className={`h-4 w-4 text-gray-400 ml-auto shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+      {showSource && <PrdViewSource projectId={projectId} onClose={() => setShowSource(false)} />}
+      {showHistory && (
+        <PrdVersionHistory
+          projectId={projectId}
+          onClose={() => setShowHistory(false)}
+          onRestored={load}
         />
-      </button>
-      {open && (
-        <CardContent className="pt-0 pb-4 border-t">
-          {isFrd ? (
-            <FrdEditor
-              projectId={projectId}
-              prdId={prdId}
-              body={body}
-              onSaved={onSaved}
-              onCancel={() => setOpen(false)}
-            />
-          ) : (
-            <PrdSectionEditor
-              projectId={projectId}
-              prdId={prdId}
-              sectionKey={num}
-              body={body}
-              onSaved={onSaved}
-              onCancel={() => setOpen(false)}
-            />
-          )}
-        </CardContent>
       )}
-    </Card>
+      {showMeta && prd && (
+        <PrdMetaEditor
+          projectId={projectId}
+          prd={prd}
+          onClose={() => setShowMeta(false)}
+          onSaved={load}
+        />
+      )}
+    </div>
   );
 }
 

@@ -1259,7 +1259,13 @@ model BaProjectPrd {
   // metadata.gaps:       [{ section, question }]                  — persisted AI gaps
   // metadata.gapAnswers: [{ section, question, answer, answeredAt }] — audit trail
   // metadata.freshness:  { computedAt, downstream:[{ artifactType, id, builtFrom, current, stale, reason }] }
+  // metadata.review:     Record<sectionKey, 'pending'|'accepted'|'edited'|'skipped'>  — draft-review gate (v7 W-01)
+  // metadata.restoredFrom: <version>  — set when this version was cloned from an older one (v7 W-02)
   metadata       Json             @default("{}")
+  // ── PRD-level metadata (v7 W-02) — nullable; client/submittedBy inherit from BaProject when null ──
+  prdCode        String?
+  clientName     String?
+  submittedBy    String?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
