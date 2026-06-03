@@ -16,6 +16,7 @@ import { TestRunnerService } from './test-runner.service';
 import { UpstreamSyncService } from './upstream-sync.service';
 import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
+import { ScreenMapService } from './screen-map.service';
 import { E2eFlowService } from './e2e-flow.service';
 import { E2eElaborationService } from './e2e-elaboration.service';
 import { E2eMappingService } from './e2e-mapping.service';
@@ -60,6 +61,7 @@ import { TextExtractionService } from '../text-extraction.service';
     UpstreamSyncService,
     RequirementChangeService,
     ArtifactFreshnessService,
+    ScreenMapService,
     E2eFlowService,
     E2eElaborationService,
     E2eMappingService,

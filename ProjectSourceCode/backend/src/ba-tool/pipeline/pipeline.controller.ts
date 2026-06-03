@@ -23,6 +23,7 @@ import { ProjectPrdService, PRD_SECTION_NAMES, type GapAnswerInput } from './pro
 import { HldService } from './project-hld.service';
 import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
+import { ScreenMapService, type ScreenAnnotation } from './screen-map.service';
 import type { ReviewStatus } from './section-status';
 import { ModuleReadinessService } from './module-readiness.service';
 import { CodeTaskPlannerService } from './code-task-planner.service';
@@ -61,6 +62,7 @@ export class PipelineController {
     private readonly hld: HldService,
     private readonly requirementChange: RequirementChangeService,
     private readonly freshness: ArtifactFreshnessService,
+    private readonly screenMap: ScreenMapService,
     private readonly readiness: ModuleReadinessService,
     private readonly codeTasks: CodeTaskPlannerService,
     private readonly testRunner: TestRunnerService,
@@ -267,6 +269,62 @@ export class PipelineController {
       .analyzeChange(id, 'PRD', sectionKey, PRD_SECTION_NAMES[sectionKey] ?? `Section ${sectionKey}`, new Date().toISOString())
       .catch(() => null);
     return { success: true, data, impact };
+  }
+
+  // ── Screen ↔ Feature Mapping (Track Y — v8) ─────────────────────────────────
+
+  @Get('screen-map')
+  async getScreenMap(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.screenMap.getLatest(id);
+    return { success: true, data: data ?? null };
+  }
+
+  @Get('screen-map/versions')
+  async listScreenMapVersions(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.screenMap.list(id);
+    return { success: true, data };
+  }
+
+  @Post('screen-map/generate')
+  async generateScreenMap(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.screenMap.generate(id);
+    return { success: true, data };
+  }
+
+  @Get('screen-map/export')
+  async exportScreenMap(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.screenMap.toCsvString(id);
+    return { success: true, data };
+  }
+
+  @Post('screen-map/import')
+  async importScreenMap(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { csv: string },
+  ) {
+    const data = await this.screenMap.importCsv(id, body.csv ?? '');
+    return { success: true, data };
+  }
+
+  @Patch('screen-map/row/:rowId')
+  async updateScreenMapRow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('rowId', ParseUUIDPipe) rowId: string,
+    @Body()
+    body: Partial<{
+      screenId: string;
+      screenName: string;
+      prdSections: string[];
+      featureRefs: string[];
+      featureDescription: string;
+      businessRulesPrd: string;
+      businessRulesArchitect: string;
+      screenDescription: string;
+      annotations: ScreenAnnotation[];
+    }>,
+  ) {
+    const data = await this.screenMap.updateRow(rowId, body);
+    return { success: true, data };
   }
 
   // ── HLD (Track E) ───────────────────────────────────────────────────────────

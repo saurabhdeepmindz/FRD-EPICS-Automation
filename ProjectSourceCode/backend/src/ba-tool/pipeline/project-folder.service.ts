@@ -9,6 +9,7 @@ import * as path from 'path';
 export const ARTIFACT_SUBFOLDERS = [
   '01-CustomerInputs',
   '02-PRD-FRD',
+  '02b-ScreenMap',
   '03-Wireframes-LoFi',
   '04-Wireframes-HiFi',
   '05-HLD',

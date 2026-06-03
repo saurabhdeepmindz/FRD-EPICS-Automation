@@ -153,6 +153,7 @@ model BaProject {
   // New Pipeline Track (Stages 1-9)
   customerInputs  BaCustomerInput[]
   projectPrds     BaProjectPrd[]
+  screenMaps      BaScreenMap[]
   hlds            BaHld[]
   implementation  BaProjectImplementation?
   changeRequests  BaChangeRequest[]
@@ -1090,8 +1091,15 @@ model BaWireframeSet {
   id                    String                @id @default(uuid())
   projectId             String
   project               BaProject             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  approachNoteVersionId String
-  approachNoteVersion   BaApproachNoteVersion @relation(fields: [approachNoteVersionId], references: [id], onDelete: Cascade)
+  // v8 (Z-01): nullable so PIPELINE (PRD-sourced) + uploaded sets need no Approach Note.
+  approachNoteVersionId String?
+  approachNoteVersion   BaApproachNoteVersion? @relation(fields: [approachNoteVersionId], references: [id], onDelete: Cascade)
+  // v8 — DISCOVERY (BRD/Approach-Note) vs PIPELINE (PRD-sourced via screen map).
+  source                String                @default("DISCOVERY")
+  // When source=PIPELINE: the BaScreenMap this set was generated/uploaded against.
+  screenMapId           String?
+  // { prdVersion } — drives v8 freshness (PRD → screen-map → wireframes → HLD).
+  sourceArtifactVersions Json?
   /// Snapshot of brand tokens at generation time — auditable cascade per skill 04 §4.6.
   brandTokensSnapshot   Json
   /// { validated: bool, orphanFrs: string[], orphanScreens: number[], issues: [...] }
@@ -1311,6 +1319,54 @@ model BaHld {
   @@index([projectId, version])
   @@index([changeRequestId])
   @@map("ba_hlds")
+}
+
+// ─── Screen ↔ Feature Mapping (Stage 3a — Wireframes, Sprint v8 / Track Y) ──────
+// PRD-sourced screen map: each row maps a screen to §6 FR-IDs + PRD sections +
+// business rules + numbered annotations, all referencing the PRD (not BRD/AN).
+// Drives lo-fi/hi-fi wireframe generation (BaWireframeSet source=PIPELINE).
+
+model BaScreenMap {
+  id                     String           @id @default(uuid())
+  projectId              String
+  project                BaProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version                Int              @default(1)
+  status                 BaArtifactStatus @default(DRAFT)
+  // { prdVersion } — drives v8 freshness (PRD → screen-map → wireframes → HLD)
+  sourceArtifactVersions Json?
+  triggeredBy            BaTriggeredBy?   @default(INITIAL_GENERATION)
+  // { coverage: { orphanFrs: string[], orphanScreens: string[] } }
+  metadata               Json             @default("{}")
+  rows                   BaScreenMapRow[]
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, version])
+  @@map("ba_screen_maps")
+}
+
+model BaScreenMapRow {
+  id                     String      @id @default(uuid())
+  screenMapId            String
+  screenMap              BaScreenMap @relation(fields: [screenMapId], references: [id], onDelete: Cascade)
+  screenId               String      // "SCR-01"
+  sequenceNum            Int
+  screenName             String
+  prdSections            String[]    // PRD section refs, e.g. "§6", "§10"
+  featureRefs            String[]    // §6 FR-IDs, e.g. "FR-AUTH-001"
+  featureDescription     String      @db.Text
+  businessRulesPrd       String      @db.Text
+  businessRulesArchitect String      @db.Text
+  screenDescription      String      @db.Text   // the "EPIC" screen description
+  // [{ marker: "P" | number, title, description, prdRef }] — PRD-referenced annotations
+  annotations            Json
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  @@unique([screenMapId, sequenceNum])
+  @@index([screenMapId])
+  @@map("ba_screen_map_rows")
 }
 
 // ─── Project Implementation Folder (Stage 8) ────────────────────────────────

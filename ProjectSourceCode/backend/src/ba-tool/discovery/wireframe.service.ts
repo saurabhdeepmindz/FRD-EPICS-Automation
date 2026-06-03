@@ -198,7 +198,9 @@ export class WireframeService {
     const existing = await this.findById(setId);
     return this.generate({
       projectId: existing.projectId,
-      approachNoteVersionId: existing.approachNoteVersionId,
+      // v8: approachNoteVersionId is now nullable (PIPELINE/uploaded sets); Discovery
+      // regenerate still requires it — coerce null → undefined for the resolver.
+      approachNoteVersionId: existing.approachNoteVersionId ?? undefined,
     });
   }
 

@@ -21,6 +21,7 @@ from stt_providers import get_stt_provider, STTProvider
 from prompts.section_prompts import get_section_prompt, SYSTEM_BASE
 from prompts.parse_prompts import PARSE_SYSTEM_PROMPT, GAP_ANALYSIS_SUFFIX, INTERACTIVE_SUFFIX
 from prompts.gap_check_prompts import GAP_CHECK_SYSTEM_PROMPT
+from prompts.screen_map_prompts import SCREEN_MAP_SYSTEM_PROMPT
 from prompts.wft_prompts import WFT_SYSTEM_PROMPT, build_wft_user_message
 from prompts.brd_prompts import BRD_SYSTEM_PROMPT, build_brd_user_message
 from prompts.an_prompts import AN_SYSTEM_PROMPT, build_an_user_message
@@ -2200,6 +2201,71 @@ async def project_prd_generate(
         for g in gaps_raw
     ]
     return ProjectPrdResponse(sections=sections, gaps=gaps)
+
+
+# ─── New Pipeline: Screen ↔ Feature Mapping (Track Y, v8) ────────────────────
+# PRD-sourced screen map: screens + §6 FR-IDs + PRD-referenced annotations.
+# Drives lo-fi/hi-fi wireframe generation (Stage 3a, between PRD and HLD).
+
+class ScreenMapRequest(BaseModel):
+    project_id: str
+    prd_sections: dict = Field(..., description="The 22-section PRD+FRD JSON (Section 6 = FRD)")
+    product_name: str | None = None
+
+class ScreenMapResponse(BaseModel):
+    screens: list[dict] = []
+    coverage: dict = Field(default_factory=dict)
+
+@app.post("/screen-map-generate", response_model=ScreenMapResponse, tags=["pipeline"])
+async def screen_map_generate(
+    body: ScreenMapRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> ScreenMapResponse:
+    """
+    Generate a PRD-sourced Screen ↔ Feature Mapping (Track Y). Every featureRef is a
+    §6 FR-ID and every annotation prdRef cites PRD content (never SRS/BRD/Approach-Note).
+    """
+    if not body.prd_sections:
+        raise HTTPException(status_code=400, detail="prd_sections is empty — generate the PRD first")
+
+    user_message = json.dumps(body.prd_sections, ensure_ascii=False)
+    if body.product_name:
+        user_message = f"Product name: {body.product_name}\n\nPRD (22 sections, §6 = FRD):\n{user_message}"
+
+    logger.info("screen-map-generate for %s (%d PRD chars)", body.project_id, len(user_message))
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": SCREEN_MAP_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=16384,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw_content = (response.choices[0].message.content or "").strip()
+    logger.info("screen-map-generate response: %d chars", len(raw_content))
+
+    try:
+        parsed = _parse_ai_json(raw_content)
+    except json.JSONDecodeError:
+        logger.error("screen-map-generate invalid JSON: %s", raw_content[:500])
+        raise HTTPException(status_code=502, detail="AI returned invalid JSON")
+
+    screens = parsed.get("screens", []) if isinstance(parsed.get("screens"), list) else []
+    coverage = parsed.get("coverage", {}) if isinstance(parsed.get("coverage"), dict) else {}
+    return ScreenMapResponse(screens=screens, coverage=coverage)
 
 
 # ─── New Pipeline: HLD Generation (Track E) ──────────────────────────────────
