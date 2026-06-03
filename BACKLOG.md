@@ -9,7 +9,7 @@
 
 > **Goal:** End-to-end pipeline that takes multiple customer input types, generates PRD+FRD, wireframes, HLD, EPICs, LLD, and incrementally generates code — all without disturbing existing functionality.
 > **Execution approach:** Skeleton-first (all stubs end-to-end in one pass), then implement track by track.
-> **Status Legend:** ⬜ Pending | 🔄 In Progress | ✅ Complete | ⏸ Blocked
+> **Status Legend:** ⬜ Pending | 🔄 In Progress | ✅ Complete | ⏸ Blocked | ➖ Superseded (delivered differently / no longer needed)
 
 ### Key Design Decisions (confirmed)
 
@@ -82,9 +82,9 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | A-01 | Finalise `BaCustomerInput` schema — polymorphic (inputType enum: AUDIO, EXTERNAL_BRD, CUSTOMER_WIREFRAME, TEXT_CONTEXT, DOCUMENT; extensible) | `BaAudioFile`, `BaScreen` model patterns | Fields: inputType, label, fileData, extractedText, metadata JSON |
-| ⬜ | A-02 | Finalise `BaProjectPrd` schema — combined PRD+FRD at project level, sections JSON, version, status | `BaApproachNoteVersion` versioning; `BaArtifact` status enum | FRD under `functionalRequirements` section key |
-| ⬜ | A-03 | Finalise `BaHld` schema — sections driven by user-provided HLD template, version, status | `BaWft` section JSON; `BaApproachNoteVersion` | **Waiting for user to share HLD template sample** |
+| ✅ | A-01 | Finalise `BaCustomerInput` schema — polymorphic (inputType enum: AUDIO, EXTERNAL_BRD, CUSTOMER_WIREFRAME, TEXT_CONTEXT, DOCUMENT; extensible) | `BaAudioFile`, `BaScreen` model patterns | Finalised + in use (Track B live) |
+| ✅ | A-02 | Finalise `BaProjectPrd` schema — combined PRD+FRD at project level, sections JSON, version, status | `BaApproachNoteVersion` versioning; `BaArtifact` status enum | Finalised + in use; extended in v6 (`metadata`) + v7 (`prdCode/clientName/submittedBy`) |
+| ✅ | A-03 | Finalise `BaHld` schema — sections driven by user-provided HLD template, version, status | `BaWft` section JSON; `BaApproachNoteVersion` | Done — HLD template shared (HRMS v2.1.1, 17 sections); Track E live |
 | ✅ | A-04 | `BaProjectImplementation` schema (tracks `ProjectSourceCode/` folder path, scaffold status, context status, LLD sync) | No direct equivalent — new concept | Folder root = `project.name`; links to `BaProject`; already in DB |
 | ✅ | A-05 | Run Prisma migration | SQL migration `new_pipeline_models.sql` applied; `npx prisma generate` run | 4 tables + 3 enums created |
 | ✅ | A-06 | `ProjectFolderService` — full implementation: folder tree + `writeArtifactFile()` + `writeSourceFile()` + `writeContextFile()` + `appendChangelog()` + path management | Node.js `fs/promises`; disk-storage.ts patterns | Done together with S-06; exports `ARTIFACT_SUBFOLDERS` + `ProjectPaths`; endpoints: `GET/POST /folders`, `POST /ba/pipeline/backfill-folders` |
@@ -172,7 +172,7 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 |--------|---|-------------|----------------|-------|
 | ✅ | I-01 | Backend: `RequirementChangeService.analyzeChange` — on PRD **or** HLD section edit, computes impacted EPICs/Stories/Sub-Tasks/LLD per module (read-only; coarse — a project-level change flags every module's downstream); hooked into both `PATCH project-prd/:id/section/:key` and `PATCH hld/:id/section/:key`, returns `impact` in the response | `BaArtifact`, `BaRtmRow` groupBy, `ProjectFolderService` | **Verified**: PRD §6 edit → 24 downstream across 6 modules; no new model/migration |
 | ✅ | I-02 | Backend: writes change-impact report (MD + CSV) to `ProjectArtifacts/10-RTM/change-impact-{src}-sec{n}-{ts}.{md,csv}` + CHANGELOG entry | `ProjectFolderService.writeArtifactFile` + `appendChangelog` | **Verified**: report files written; CHANGELOG appended |
-| ⬜ | I-03 | **DEFERRED** — Frontend RTM change-impact banner/view. Blocked: the PRD/HLD pages are read/generate-only (no inline **section-editor** wired), so there's no in-UI trigger. Impact is already returned by the API + written to `10-RTM/`. Surfacing needs the section-editor (separate, pre-existing-feature scope) OR a read-only impact-report list panel | PRD/HLD pages; `impact` field already on PATCH response | Do when the section-editor is wired, or add a reports-list viewer |
+| ✅ | I-03 | Frontend change-impact surfacing — **delivered in v6**: the inline section-editor (S-08) wired the in-UI trigger, and the `FreshnessBanner` (T-03) surfaces downstream staleness/impact on HLD/E2E/Implementation pages | PRD/HLD pages; `FreshnessBanner` (v6 T-03) | Unblocked + delivered via v6 Tracks S/T |
 
 ---
 
@@ -182,10 +182,10 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | J-01 | Backend: `PUT /api/ba/modules/:id/lld/sync-from-code` — re-reads `ProjectSourceCode/` files, updates `BaPseudoFile.editedContent` in DB, writes updated LLD to `ProjectArtifacts/09-LLD/` | Existing `BaPseudoFile` update endpoint; `BaProjectFolderService` file reads | Manual trigger from LLD page |
-| ⬜ | J-02 | Frontend: "Sync LLD from Code" button on module LLD page → shows diff panel of what changed in `ProjectSourceCode/` vs last LLD snapshot | Existing LLD page; section diff component | Visible only after `ProjectSourceCode/` exists |
-| ⬜ | J-03 | Backend: Downstream→upstream propagation — when code changes detected (J-01), flag impacted PRD+FRD sections and HLD sections for review; append entry to `CHANGELOG.md` | `BaProjectPrd` + `BaHld` status fields; `BaProjectFolderService` (H-06 changelog append) | Non-destructive: flags for review, does not overwrite — user confirms updates |
-| ⬜ | J-04 | Frontend: Upstream review flow — show banner on PRD+FRD and HLD pages when downstream changes have flagged them; allow accept/reject per section | `BaProjectPrd`/`BaHld` section status; existing section editor UX | Closes the downstream→upstream loop |
+| ✅ | J-03 | Downstream→upstream propagation (code change → flag upstream + CHANGELOG) | `UpstreamSyncService` (P-04) | **Delivered via Track P-04/P-05** — dynamic files auto-draft LLD+sub-task+CHANGELOG+RTM, human approves |
+| ✅ | J-04 | Upstream review flow — review + accept/reject flagged changes | `UpstreamSyncPanel` (P-05) | **Delivered via P-05** |
+| ➖ | J-01 | Backend: manual `PUT …/lld/sync-from-code` — re-read `ProjectSourceCode/` → `BaPseudoFile.editedContent` | — | **Superseded** by P-04 auto-detection of dynamic files (no manual re-read button built) |
+| ➖ | J-02 | Frontend: "Sync LLD from Code" button + diff panel | — | **Superseded** by P-04/P-05 auto-draft + `UpstreamSyncPanel` review |
 
 ---
 
@@ -228,12 +228,12 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | L-01 | Backend: `BaSyncCheckpointService` — stores SHA-256 file hashes of `ProjectSourceCode/` after each /prd or /dev run; detects changed files on next run | Node.js `crypto`; `BaProjectFolderService` file reads | Checkpoint stored in `BaProjectImplementation.metadata` |
-| ⬜ | L-02 | Backend: Wire sync agent trigger to /prd + /dev skill completion events — after each skill run, fire `BaSyncAgentService.analyze()` | K-01, K-02 skill completion hooks | Runs async (non-blocking); user sees results on next page refresh |
-| ⬜ | L-03 | AI Service: `/sync-analyze` endpoint — takes changed file diffs as input → LLM produces semantic impact report (which artifact sections are affected and how) | Existing OpenAI JSON pattern; `hld_prompts.py` style prompt | New prompt file: `sync_analysis_prompts.py` |
-| ⬜ | L-04 | Backend: `BaSyncAgentService` — orchestrates: get diffs → call `/sync-analyze` → flag artifact sections → append CHANGELOG | `BaSyncCheckpointService` (L-01); `BaProjectPrd`, `BaHld`, `BaPseudoFile` models; H-06 changelog | Non-destructive: sets section `syncFlagged: true`, stores proposed change |
-| ⬜ | L-05 | Frontend: Sync review panel on implementation dashboard — shows flagged sections grouped by artifact; per-section accept/reject with diff view | Existing LLD section diff pattern; existing section editor UX | Accessible from the Implementation page |
-| ⬜ | L-06 | Frontend: Manual "Sync to Upstream" button — triggers L-04 on demand (for direct code edits outside /prd or /dev) | Implementation dashboard (K-03) | Visible whenever `ProjectSourceCode/` exists |
+| ✅ | L-02 | Wire sync trigger to /dev completion — fire upstream detection after each run | `RunManager` hook (P-04) | **Delivered via P-04** (fires on `/dev` run completion) |
+| ✅ | L-05 | Frontend: upstream review panel — flagged drafts, per-draft accept/reject | `UpstreamSyncPanel` (P-05) | **Delivered via P-05** |
+| ➖ | L-01 | Backend: `BaSyncCheckpointService` — SHA-256 file-hash checkpoints | — | **Superseded** — P-04 detects dynamic files vs pseudo-file/subtask targets instead of hashing |
+| ➖ | L-04 | Backend: `BaSyncAgentService` orchestration → flag sections | `UpstreamSyncService` (P-04) | **Superseded** by P-04's file-detection draft flow |
+| ➖ | L-06 | Frontend: manual "Sync to Upstream" button | — | **Superseded** — auto-draft on `/dev`; v6 `FreshnessBanner` surfaces upstream staleness |
+| ⬜ | L-03 | **OPTIONAL** — AI `/sync-analyze` LLM semantic-impact endpoint (richer than file-detection) | OpenAI JSON pattern; `sync_analysis_prompts.py` | Genuinely deferred — only the heuristic (P-04) shipped; build if semantic diffs are needed |
 
 ---
 
@@ -253,7 +253,7 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 | ✅ | M-05 | Run migration for M-01 to M-04 | `cr_foundation.sql` + `_fixup_ownership.sql` applied; verified in DB | `ba_change_requests` table + 9 columns (3 fields × 3 tables) live; smoke-tested via project-prd endpoint |
 
 > **DB ops note:** `prd_user` now owns the `public` schema (via `_setup_prd_user_permissions.sql`). All 4 new-pipeline tables + CR objects reassigned to `prd_user`. **Future migrations run as `prd_user` — no postgres password needed.** Postgres password (dev): `root`.
-| ⬜ | M-06 | Backend: Populate `triggeredBy` + `sourceArtifactVersions` in all artifact creation flows | `BaProjectPrdService`, `BaHldService`, SKILL orchestrator | Wire into generation; no UI change |
+| ✅ | M-06 | Backend: Populate `triggeredBy` + `sourceArtifactVersions` in all artifact creation flows | `BaProjectPrdService`, `BaHldService`, SKILL orchestrator | **Done in v6 (S-03)** — PRD/HLD/E2E generate populate both; drives v6 freshness |
 
 **Deferred (spec preserved for future sprint):**
 
@@ -352,17 +352,17 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | S-01 | Prisma: add `metadata Json @default("{}")` to `BaProjectPrd` + `BaHld` (F1); migrate as `prd_user` | Track M migration pattern | Holds `metadata.gaps`/`gapAnswers`/`freshness` |
-| ⬜ | S-02 | `section-normalizer.ts` — flat `[AI]` ⇄ `{aiContent, editedContent, lockedAt, lastEditedAt}` (F2); route export/FrdView/RTM/context reads through it | existing `[AI]` convention | Pure + unit-tested; round-trip safe for legacy rows |
-| ⬜ | S-03 | M-06 — populate `triggeredBy` + `sourceArtifactVersions` on PRD/HLD/E2E generate (F5) | M-02/M-04 columns | Staleness (T-02) depends on this |
-| ⬜ | S-04 | AI `/gap-check` answer-merge contract (`{sections, answers}` → `{updatedSections, remainingGaps}`) | legacy `/prd` `/gap-check` | Reuse; extend prompt only if needed |
-| ⬜ | S-05 | `ProjectPrdService` — persist gaps to `metadata.gaps` + `answerGaps` (new version + propagation); `GET …/gaps`, `POST …/answer-gaps` | `ProjectPrdService` | Fail-safe on malformed merge (keep prior version) |
-| ⬜ | S-06 | Frontend: `PrdGapPanel` — port `GapWizard` (voice/text answers) onto the PRD page | `conversational/GapWizard.tsx`, `MicButton` | Replaces the static amber gaps card |
-| ⬜ | S-07 | `updateSection` rework (F3: in-place + `lastEditedAt` + propagation) + `POST …/suggest-field` | `ProjectPrdService`, AI `/suggest` | Locked fields skipped by regenerate |
-| ⬜ | S-08 | Frontend: inline section editor — `FormField` + AI Suggest + Mic + **blue AI text** + lock; **unblocks I-03** | `forms/FormField.tsx`, `AISuggestButton.tsx`, `MicButton.tsx` | FRD (§6) keeps module/feature structure |
-| ⬜ | S-08b | Frontend: **FRD (§6) feature-level inline editing** (Phase-2 fast-follow) — edit each feature's name/description/businessRule/AC/priority with AI Suggest+Mic+lock; preserve module/feature + FR-IDs | `PrdSectionEditor`; per-feature normalizer round-trip | Raised 2026-06-03: §6 features were read-only in S-08 |
-| ⬜ | S-09 | AI prompts: enrich WITHIN canonical sections; net-new → §22 `[AI] [NEW]`; never new top-level keys | `parse_prompts.py`, `gap_check_prompts.py` | Preserves the 22-key contract |
-| ⬜ | S-10 | Frontend: render `[AI] [NEW]` items with a distinct "new" chip | `AiText`/`FrdView` renderers | Visualises additions from later inputs |
+| ✅ | S-01 | Prisma: add `metadata Json @default("{}")` to `BaProjectPrd` + `BaHld` (F1); migrate as `prd_user` | Track M migration pattern | Holds `metadata.gaps`/`gapAnswers`/`freshness` |
+| ✅ | S-02 | `section-normalizer.ts` — flat `[AI]` ⇄ `{aiContent, editedContent, lockedAt, lastEditedAt}` (F2); route export/FrdView/RTM/context reads through it | existing `[AI]` convention | Pure + unit-tested; round-trip safe for legacy rows |
+| ✅ | S-03 | M-06 — populate `triggeredBy` + `sourceArtifactVersions` on PRD/HLD/E2E generate (F5) | M-02/M-04 columns | Staleness (T-02) depends on this |
+| ✅ | S-04 | AI `/gap-check` answer-merge contract (`{sections, answers}` → `{updatedSections, remainingGaps}`) | legacy `/prd` `/gap-check` | Reuse; extend prompt only if needed |
+| ✅ | S-05 | `ProjectPrdService` — persist gaps to `metadata.gaps` + `answerGaps` (new version + propagation); `GET …/gaps`, `POST …/answer-gaps` | `ProjectPrdService` | Fail-safe on malformed merge (keep prior version) |
+| ✅ | S-06 | Frontend: `PrdGapPanel` — port `GapWizard` (voice/text answers) onto the PRD page | `conversational/GapWizard.tsx`, `MicButton` | Replaces the static amber gaps card |
+| ✅ | S-07 | `updateSection` rework (F3: in-place + `lastEditedAt` + propagation) + `POST …/suggest-field` | `ProjectPrdService`, AI `/suggest` | Locked fields skipped by regenerate |
+| ✅ | S-08 | Frontend: inline section editor — `FormField` + AI Suggest + Mic + **blue AI text** + lock; **unblocks I-03** | `forms/FormField.tsx`, `AISuggestButton.tsx`, `MicButton.tsx` | FRD (§6) keeps module/feature structure |
+| ✅ | S-08b | Frontend: **FRD (§6) feature-level inline editing** (Phase-2 fast-follow) — edit each feature's name/description/businessRule/AC/priority with AI Suggest+Mic+lock; preserve module/feature + FR-IDs | `PrdSectionEditor`; per-feature normalizer round-trip | Raised 2026-06-03: §6 features were read-only in S-08 |
+| ✅ | S-09 | AI prompts: enrich WITHIN canonical sections; net-new → §22 `[AI] [NEW]`; never new top-level keys | `parse_prompts.py`, `gap_check_prompts.py` | Preserves the 22-key contract |
+| ✅ | S-10 | Frontend: render `[AI] [NEW]` items with a distinct "new" chip | `AiText`/`FrdView` renderers | Visualises additions from later inputs |
 
 ---
 
@@ -372,10 +372,10 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | T-01 | Extend `RequirementChangeService.analyzeChange` to flag `BaHld` + `BaE2eFlow` (PRD change) and `BaE2eFlow` + modules (HLD change) | `requirement-change.service.ts` (I-01) | Report gains "upstream artifacts flagged" section |
-| ⬜ | T-02 | `ArtifactFreshnessService.check` — compare downstream `sourceArtifactVersions` vs current upstream version → stale map; `GET …/freshness` | `sourceArtifactVersions` (M-04) | Missing version → "unknown, regenerate" (no crash) |
-| ⬜ | T-03 | Frontend: `FreshnessBanner` on HLD / E2E / Implementation pages — "built from PRD v{n}, current v{m}"; renders **I-03** impact data | existing pipeline pages | Amber when stale, hidden/green when current |
-| ⬜ | T-04 | Fire propagation (`analyzeChange` + freshness recompute) on every PRD/HLD gap-answer/edit/regenerate + CHANGELOG (`Forward Sync`) | `project-folder.service.ts` changelog | Best-effort, non-blocking |
+| ✅ | T-01 | Extend `RequirementChangeService.analyzeChange` to flag `BaHld` + `BaE2eFlow` (PRD change) and `BaE2eFlow` + modules (HLD change) | `requirement-change.service.ts` (I-01) | Report gains "upstream artifacts flagged" section |
+| ✅ | T-02 | `ArtifactFreshnessService.check` — compare downstream `sourceArtifactVersions` vs current upstream version → stale map; `GET …/freshness` | `sourceArtifactVersions` (M-04) | Missing version → "unknown, regenerate" (no crash) |
+| ✅ | T-03 | Frontend: `FreshnessBanner` on HLD / E2E / Implementation pages — "built from PRD v{n}, current v{m}"; renders **I-03** impact data | existing pipeline pages | Amber when stale, hidden/green when current |
+| ✅ | T-04 | Fire propagation (`analyzeChange` + freshness recompute) on every PRD/HLD gap-answer/edit/regenerate + CHANGELOG (`Forward Sync`) | `project-folder.service.ts` changelog | Best-effort, non-blocking |
 
 ---
 
@@ -385,8 +385,8 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | U-01 | Frontend: **in-browser mic recording** on the Customer Inputs `AUDIO` card (record + transcribe in-browser → save as input) | `components/forms/MicButton.tsx` (MediaRecorder); customer-inputs page | Today audio is upload-only |
-| ⬜ | U-02 | Frontend: PRD **empty-state conversational seed** — "Start from voice or text" box creates a `TEXT_CONTEXT` input + triggers generate | `createCustomerInput` + `generateProjectPrd`; `MicButton` | Gives old narrate/type → PRD on the PRD page |
+| ✅ | U-01 | Frontend: **in-browser mic recording** on the Customer Inputs `AUDIO` card (record + transcribe in-browser → save as input) | `components/forms/MicButton.tsx` (MediaRecorder); customer-inputs page | Today audio is upload-only |
+| ✅ | U-02 | Frontend: PRD **empty-state conversational seed** — "Start from voice or text" box creates a `TEXT_CONTEXT` input + triggers generate | `createCustomerInput` + `generateProjectPrd`; `MicButton` | Gives old narrate/type → PRD on the PRD page |
 
 ---
 

@@ -1,6 +1,6 @@
 # Sprint v5 — Tasks: Bidirectional Sync — Requirement Change Impact · Code-to-Upstream Propagation · Sync Agent
 
-## Status: Ready — implement in order; later tasks depend on earlier ones
+## Status: ➖ Superseded — not executed as a standalone sprint. Track I delivered (I-01/I-02 + I-03 via v6 FreshnessBanner); Tracks J/L delivered differently via Track P (P-04/P-05 dynamic-file upstream sync) + v6 forward propagation; M-06 done in v6 (S-03). Only the optional LLM `/sync-analyze` (L-03) remains. See BACKLOG Tracks I/J/L + sprints/v6.
 
 > **Backlog traceability:** I-01–I-03 (Track I) → J-01–J-04 (Track J) → L-01–L-06 (Track L) → M-06
 >

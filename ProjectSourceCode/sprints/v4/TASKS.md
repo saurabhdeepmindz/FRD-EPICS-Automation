@@ -1,6 +1,6 @@
 # Sprint v4 — Tasks: Architect Workspace — LLD Generation from EPICs / User Stories / SubTasks
 
-## Status: Draft — awaiting go-ahead before any code is written
+## Status: ✅ Complete — shipped (see WALKTHROUGH.md). (Status line was left stale at "Draft".)
 
 > **Persona note**: All v4 features target the **Architect** role. Where tasks and acceptance criteria say "Architect", read it as "the user acting in the Architect role" — v4 introduces no auth boundary. BA features from v1–v3 are untouched.
 
