@@ -1,7 +1,7 @@
 # BA Tool — Prioritized Backlog
 
 > Living document. Updated after every execution so we always know what's next.
-> **Last updated:** 2026-06-03 — Tracks S + T + U **shipped (Sprint v6 COMPLETE)**: interactive PRD authoring (gap loop + inline AI/Mic editor with blue AI text, FRD feature editing), enrich-within-section + §22 `[AI][NEW]` + lock enforcement, in-browser narration / no-inputs seed, and forward PRD→HLD→E2E freshness propagation. Verified (27 unit tests, tsc clean both apps, freshness live-checked). See `sprints/v6/WALKTHROUGH.md`. Earlier 2026-06-03 — Tracks S + T planned (Sprint v6): interactive PRD authoring (gap-answering loop + inline AI-Suggest/Mic editor with blue AI text on `project-prd`, reusing legacy GapWizard/FormField components) and forward propagation (extend the impact engine to HLD + E2E + modules, add a `sourceArtifactVersions` freshness banner) — closes the forward PRD→HLD→E2E loop and unblocks deferred I-03. Full spec in `sprints/v6/`. Prior (2026-06-01): Module-scoped code-gen (Tracks N–Q)
+> **Last updated:** 2026-06-04 — **Sprint v8 planned** (Tracks Y + Z): a PRD-sourced **Wireframes stage between PRD and HLD** — a screen↔feature **mapping** artifact (CSV-shaped, annotations cite PRD §/FR-IDs) → lo-fi → hi-fi (reuse + extend Discovery models via `source=PIPELINE`), plus **single/bulk upload** for 3rd-party wireframes and `CUSTOMER_WIREFRAME` reflection; freshness extends PRD→map→wireframes→HLD. Discovery (BRD/AN) wireframes untouched. Spec in `sprints/v8/`. Prior 2026-06-03 — Tracks S + T + U **shipped (Sprint v6 COMPLETE)**: interactive PRD authoring (gap loop + inline AI/Mic editor with blue AI text, FRD feature editing), enrich-within-section + §22 `[AI][NEW]` + lock enforcement, in-browser narration / no-inputs seed, and forward PRD→HLD→E2E freshness propagation. Verified (27 unit tests, tsc clean both apps, freshness live-checked). See `sprints/v6/WALKTHROUGH.md`. Earlier 2026-06-03 — Tracks S + T planned (Sprint v6): interactive PRD authoring (gap-answering loop + inline AI-Suggest/Mic editor with blue AI text on `project-prd`, reusing legacy GapWizard/FormField components) and forward propagation (extend the impact engine to HLD + E2E + modules, add a `sourceArtifactVersions` freshness banner) — closes the forward PRD→HLD→E2E loop and unblocks deferred I-03. Full spec in `sprints/v6/`. Prior (2026-06-01): Module-scoped code-gen (Tracks N–Q)
 
 ---
 
@@ -425,6 +425,34 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track Y — PRD-Sourced Screen↔Feature Mapping — Sprint v8, PLAN ONLY
+
+> **Decision (2026-06-04):** A new pipeline **Wireframes stage between PRD and HLD**, sourced from the **PRD** (not the BRD/Approach Note that drive Discovery wireframes). Step 1 is a screen↔feature **mapping** artifact (CSV-shaped, mirroring the customer reference RTM) where `frRefs` are §6 FR-IDs and every annotation cites **PRD §/FR-IDs**. Full spec in `sprints/v8/`.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ⬜ | Y-01 | Prisma: `BaScreenMap` + `BaScreenMapRow` (annotations JSON, PRD refs) + migration | Track M/v6 migration pattern | screen-centric, versioned, `sourceArtifactVersions={prdVersion}` |
+| ⬜ | Y-02 | AI: `/screen-map-generate` — PRD §6 FRD + §5/§8/§10 → screens + FR mapping + business rules + annotations | `parse`/`hld` prompt patterns; F2 normalizer | `screen_map_prompts.py`; refs cite PRD, never SRS/BRD/AN |
+| ⬜ | Y-03 | Backend: `ScreenMapService` — generate / CRUD / **CSV import + export** / coverage (orphan FRs/screens) | `ProjectFolderService`; F2 normalizer | exports to `02b-ScreenMap/` + CHANGELOG |
+| ⬜ | Y-04 | Frontend: mapping table + annotations editor (numbered + Persona) + CSV up/download | `pipeline-api`; Card/table patterns | "Generate from PRD" + edit + coverage |
+
+---
+
+### Track Z — Wireframes Stage (Lo-fi + Hi-fi, PRD-driven) + Bulk Upload — Sprint v8, PLAN ONLY
+
+> **Decision (2026-06-04):** Reuse + extend the Discovery wireframe models (`BaWireframeSet`/`BaHifiSet`) with a `source` discriminator (`DISCOVERY`/`PIPELINE`); generate lo-fi/hi-fi from the PRD-sourced screen map; **single + bulk upload** for 3rd-party wireframes; reflect `CUSTOMER_WIREFRAME` inputs. Discovery (BRD/AN) wireframes untouched.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ⬜ | Z-01 | Prisma: extend `BaWireframeSet` (nullable AN FK + `source` + `screenMapId` + `sourceArtifactVersions`) + migration | existing wireframe models | Discovery rows backfill `source=DISCOVERY` |
+| ⬜ | Z-02 | Backend: generate **lo-fi from screen map** → **hi-fi** (PIPELINE source) | `WireframeService`/`HifiService`/`WireframeExportService` | callouts=annotations; `meta.frRefs`=§6 FR-IDs; preserve uploaded |
+| ⬜ | Z-03 | Backend: **upload (single/bulk)** HTML/PNG/JPG → screens; reflect `CUSTOMER_WIREFRAME` inputs | `FileInterceptor`; attachment storage | `meta.uploaded=true`; disk mirror |
+| ⬜ | Z-04 | Frontend: **`/wireframes` page** (mapping → lo-fi → hi-fi galleries + Upload) + nav between PRD and HLD | `pipeline-api`; iframe preview (Discovery pattern) | new pipeline stage |
+| ⬜ | Z-05 | Integration: HLD `buildWireframeContext` prefers PIPELINE; readiness N-01; **freshness** PRD→map→wf→HLD | v6 Track T; `project-hld.service` | extends `ArtifactFreshnessService`/`RequirementChangeService` |
+| ⬜ | Z-06 | Wire-up: smoke + regression (incl. Discovery no-regression) | — | tsc clean; CSV parser unit-tested |
+
+---
+
 ### HLD Template
 
 > **Status:** ✅ User shared HRMS-HLD-Consolidated-v2.1.1 (63 pages). 17 section keys derived and implemented in `BaHld` model and stub AI endpoint.
@@ -457,7 +485,11 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 | S — Interactive PRD Authoring | 11 (11 ✅) | **COMPLETE (v6)** — gap-answering loop + inline AI-Suggest/Mic editor (blue AI text) on `project-prd`; FRD feature editing (S-08b); enrich-within-section + §22 `[AI][NEW]`; lock enforcement. Unblocks I-03 |
 | T — Forward Propagation & Freshness | 4 (4 ✅) | **COMPLETE (v6)** — impact engine extended to HLD + E2E; `ArtifactFreshnessService` staleness checker; freshness banner on HLD/E2E/Impl; forward-sync CHANGELOG. Non-destructive |
 | U — Direct Narration / No-Inputs Seed | 2 (2 ✅) | **COMPLETE (v6)** — in-browser mic on Customer Inputs; PRD empty-state "narrate/type → generate" |
-| **Total** | **94** | Complete pipeline + module-scoped agentic code-gen + two-tier tests + sync + CR-ready + interactive authoring & forward propagation (v6 planned) |
+| X — Guided PRD Editor Shell | 4 (4 ✅) | **COMPLETE (v7)** — stepper + sidebar checklist + §6 feature tree + focused Save & Continue + View Source |
+| W — Draft Review · Metadata · History | 2 (2 ✅) | **COMPLETE (v7)** — Accept/Edit/Skip + Accept All + Confirm; PRD metadata; version history (view/restore) |
+| Y — PRD-Sourced Screen↔Feature Mapping | 4 | **PLAN (v8)** — mapping artifact from PRD (CSV-shaped); annotations cite PRD §/FR; generate/edit/import/export |
+| Z — Wireframes Stage (Lo-fi + Hi-fi) + Bulk Upload | 6 | **PLAN (v8)** — PRD-driven lo-fi→hi-fi (reuse Discovery models, `source=PIPELINE`); 3rd-party bulk upload; freshness PRD→map→wf→HLD |
+| **Total** | **112** | Complete pipeline + agentic code-gen + two-tier tests + sync + interactive authoring + forward propagation + guided editor/review (v6/v7 shipped) + PRD-sourced wireframes stage (v8 planned) |
 
 ### What changed from original plan
 
