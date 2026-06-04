@@ -535,6 +535,12 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  @Get('hld/project-structure')
+  async getProjectStructure(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.hld.buildProjectStructure(id);
+    return { success: true, data };
+  }
+
   @Post('hld/generate')
   async generateHld(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.hld.generate(id);

@@ -8,6 +8,13 @@
  * Shape is lifted from the user's reference wireframe `:root` block.
  */
 
+/** One diagram layer's pastel triple (box fill, border, label text). */
+export interface DiagramLayer {
+  fill: string;
+  border: string;
+  text: string;
+}
+
 export interface DesignTokens {
   brand: {
     productName: string;
@@ -45,6 +52,16 @@ export interface DesignTokens {
     finance: string;
     admin: string;
     visitor: string;
+  };
+  /** Pastel layer palette for architecture + project-structure diagrams (v9 KK). */
+  diagramPalette: {
+    frontend: DiagramLayer;
+    backend: DiagramLayer;
+    calcEngine: DiagramLayer;
+    shared: DiagramLayer;
+    db: DiagramLayer;
+    config: DiagramLayer;
+    node: DiagramLayer;
   };
   typography: {
     uiFont: string;
@@ -85,6 +102,16 @@ export const DEFAULT_TOKENS: DesignTokens = {
   personaPalette: {
     employee: '#7C3AED', manager: '#0F766E', hrAdmin: '#D97706', finance: '#1D4ED8', admin: '#C2410C', visitor: '#475569',
   },
+  // Exact pastels from the reference architecture/structure diagram (v9 KK).
+  diagramPalette: {
+    frontend:  { fill: '#ECEBFB', border: '#B9B0EC', text: '#4F46B5' },
+    backend:   { fill: '#E3F5EC', border: '#A6DCC4', text: '#2F8A60' },
+    calcEngine:{ fill: '#FBEEDC', border: '#EAC893', text: '#B97A2B' },
+    shared:    { fill: '#FBE7E4', border: '#ECB2AB', text: '#B24A3C' },
+    db:        { fill: '#E8F1FB', border: '#ABCAE9', text: '#2F62A6' },
+    config:    { fill: '#F1F0EC', border: '#D2CFC8', text: '#5C574F' },
+    node:      { fill: '#F4F3FB', border: '#C9C3E6', text: '#3A3550' },
+  },
   typography: { uiFont: 'Inter', monoFont: 'JetBrains Mono', baseSize: 14, weightNormal: 400, weightBold: 700 },
   shape: { radiusCard: 12, radiusPill: 999, density: 'comfortable', elevation: 'soft' },
   platform: { mobileFrameWidth: 390, breakpointMobile: 480, breakpointTablet: 980, touchTarget: 44 },
@@ -103,6 +130,15 @@ export function normalizeTokens(input: unknown): DesignTokens {
       colors: { ...(t.modulePalette?.colors ?? {}) },
     },
     personaPalette: { ...d.personaPalette, ...(t.personaPalette ?? {}) },
+    diagramPalette: {
+      frontend: { ...d.diagramPalette.frontend, ...(t.diagramPalette?.frontend ?? {}) },
+      backend: { ...d.diagramPalette.backend, ...(t.diagramPalette?.backend ?? {}) },
+      calcEngine: { ...d.diagramPalette.calcEngine, ...(t.diagramPalette?.calcEngine ?? {}) },
+      shared: { ...d.diagramPalette.shared, ...(t.diagramPalette?.shared ?? {}) },
+      db: { ...d.diagramPalette.db, ...(t.diagramPalette?.db ?? {}) },
+      config: { ...d.diagramPalette.config, ...(t.diagramPalette?.config ?? {}) },
+      node: { ...d.diagramPalette.node, ...(t.diagramPalette?.node ?? {}) },
+    },
     typography: { ...d.typography, ...(t.typography ?? {}) },
     shape: { ...d.shape, ...(t.shape ?? {}) },
     platform: { ...d.platform, ...(t.platform ?? {}) },
@@ -156,6 +192,12 @@ export function tokensToCss(input: unknown): string {
   --persona-finance:${t.personaPalette.finance};
   --persona-admin:${t.personaPalette.admin};
   --persona-visitor:${t.personaPalette.visitor};
+  --layer-frontend-fill:${t.diagramPalette.frontend.fill};--layer-frontend-border:${t.diagramPalette.frontend.border};--layer-frontend-text:${t.diagramPalette.frontend.text};
+  --layer-backend-fill:${t.diagramPalette.backend.fill};--layer-backend-border:${t.diagramPalette.backend.border};--layer-backend-text:${t.diagramPalette.backend.text};
+  --layer-calc-fill:${t.diagramPalette.calcEngine.fill};--layer-calc-border:${t.diagramPalette.calcEngine.border};--layer-calc-text:${t.diagramPalette.calcEngine.text};
+  --layer-shared-fill:${t.diagramPalette.shared.fill};--layer-shared-border:${t.diagramPalette.shared.border};--layer-shared-text:${t.diagramPalette.shared.text};
+  --layer-db-fill:${t.diagramPalette.db.fill};--layer-db-border:${t.diagramPalette.db.border};--layer-db-text:${t.diagramPalette.db.text};
+  --layer-config-fill:${t.diagramPalette.config.fill};--layer-config-border:${t.diagramPalette.config.border};--layer-config-text:${t.diagramPalette.config.text};
   --ui-font:'${t.typography.uiFont}',-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;
   --mono-font:'${t.typography.monoFont}',ui-monospace,SFMono-Regular,Menlo,monospace;
   --base-size:${t.typography.baseSize}px;

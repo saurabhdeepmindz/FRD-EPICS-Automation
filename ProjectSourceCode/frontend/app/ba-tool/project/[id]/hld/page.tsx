@@ -17,12 +17,27 @@ import { Card, CardContent } from '@/components/ui/card';
 import {
   getHld,
   generateHld,
+  getDesignSystem,
+  getProjectStructure,
   HLD_SECTIONS,
   HLD_DIAGRAM_LABELS,
   type Hld,
   type PrdGap,
+  type DiagramLayer,
+  type ProjectStructure,
 } from '@/lib/pipeline-api';
 import { FreshnessBanner } from '@/components/ba-tool/FreshnessBanner';
+
+// Pastel layer palette (mirrors the backend diagramPalette defaults / Design System).
+const FALLBACK_PALETTE: Record<'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config' | 'node', DiagramLayer> = {
+  frontend: { fill: '#ECEBFB', border: '#B9B0EC', text: '#4F46B5' },
+  backend: { fill: '#E3F5EC', border: '#A6DCC4', text: '#2F8A60' },
+  calcEngine: { fill: '#FBEEDC', border: '#EAC893', text: '#B97A2B' },
+  shared: { fill: '#FBE7E4', border: '#ECB2AB', text: '#B24A3C' },
+  db: { fill: '#E8F1FB', border: '#ABCAE9', text: '#2F62A6' },
+  config: { fill: '#F1F0EC', border: '#D2CFC8', text: '#5C574F' },
+  node: { fill: '#F4F3FB', border: '#C9C3E6', text: '#3A3550' },
+};
 
 export default function HldPage() {
   const params = useParams();
@@ -35,11 +50,21 @@ export default function HldPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string>('__diagrams');
   const initedKey = useRef(false);
+  const [palette, setPalette] = useState(FALLBACK_PALETTE);
+  const [structure, setStructure] = useState<ProjectStructure | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setHld(await getHld(projectId));
+      const h = await getHld(projectId);
+      setHld(h);
+      // v9 KK — pull the project's pastel diagram palette + the derived structure.
+      const [ds, st] = await Promise.all([
+        getDesignSystem(projectId).catch(() => null),
+        h ? getProjectStructure(projectId).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (ds?.tokens?.diagramPalette) setPalette({ ...FALLBACK_PALETTE, ...ds.tokens.diagramPalette });
+      if (st) setStructure(st);
     } finally {
       setLoading(false);
     }
@@ -207,7 +232,7 @@ export default function HldPage() {
                       <Card key={dk}>
                         <CardContent className="p-4">
                           <p className="text-sm font-medium text-gray-700 mb-2">{HLD_DIAGRAM_LABELS[dk] ?? dk}</p>
-                          <Mermaid content={hld.mermaidDiagrams[dk]} />
+                          <Mermaid content={hld.mermaidDiagrams[dk]} palette={palette} />
                         </CardContent>
                       </Card>
                     ))}
@@ -223,6 +248,10 @@ export default function HldPage() {
                         <h2 className="font-semibold text-gray-900 flex items-baseline gap-2">
                           <span className="text-sm font-mono text-gray-400">{idx + 1}</span> {sec.name}
                         </h2>
+                        {/* v9 KK — pastel project-structure diagram in §17 */}
+                        {sec.key === 'projectStructure' && structure && (
+                          <ProjectStructureDiagram structure={structure} palette={palette} />
+                        )}
                         <Card>
                           <CardContent className="p-4">
                             {!body ? (
@@ -282,9 +311,11 @@ function renderValue(value: unknown): ReactNode {
   );
 }
 
-// ─── Mermaid renderer (dynamic import; falls back to source on error) ─────────
+// ─── Mermaid renderer (dynamic import; pastel theme; falls back to source) ────
 
-function Mermaid({ content }: { content: string }) {
+type Palette = typeof FALLBACK_PALETTE;
+
+function Mermaid({ content, palette }: { content: string; palette: Palette }) {
   const id = useId().replace(/:/g, '');
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -294,7 +325,27 @@ function Mermaid({ content }: { content: string }) {
     (async () => {
       try {
         const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+        // v9 KK — pastel theme derived from the project's diagram palette.
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme: 'base',
+          themeVariables: {
+            fontFamily: 'Inter, system-ui, sans-serif',
+            primaryColor: palette.frontend.fill,
+            primaryBorderColor: palette.frontend.border,
+            primaryTextColor: palette.node.text,
+            secondaryColor: palette.backend.fill,
+            tertiaryColor: palette.calcEngine.fill,
+            lineColor: palette.node.border,
+            clusterBkg: '#FBFAFE',
+            clusterBorder: palette.node.border,
+            nodeBorder: palette.node.border,
+            mainBkg: palette.node.fill,
+            titleColor: palette.node.text,
+            edgeLabelBackground: '#FFFFFF',
+          },
+        });
         const { svg } = await mermaid.render(`hld-${id}`, content);
         if (!cancelled) setSvg(svg);
       } catch (e) {
@@ -304,7 +355,7 @@ function Mermaid({ content }: { content: string }) {
     return () => {
       cancelled = true;
     };
-  }, [content, id]);
+  }, [content, id, palette]);
 
   if (error) {
     return (
@@ -321,4 +372,53 @@ function Mermaid({ content }: { content: string }) {
     );
   }
   return <div className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+// ─── Pastel project-structure diagram (v9 Track KK) ──────────────────────────
+
+function ProjectStructureDiagram({ structure, palette }: { structure: ProjectStructure; palette: Palette }) {
+  const legend: [keyof Palette, string][] = [
+    ['frontend', 'Frontend'], ['backend', 'Backend'], ['calcEngine', 'Calc Engine'],
+    ['shared', 'Shared Pkgs'], ['db', 'DB Tables'], ['config', 'Config / Files'],
+  ];
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-4">
+        <div className="text-center text-sm text-gray-500">
+          monorepo root — <span className="font-medium text-gray-700">{structure.productName}</span>
+        </div>
+        {structure.groups.map((g) => {
+          const c = palette[g.layer] ?? palette.node;
+          return (
+            <div key={g.key}>
+              <div className="text-sm font-semibold mb-2" style={{ color: c.text }}>{g.title}</div>
+              <div className="flex flex-wrap gap-2">
+                {g.items.map((it, i) => (
+                  <span
+                    key={i}
+                    className="text-xs rounded-md px-2.5 py-1.5 border"
+                    style={{ background: c.fill, borderColor: c.border, color: c.text }}
+                  >
+                    {it.name}
+                    {it.note ? <span className="opacity-60"> · {it.note}</span> : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex flex-wrap gap-3 pt-3 border-t">
+          {legend.map(([k, label]) => {
+            const c = palette[k];
+            return (
+              <span key={k} className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                <span className="h-3 w-3 rounded-sm border" style={{ background: c.fill, borderColor: c.border }} />
+                {label}
+              </span>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
