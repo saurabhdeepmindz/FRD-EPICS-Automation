@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { DiscoveryModule } from '../discovery/discovery.module';
 import { PipelineController } from './pipeline.controller';
 import { PipelineAdminController } from './pipeline-admin.controller';
 import { E2eFlowController } from './e2e-flow.controller';
@@ -17,6 +18,7 @@ import { UpstreamSyncService } from './upstream-sync.service';
 import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
 import { ScreenMapService } from './screen-map.service';
+import { PipelineWireframeService } from './pipeline-wireframe.service';
 import { E2eFlowService } from './e2e-flow.service';
 import { E2eElaborationService } from './e2e-elaboration.service';
 import { E2eMappingService } from './e2e-mapping.service';
@@ -45,6 +47,7 @@ import { TextExtractionService } from '../text-extraction.service';
  * on-disk folder tree when a project is created.
  */
 @Module({
+  imports: [forwardRef(() => DiscoveryModule)],
   controllers: [PipelineController, PipelineAdminController, E2eFlowController],
   providers: [
     PipelineService,
@@ -62,6 +65,7 @@ import { TextExtractionService } from '../text-extraction.service';
     RequirementChangeService,
     ArtifactFreshnessService,
     ScreenMapService,
+    PipelineWireframeService,
     E2eFlowService,
     E2eElaborationService,
     E2eMappingService,

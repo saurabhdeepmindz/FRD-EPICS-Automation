@@ -1089,3 +1089,148 @@ export async function resolveAgentPermission(
     message,
   });
 }
+
+// ─── Screen↔Feature Mapping (Track Y) ────────────────────────────────────────
+
+/** One PRD-grounded annotation on a screen (numbered, or "P" for persona). */
+export interface ScreenAnnotation {
+  marker: string | number;
+  title: string;
+  description: string;
+  prdRef: string; // PRD §/FR-ID, e.g. "§6 FR-AUTH-001"
+}
+
+export interface ScreenMapRow {
+  id: string;
+  sequenceNum: number;
+  screenId: string;
+  screenName: string;
+  prdSections: string[];
+  featureRefs: string[];
+  featureDescription: string;
+  businessRulesPrd: string;
+  businessRulesArchitect: string;
+  screenDescription: string;
+  annotations: ScreenAnnotation[];
+}
+
+export interface ScreenMapCoverage {
+  orphanFrs: string[];
+  orphanScreens: string[];
+}
+
+export interface ScreenMap {
+  id: string;
+  version: number;
+  status: string;
+  coverage?: ScreenMapCoverage | null;
+  rows: ScreenMapRow[];
+}
+
+export async function getScreenMap(projectId: string): Promise<ScreenMap | null> {
+  const { data } = await api.get<ApiEnvelope<ScreenMap | null>>(`/ba/projects/${projectId}/screen-map`);
+  return data.data;
+}
+
+export async function generateScreenMap(projectId: string): Promise<ScreenMap> {
+  const { data } = await api.post<ApiEnvelope<ScreenMap>>(
+    `/ba/projects/${projectId}/screen-map/generate`,
+    {},
+    { timeout: 300_000 },
+  );
+  return data.data;
+}
+
+export async function updateScreenMapRow(
+  projectId: string,
+  rowId: string,
+  patch: Partial<Omit<ScreenMapRow, 'id' | 'sequenceNum'>>,
+): Promise<ScreenMapRow> {
+  const { data } = await api.patch<ApiEnvelope<ScreenMapRow>>(
+    `/ba/projects/${projectId}/screen-map/row/${rowId}`,
+    patch,
+  );
+  return data.data;
+}
+
+export async function exportScreenMapCsv(projectId: string): Promise<string> {
+  const { data } = await api.get<ApiEnvelope<string>>(`/ba/projects/${projectId}/screen-map/export`);
+  return data.data;
+}
+
+export async function importScreenMapCsv(projectId: string, csv: string): Promise<ScreenMap> {
+  const { data } = await api.post<ApiEnvelope<ScreenMap>>(
+    `/ba/projects/${projectId}/screen-map/import`,
+    { csv },
+  );
+  return data.data;
+}
+
+// ─── PRD-sourced Wireframes (Track Z) ────────────────────────────────────────
+
+export interface PipelineWireframeScreen {
+  id: string;
+  slug: string;
+  title: string;
+  htmlContent: string | null;
+  uploaded: boolean;
+}
+
+export interface PipelineWireframes {
+  lofi: PipelineWireframeScreen[];
+  hifi: PipelineWireframeScreen[];
+}
+
+export interface CustomerWireframeRef {
+  id: string;
+  label: string;
+  fileName: string | null;
+  createdAt: string;
+}
+
+export async function getPipelineWireframes(projectId: string): Promise<PipelineWireframes> {
+  const { data } = await api.get<ApiEnvelope<PipelineWireframes>>(`/ba/projects/${projectId}/wireframes`);
+  return data.data;
+}
+
+export async function getCustomerWireframes(projectId: string): Promise<CustomerWireframeRef[]> {
+  const { data } = await api.get<ApiEnvelope<CustomerWireframeRef[]>>(
+    `/ba/projects/${projectId}/wireframes/customer`,
+  );
+  return data.data;
+}
+
+export async function generateLoFiWireframes(
+  projectId: string,
+): Promise<{ id: string; screens: number; preservedUploads: number }> {
+  const { data } = await api.post<ApiEnvelope<{ id: string; screens: number; preservedUploads: number }>>(
+    `/ba/projects/${projectId}/wireframes/generate-lofi`,
+    {},
+    { timeout: 300_000 },
+  );
+  return data.data;
+}
+
+export async function generateHiFiWireframes(projectId: string): Promise<{ id: string }> {
+  const { data } = await api.post<ApiEnvelope<{ id: string }>>(
+    `/ba/projects/${projectId}/wireframes/generate-hifi`,
+    {},
+    { timeout: 300_000 },
+  );
+  return data.data;
+}
+
+export async function uploadWireframes(
+  projectId: string,
+  files: File[],
+  kind: 'lofi' | 'hifi',
+): Promise<{ added: number; rejected: string[] }> {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', f));
+  const { data } = await api.post<ApiEnvelope<{ added: number; rejected: string[] }>>(
+    `/ba/projects/${projectId}/wireframes/upload?kind=${kind}`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+  );
+  return data.data;
+}

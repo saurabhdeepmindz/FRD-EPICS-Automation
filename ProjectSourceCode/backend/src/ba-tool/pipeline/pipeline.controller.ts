@@ -9,10 +9,11 @@ import {
   Query,
   ParseUUIDPipe,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
   Sse,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { map, type Observable } from 'rxjs';
 import { PipelineService } from './pipeline.service';
 import {
@@ -24,6 +25,7 @@ import { HldService } from './project-hld.service';
 import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
 import { ScreenMapService, type ScreenAnnotation } from './screen-map.service';
+import { PipelineWireframeService } from './pipeline-wireframe.service';
 import type { ReviewStatus } from './section-status';
 import { ModuleReadinessService } from './module-readiness.service';
 import { CodeTaskPlannerService } from './code-task-planner.service';
@@ -63,6 +65,7 @@ export class PipelineController {
     private readonly requirementChange: RequirementChangeService,
     private readonly freshness: ArtifactFreshnessService,
     private readonly screenMap: ScreenMapService,
+    private readonly pipelineWireframes: PipelineWireframeService,
     private readonly readiness: ModuleReadinessService,
     private readonly codeTasks: CodeTaskPlannerService,
     private readonly testRunner: TestRunnerService,
@@ -324,6 +327,47 @@ export class PipelineController {
     }>,
   ) {
     const data = await this.screenMap.updateRow(rowId, body);
+    return { success: true, data };
+  }
+
+  // ── PRD-sourced Wireframes (Track Z) ────────────────────────────────────────
+
+  @Get('wireframes')
+  async listPipelineWireframes(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.pipelineWireframes.listScreens(id);
+    return { success: true, data };
+  }
+
+  @Get('wireframes/customer')
+  async customerWireframes(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.pipelineWireframes.customerWireframes(id);
+    return { success: true, data };
+  }
+
+  @Post('wireframes/generate-lofi')
+  async generateLoFiWireframes(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.pipelineWireframes.generateLoFi(id);
+    return { success: true, data };
+  }
+
+  @Post('wireframes/generate-hifi')
+  async generateHiFiWireframes(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.pipelineWireframes.generateHiFi(id);
+    return { success: true, data };
+  }
+
+  @Post('wireframes/upload')
+  @UseInterceptors(FilesInterceptor('files', 50))
+  async uploadWireframes(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Query('kind') kind?: string,
+  ) {
+    const data = await this.pipelineWireframes.upload(
+      id,
+      (files ?? []).map((f) => ({ originalname: f.originalname, buffer: f.buffer, mimetype: f.mimetype })),
+      kind === 'hifi' ? 'hifi' : 'lofi',
+    );
     return { success: true, data };
   }
 

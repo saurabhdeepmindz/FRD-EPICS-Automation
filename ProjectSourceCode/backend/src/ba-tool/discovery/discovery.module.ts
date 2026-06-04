@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { AiModule } from '../../ai/ai.module';
 import { ExportModule } from '../../export/export.module';
 import { PipelineModule } from '../pipeline/pipeline.module';
@@ -23,7 +23,7 @@ import { ScreenExportService } from './screen-export.service';
  * Stage 7 (EPIC context handoff) lands in the next slice.
  */
 @Module({
-  imports: [AiModule, ExportModule, PipelineModule],
+  imports: [AiModule, ExportModule, forwardRef(() => PipelineModule)],
   controllers: [DiscoveryController],
   providers: [
     AudioService,
