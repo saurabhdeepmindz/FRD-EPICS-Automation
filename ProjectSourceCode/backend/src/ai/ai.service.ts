@@ -275,6 +275,8 @@ export interface GenerateHifiRequest {
   brandTokens: { primary: string; surface: string; cta: string; productName: string };
   syntheticSeed?: Record<string, string> | null;
   productName?: string;
+  /** v9 GG-03: "lofi" → grey-box wireframe; "hifi" (default) → branded mockup. */
+  fidelity?: 'lofi' | 'hifi';
 }
 
 export interface GenerateHifiResponse {
@@ -547,6 +549,7 @@ export class AiService {
           brandTokens: req.brandTokens,
           syntheticSeed: req.syntheticSeed ?? {},
           productName: req.productName ?? '',
+          fidelity: req.fidelity ?? 'hifi',
         },
         { timeout: 480_000 },
       );

@@ -1211,11 +1211,28 @@ export async function generateLoFiWireframes(
   return data.data;
 }
 
-export async function generateHiFiWireframes(projectId: string): Promise<{ id: string }> {
-  const { data } = await api.post<ApiEnvelope<{ id: string }>>(
+/** AI-regenerate lo-fi for selected screen slugs (or all generated screens if none). */
+export async function regenerateLoFiWithAI(
+  projectId: string,
+  slugs?: string[],
+): Promise<{ updated: number; failed: string[] }> {
+  const { data } = await api.post<ApiEnvelope<{ updated: number; failed: string[] }>>(
+    `/ba/projects/${projectId}/wireframes/regenerate-lofi-ai`,
+    { slugs },
+    { timeout: 600_000 },
+  );
+  return data.data;
+}
+
+/** Generate hi-fi for the whole set, or only the selected lo-fi screen slugs. */
+export async function generateHiFiWireframes(
+  projectId: string,
+  opts: { slugs?: string[]; limit?: number } = {},
+): Promise<{ id: string; screens: number }> {
+  const { data } = await api.post<ApiEnvelope<{ id: string; screens: number }>>(
     `/ba/projects/${projectId}/wireframes/generate-hifi`,
-    {},
-    { timeout: 300_000 },
+    { slugs: opts.slugs, limit: opts.limit },
+    { timeout: 600_000 },
   );
   return data.data;
 }

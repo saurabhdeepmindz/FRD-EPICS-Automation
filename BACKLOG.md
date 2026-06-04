@@ -515,6 +515,21 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track GG — Wireframe gallery UX + lo-fi differentiation + hi-fi selection — Sprint v9, ✅ COMPLETE (2026-06-04)
+
+> **Decision (2026-06-04):** lo-fi cards open in an **in-app modal** (+ new tab); lo-fi default = **type-aware deterministic** skeletons **plus** an optional **AI lo-fi** (Claude); **per-screen checkboxes** choose which lo-fi screens generate **hi-fi**.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | GG-01 | FE: click-to-open modal (+ new tab) for gallery cards | `/wireframes` Gallery | sandbox iframe |
+| ✅ | GG-02 | BE: type-aware deterministic lo-fi (`inferScreenType` + per-type skeletons) | `loFiHtml`; `tokensToCss` | free, token-driven |
+| ✅ | GG-03 | BE+AI: optional AI lo-fi (`/lofi-generate` Claude grey-box) | hi-fi pipeline pattern | `generateLoFi({mode})` |
+| ✅ | GG-04 | BE: hi-fi from a selected subset (`slugs`) | `HifiService.generate` `limit` | supersedes first-N |
+| ✅ | GG-05 | FE: selection checkboxes + "Generate hi-fi for selected" + lo-fi mode toggle | `/wireframes` page | per-card AI regen |
+| ✅ | GG-06 | Unit test (`inferScreenType`) + smoke + tsc | — | — |
+
+---
+
 ### HLD Template
 
 > **Status:** ✅ User shared HRMS-HLD-Consolidated-v2.1.1 (63 pages). 17 section keys derived and implemented in `BaHld` model and stub AI endpoint.

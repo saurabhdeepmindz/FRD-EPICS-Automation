@@ -28,7 +28,7 @@ from prompts.brd_prompts import BRD_SYSTEM_PROMPT, build_brd_user_message
 from prompts.an_prompts import AN_SYSTEM_PROMPT, build_an_user_message
 from prompts.brand_extraction_prompts import BRAND_EXTRACTION_SYSTEM_PROMPT
 from prompts.wireframe_prompts import WIREFRAME_SYSTEM_PROMPT, build_wireframe_user_message
-from prompts.hifi_prompts import HIFI_SYSTEM_PROMPT, build_hifi_user_message
+from prompts.hifi_prompts import HIFI_SYSTEM_PROMPT, LOFI_SYSTEM_PROMPT, build_hifi_user_message
 from prompts.hld_prompts import HLD_SYSTEM_PROMPT, build_hld_user_message
 from prompts.e2e_flow_prompts import E2E_FLOW_SYSTEM_PROMPT, build_e2e_flow_user_message
 
@@ -1197,6 +1197,8 @@ class HifiRequest(BaseModel):
     brandTokens: HifiBrandTokens = Field(default_factory=HifiBrandTokens)
     syntheticSeed: dict = Field(default_factory=dict)
     productName: str = Field(default="", max_length=200)
+    # v9 GG-03: "lofi" → grey-box structural wireframe; "hifi" (default) → branded.
+    fidelity: str = Field(default="hifi")
 
 
 class HifiResponse(BaseModel):
@@ -1228,8 +1230,11 @@ async def hifi_generate(
         body.productName,
     )
 
-    # hi-fi HTML is dense (inline styles, real content) — needs a large budget.
-    max_tokens = 16384
+    # hi-fi HTML is dense (inline styles, real content) — needs a large budget;
+    # lo-fi (grey-box) is lighter. v9 GG-03: fidelity selects the system prompt.
+    is_lofi = body.fidelity == "lofi"
+    system_prompt = LOFI_SYSTEM_PROMPT if is_lofi else HIFI_SYSTEM_PROMPT
+    max_tokens = 8192 if is_lofi else 16384
 
     if settings.HIFI_PROVIDER == "anthropic":
         if not settings.ANTHROPIC_API_KEY:
@@ -1240,7 +1245,7 @@ async def hifi_generate(
         raw = await _claude_complete(
             anthropic_client,
             model=settings.ANTHROPIC_MODEL,
-            system=HIFI_SYSTEM_PROMPT,
+            system=system_prompt,
             user=user_message,
             max_tokens=max_tokens,
             temperature=settings.OPENAI_TEMPERATURE,
@@ -1250,7 +1255,7 @@ async def hifi_generate(
             response = await client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": HIFI_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 max_tokens=max_tokens,

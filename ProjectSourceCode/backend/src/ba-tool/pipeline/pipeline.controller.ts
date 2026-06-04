@@ -361,12 +361,26 @@ export class PipelineController {
   @Post('wireframes/generate-hifi')
   async generateHiFiWireframes(
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { slugs?: string[]; limit?: number } = {},
     @Query('limit') limit?: string,
   ) {
-    const n = limit ? Number(limit) : undefined;
-    const data = await this.pipelineWireframes.generateHiFi(
+    const q = limit ? Number(limit) : undefined;
+    const n = body.limit ?? (q && Number.isFinite(q) && q > 0 ? Math.floor(q) : undefined);
+    const data = await this.pipelineWireframes.generateHiFi(id, {
+      slugs: Array.isArray(body.slugs) && body.slugs.length ? body.slugs : undefined,
+      limit: n,
+    });
+    return { success: true, data };
+  }
+
+  @Post('wireframes/regenerate-lofi-ai')
+  async regenerateLoFiAi(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { slugs?: string[] } = {},
+  ) {
+    const data = await this.pipelineWireframes.regenerateLoFiWithAI(
       id,
-      n && Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined,
+      Array.isArray(body.slugs) && body.slugs.length ? body.slugs : undefined,
     );
     return { success: true, data };
   }

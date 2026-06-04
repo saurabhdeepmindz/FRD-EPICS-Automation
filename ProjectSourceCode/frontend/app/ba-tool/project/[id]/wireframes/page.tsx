@@ -16,6 +16,9 @@ import {
   Palette,
   LayoutGrid,
   Download,
+  Wand2,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +29,7 @@ import {
   getCustomerWireframes,
   generateLoFiWireframes,
   generateHiFiWireframes,
+  regenerateLoFiWithAI,
   uploadWireframes,
   getWireframeNavigator,
   wireframeZipUrl,
@@ -52,8 +56,17 @@ export default function WireframesPage() {
   const [wf, setWf] = useState<PipelineWireframes>({ lofi: [], hifi: [] });
   const [customer, setCustomer] = useState<CustomerWireframeRef[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<null | 'lofi' | 'hifi'>(null);
+  const [busy, setBusy] = useState<null | 'lofi' | 'hifi' | 'ai-lofi'>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [modalScreen, setModalScreen] = useState<PipelineWireframeScreen | null>(null);
+
+  const toggleSelected = (slug: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug); else next.add(slug);
+      return next;
+    });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,8 +94,28 @@ export default function WireframesPage() {
     setBusy(kind);
     setError(null);
     try {
-      if (kind === 'lofi') await generateLoFiWireframes(projectId);
-      else await generateHiFiWireframes(projectId);
+      if (kind === 'lofi') {
+        await generateLoFiWireframes(projectId);
+      } else {
+        // Hi-fi for the selected lo-fi screens, or the whole set if none picked.
+        const slugs = selected.size ? [...selected] : undefined;
+        await generateHiFiWireframes(projectId, { slugs });
+      }
+      await refreshWf();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onRegenAiLoFi = async () => {
+    setBusy('ai-lofi');
+    setError(null);
+    try {
+      const slugs = selected.size ? [...selected] : undefined;
+      const res = await regenerateLoFiWithAI(projectId, slugs);
+      if (res.failed.length) setError(`AI lo-fi updated ${res.updated}; failed: ${res.failed.join(', ')}`);
       await refreshWf();
     } catch (err) {
       setError(errMsg(err));
@@ -185,37 +218,60 @@ export default function WireframesPage() {
             <Section
               step={2}
               title="Lo-fi Wireframes"
-              subtitle="Built deterministically from the mapping (callouts = annotations), or upload 3rd-party files."
+              subtitle="Type-aware grey-box skeletons from the mapping (default, free). Tick screens to AI-upgrade or carry into hi-fi. Click a card to open it."
               actions={
-                <GalleryActions
-                  kind="lofi"
-                  busy={busy === 'lofi'}
-                  hasMap={!!map}
-                  onGenerate={() => onGenerate('lofi')}
-                  onUpload={(fl) => onUpload(fl, 'lofi')}
-                />
+                <div className="flex items-center gap-2 shrink-0">
+                  {wf.lofi.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={onRegenAiLoFi}
+                      disabled={busy !== null}
+                      title="Regenerate selected lo-fi screens with AI (Claude grey-box); all generated screens if none selected"
+                    >
+                      {busy === 'ai-lofi' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
+                      AI lo-fi{selected.size ? ` (${selected.size})` : ''}
+                    </Button>
+                  )}
+                  <GalleryActions
+                    kind="lofi"
+                    busy={busy === 'lofi'}
+                    hasMap={!!map}
+                    onGenerate={() => onGenerate('lofi')}
+                    onUpload={(fl) => onUpload(fl, 'lofi')}
+                  />
+                </div>
               }
             >
-              <Gallery screens={wf.lofi} emptyHint="Generate lo-fi from the mapping above, or upload files." />
+              <Gallery
+                screens={wf.lofi}
+                emptyHint="Generate lo-fi from the mapping above, or upload files."
+                selectable
+                selected={selected}
+                onToggle={toggleSelected}
+                onOpen={setModalScreen}
+              />
             </Section>
 
             {/* Step 3 — Hi-fi */}
             <Section
               step={3}
               title="Hi-fi Wireframes"
-              subtitle="Polished branded mockups generated from the lo-fi set, or upload 3rd-party files."
+              subtitle={selected.size
+                ? `Will generate hi-fi for the ${selected.size} selected lo-fi screen(s).`
+                : "Polished branded mockups (Claude). Tick lo-fi screens above to limit hi-fi to those; otherwise the whole set."}
               actions={
                 <GalleryActions
                   kind="hifi"
                   busy={busy === 'hifi'}
                   hasMap={wf.lofi.length > 0}
-                  generateLabel="Generate from lo-fi"
+                  generateLabel={selected.size ? `Generate hi-fi (${selected.size})` : 'Generate from lo-fi'}
                   onGenerate={() => onGenerate('hifi')}
                   onUpload={(fl) => onUpload(fl, 'hifi')}
                 />
               }
             >
-              <Gallery screens={wf.hifi} emptyHint="Generate hi-fi from the lo-fi set, or upload files." />
+              <Gallery screens={wf.hifi} emptyHint="Generate hi-fi from the lo-fi set, or upload files." onOpen={setModalScreen} />
             </Section>
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 text-sm text-emerald-800 flex items-center gap-2">
@@ -225,6 +281,37 @@ export default function WireframesPage() {
           </>
         )}
       </div>
+
+      {/* Click-to-open modal (GG-01) */}
+      {modalScreen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setModalScreen(null)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-2.5 border-b">
+              <span className="font-medium text-gray-900 truncate">{modalScreen.title}</span>
+              <span className="text-xs text-gray-400 font-mono">{modalScreen.slug}</span>
+              <div className="ml-auto flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const w = window.open('', '_blank');
+                    if (w) { w.document.open(); w.document.write(modalScreen.htmlContent ?? ''); w.document.close(); }
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4 mr-1" /> New tab
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setModalScreen(null)}><X className="h-4 w-4" /></Button>
+              </div>
+            </div>
+            <iframe
+              title={modalScreen.title}
+              sandbox=""
+              srcDoc={modalScreen.htmlContent ?? '<p style="font:13px system-ui;color:#999;padding:16px">No preview</p>'}
+              className="flex-1 w-full rounded-b-lg bg-white"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -300,7 +387,21 @@ function GalleryActions({
   );
 }
 
-function Gallery({ screens, emptyHint }: { screens: PipelineWireframeScreen[]; emptyHint: string }) {
+function Gallery({
+  screens,
+  emptyHint,
+  selectable,
+  selected,
+  onToggle,
+  onOpen,
+}: {
+  screens: PipelineWireframeScreen[];
+  emptyHint: string;
+  selectable?: boolean;
+  selected?: Set<string>;
+  onToggle?: (slug: string) => void;
+  onOpen?: (screen: PipelineWireframeScreen) => void;
+}) {
   if (!screens.length) {
     return (
       <Card>
@@ -313,26 +414,47 @@ function Gallery({ screens, emptyHint }: { screens: PipelineWireframeScreen[]; e
   }
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {screens.map((s) => (
-        <div key={s.id} className="border rounded-lg overflow-hidden bg-white">
-          <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50">
-            <span className="text-sm font-medium text-gray-800 truncate" title={s.title}>
-              {s.title}
-            </span>
-            {s.uploaded && (
-              <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
-                uploaded
+      {screens.map((s) => {
+        const isSel = !!selected?.has(s.slug);
+        return (
+          <div key={s.id} className={`border rounded-lg overflow-hidden bg-white transition ${isSel ? 'ring-2 ring-gray-900 border-gray-900' : ''}`}>
+            <div className="flex items-center gap-2 px-3 py-2 border-b bg-gray-50">
+              {selectable && (
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 cursor-pointer accent-gray-900"
+                  checked={isSel}
+                  onChange={() => onToggle?.(s.slug)}
+                  title="Select for AI lo-fi / hi-fi"
+                />
+              )}
+              <span className="text-sm font-medium text-gray-800 truncate flex-1" title={s.title}>
+                {s.title}
               </span>
-            )}
+              {s.uploaded && (
+                <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">uploaded</span>
+              )}
+            </div>
+            {/* Preview is click-to-open; an overlay captures the click (iframe is inert). */}
+            <button
+              type="button"
+              className="relative block w-full h-64 bg-white group"
+              onClick={() => onOpen?.(s)}
+              title="Open screen"
+            >
+              <iframe
+                title={s.title}
+                sandbox=""
+                srcDoc={s.htmlContent ?? '<p style="font:13px system-ui;color:#999;padding:12px">No preview</p>'}
+                className="w-full h-full bg-white pointer-events-none"
+              />
+              <span className="absolute inset-0 group-hover:bg-gray-900/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                <span className="text-xs font-medium bg-gray-900 text-white px-2 py-1 rounded">Open</span>
+              </span>
+            </button>
           </div>
-          <iframe
-            title={s.title}
-            sandbox=""
-            srcDoc={s.htmlContent ?? '<p style="font:13px system-ui;color:#999;padding:12px">No preview</p>'}
-            className="w-full h-64 bg-white"
-          />
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

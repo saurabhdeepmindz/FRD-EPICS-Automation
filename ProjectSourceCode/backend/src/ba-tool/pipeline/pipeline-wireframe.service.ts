@@ -7,7 +7,9 @@ import { HifiService } from '../discovery/hifi.service';
 import type { ScreenAnnotation } from './screen-map.service';
 import { DesignSystemService } from './design-system.service';
 import { WireframeNavigatorService } from './wireframe-navigator.service';
-import { tokensToCss, type DesignTokens } from './design-tokens';
+import { type DesignTokens } from './design-tokens';
+import { renderLoFi } from './lofi-render';
+import { AiService } from '../../ai/ai.service';
 
 /**
  * Pipeline (PRD-sourced) wireframes (Sprint v8 · Track Z). Generates lo-fi screens
@@ -41,6 +43,7 @@ export class PipelineWireframeService {
     @Inject(forwardRef(() => HifiService)) private readonly hifiService: HifiService,
     private readonly designSystem: DesignSystemService,
     private readonly navigator: WireframeNavigatorService,
+    private readonly aiService: AiService,
   ) {}
 
   /** Z-02 — deterministic lo-fi from the latest screen map (callouts = annotations). */
@@ -87,7 +90,7 @@ export class PipelineWireframeService {
           n: a.marker, description: `${a.title} — ${a.description}`, mappedTo: a.prdRef,
         })) as unknown as Prisma.InputJsonValue,
         mdContent: null as string | null,
-        htmlContent: this.loFiHtml(r.screenName, r.screenDescription, annotations, tokens),
+        htmlContent: renderLoFi(r.screenName, r.screenDescription, annotations, tokens),
         meta: { frRefs: r.featureRefs, generatedFromScreenMap: true } as unknown as Prisma.InputJsonValue,
       };
     });
@@ -141,16 +144,87 @@ export class PipelineWireframeService {
    * Z-02 — hi-fi from the latest PIPELINE lo-fi set (reuses the Discovery HifiService).
    * `limit` enables sample mode (only the first N screens — e.g. one batch).
    */
-  async generateHiFi(projectId: string, limit?: number): Promise<{ id: string; screens: number }> {
+  async generateHiFi(
+    projectId: string,
+    opts: { limit?: number; slugs?: string[] } = {},
+  ): Promise<{ id: string; screens: number }> {
     const set = await this.prisma.baWireframeSet.findFirst({
       where: { projectId, source: 'PIPELINE' },
       orderBy: { createdAt: 'desc' },
     });
     if (!set) throw new BadRequestException('No pipeline lo-fi wireframes yet. Generate lo-fi first.');
-    const hifi = await this.hifiService.generate({ projectId, wireframeSetId: set.id, limit });
+    const hifi = await this.hifiService.generate({ projectId, wireframeSetId: set.id, limit: opts.limit, slugs: opts.slugs });
     // v9 — (re)build the stitched index.html navigator for the hi-fi set.
     await this.navigator.writeToDisk(projectId, 'hifi').catch((e) => this.logger.warn(`navigator (hifi) failed: ${e}`));
     return { id: hifi.id, screens: hifi.screens.length };
+  }
+
+  /**
+   * GG-03 — AI-regenerate lo-fi (grey-box, Claude) for selected screen slugs (or
+   * all map-generated screens if none). Updates `htmlContent` in place on the
+   * latest PIPELINE lo-fi set; uploaded screens are never touched. Per-screen,
+   * bounded concurrency, tolerant of per-screen failure.
+   */
+  async regenerateLoFiWithAI(projectId: string, slugs?: string[]): Promise<{ updated: number; failed: string[] }> {
+    const set = await this.prisma.baWireframeSet.findFirst({
+      where: { projectId, source: 'PIPELINE' },
+      orderBy: { createdAt: 'desc' },
+      include: { screens: { orderBy: { sequenceNum: 'asc' } } },
+    });
+    if (!set) throw new BadRequestException('No pipeline lo-fi wireframes yet. Generate lo-fi first.');
+
+    const targets = set.screens.filter((s) => {
+      const meta = (s.meta as { uploaded?: boolean } | null) ?? {};
+      if (meta.uploaded) return false; // never overwrite uploaded screens
+      return slugs?.length ? slugs.includes(s.slug) : true;
+    });
+    if (!targets.length) throw new BadRequestException('No matching generated lo-fi screens to regenerate.');
+
+    const brand = (set.brandTokensSnapshot as Record<string, unknown> | null) ?? {};
+    const brandTokens = {
+      primary: String(brand.primary ?? '#0B1B2E'),
+      surface: String(brand.surface ?? '#FFFFFF'),
+      cta: String(brand.cta ?? '#F97316'),
+      productName: String(brand.productName ?? '—'),
+    };
+
+    const failed: string[] = [];
+    let updated = 0;
+    const concurrency = Math.max(1, Number(process.env.HIFI_BATCH_CONCURRENCY) || 2);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (let i = next++; i < targets.length; i = next++) {
+        const s = targets[i];
+        try {
+          const ai = await this.aiService.generateHifi({
+            lofiScreens: [{
+              sequenceNum: s.sequenceNum, slug: s.slug, title: s.title, pattern: s.pattern ?? null,
+              callouts: (s.callouts as unknown as { n: number | string; description: string; mappedTo: string }[]) ?? [],
+              mdContent: s.mdContent ?? null,
+            }],
+            brandTokens,
+            productName: brandTokens.productName,
+            fidelity: 'lofi',
+          });
+          const html = ai.screens?.[0]?.htmlContent;
+          if (!html) { failed.push(s.slug); continue; }
+          await this.prisma.baWireframeScreen.update({
+            where: { id: s.id },
+            data: { htmlContent: html, meta: { ...(s.meta as object), aiLoFi: true } as unknown as Prisma.InputJsonValue },
+          });
+          updated += 1;
+        } catch (e) {
+          this.logger.warn(`AI lo-fi failed for ${s.slug}: ${e instanceof Error ? e.message : e}`);
+          failed.push(s.slug);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
+
+    // Navigator rewrites index.html + each screen file fresh from the DB.
+    await this.navigator.writeToDisk(projectId, 'lofi').catch((e) => this.logger.warn(`navigator (lofi) failed: ${e}`));
+    this.logger.log(`AI lo-fi regenerated ${updated}/${targets.length} screens (project=${projectId})`);
+    return { updated, failed };
   }
 
   /** Z-03 — ingest single/bulk uploaded wireframes (HTML/PNG/JPG/PDF/SVG) into a PIPELINE set. */
@@ -285,38 +359,4 @@ export class PipelineWireframeService {
     return name.toLowerCase().replace(/\.[^.]+$/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'screen';
   }
 
-  /**
-   * Deterministic lo-fi wireframe HTML from the screen-map annotations, tinted by
-   * the project's Design System tokens (shared `tokensToCss`) so it stays low-fi
-   * but on-brand. Falls back to defaults when no design system is set.
-   */
-  private loFiHtml(
-    screenName: string,
-    screenDescription: string,
-    annotations: ScreenAnnotation[],
-    tokens?: DesignTokens,
-  ): string {
-    const callouts = (annotations ?? [])
-      .map(
-        (a) => `<div class="cz"><span class="n">${esc(a.marker)}</span><div class="cb"><b>${esc(a.title)}</b><p>${esc(a.description)}</p>${a.prdRef ? `<small>${esc(a.prdRef)}</small>` : ''}</div></div>`,
-      )
-      .join('');
-    return `<!doctype html><html><head><meta charset="utf-8"><style>
-${tokensToCss(tokens)}
-*{box-sizing:border-box;font-family:var(--ui-font)}
-body{margin:0;background:var(--bg-page);color:var(--text-primary)}
-.wf{max-width:880px;margin:0 auto;padding:16px}
-.bar{height:44px;background:var(--brand-primary);color:#fff;border-radius:var(--radius-card);display:flex;align-items:center;padding:0 14px;font-weight:var(--weight-bold)}
-.hero{margin-top:10px;height:120px;background:var(--bg-soft);border:1px dashed var(--border-medium);border-radius:var(--radius-card);display:flex;align-items:center;justify-content:center;color:var(--text-subtle)}
-.desc{margin:12px 2px;color:var(--text-muted);font-size:13px;line-height:1.5}
-.cz{display:flex;gap:10px;background:var(--brand-surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:10px;margin:8px 0}
-.n{flex:0 0 22px;height:22px;border-radius:50%;background:var(--brand-cta);color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;font-weight:700}
-.cb b{font-size:13px;color:var(--text-primary)}.cb p{margin:2px 0;font-size:12px;color:var(--text-muted)}.cb small{color:var(--text-subtle);font-size:11px;font-family:var(--mono-font)}
-</style></head><body><div class="wf">
-<div class="bar">${esc(screenName)}</div>
-<div class="hero">[ ${esc(screenName)} — lo-fi wireframe ]</div>
-<div class="desc">${esc(screenDescription)}</div>
-<div class="callouts">${callouts}</div>
-</div></body></html>`;
-  }
 }
