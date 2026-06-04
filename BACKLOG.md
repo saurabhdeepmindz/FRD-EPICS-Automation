@@ -530,6 +530,17 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track II — Wireframes page: left-rail stepper + switchable panels — Sprint v9, ✅ COMPLETE (2026-06-04)
+
+> **Decision (2026-06-04):** the 3 wireframe stages were a long vertical scroll (lower stages missed). Refactor `/wireframes` into a **left sticky stepper rail** (status/counts/✓/locked + "N selected") with **one panel shown at a time** (matches v7 `PrdStepper`/`PrdSidebar`). Frontend-only; behavior unchanged.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | II-01 | FE: left-rail stepper + switchable panels + status/gating | `/wireframes` page; v7 stepper | no API/DB change |
+| ✅ | II-02 | Playwright smoke + tsc clean | — | — |
+
+---
+
 ### Track HH — Coexisting lo-fi variants (deterministic + AI) + active selection — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** AI lo-fi no longer overwrites the deterministic wireframe — both variants coexist per screen. UX: per-card `[Deterministic | AI]` toggle + modal side-by-side compare + an "active" marker. Active variant (user-chosen, default deterministic) drives navigator/zip/export. Hi-fi stays checkbox-driven.
