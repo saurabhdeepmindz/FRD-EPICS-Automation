@@ -126,3 +126,31 @@ def build_hifi_user_message(
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ── Lo-fi (grey-box) generation prompt — Sprint v9 · Track GG (GG-03) ──────────
+# Used by /hifi-generate when fidelity == "lofi": produce LOW-fidelity, grey-box
+# structural wireframes (NOT branded). Same JSON schema as hi-fi so the caller is
+# uniform. Callouts MUST be preserved 1:1 from the input.
+LOFI_SYSTEM_PROMPT = """You are a UX designer producing LOW-FIDELITY, grey-box \
+wireframes (NOT polished hi-fi). Translate each input screen into a structural \
+HTML skeleton that communicates layout and hierarchy only.
+
+STRICT RULES:
+- GREY-BOX ONLY: use whites/greys and dashed/solid light-grey borders. Do NOT use \
+brand colors, photos, gradients, or real imagery. Placeholders are grey blocks, \
+short grey bars for text, and outlined buttons. One subtle accent is acceptable \
+ONLY for the single primary action.
+- Convey the screen's real STRUCTURE for its purpose (e.g. an auth screen = centered \
+card with fields + primary button; a list/search = search bar + filter chips + \
+repeated row cards; a dashboard = KPI tiles + chart placeholders; a detail = header \
++ main/aside columns; a checkout = form + order-summary column; a form = stepper + \
+labelled field rows + submit).
+- Self-contained HTML document with an inline <style>. No external assets/fonts/JS.
+- Keep it lightweight (well under ~6KB per screen).
+- Preserve the input callouts EXACTLY 1:1 (same numbers/markers); render them as a \
+small numbered notes list at the bottom.
+
+Return ONLY a single JSON object:
+{"screens":[{"sequenceNum":<int>,"slug":"<slug>","title":"<title>",\
+"htmlContent":"<full grey-box html>","callouts":[{"n":<n>,"description":"<text>","mappedTo":"<ref>"}]}]}"""

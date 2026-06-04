@@ -65,6 +65,28 @@
 
 ---
 
+## Track GG — Wireframe gallery UX + lo-fi differentiation + hi-fi selection (follow-on, added 2026-06-04)
+
+> **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-wireframe-ux`. Verified: type-aware lo-fi (Landing→Dashboard, Login→Auth, Search→List, Listing Detail→Detail, Checkout, Payment→Checkout); AI lo-fi regen (scr-01 via Claude); hi-fi selection (2 slugs → 2 screens); click-to-open modal; tests 10/10 (`lofi-render`), pipeline 74/74; tsc clean both apps. **Why:** in-app lo-fi cards looked identical (one uniform scaffold) and weren't clickable. **Decisions (user):** (1) clicking a card opens the screen in an **in-app modal** (+ open-in-new-tab); (2) lo-fi default = **type-aware deterministic** skeletons (free, differentiated) **plus** an **AI lo-fi** option (Claude grey-box) the user can choose; (3) **per-screen checkboxes** to pick exactly which lo-fi screens are carried into **hi-fi** generation.
+
+- [x] **GG-01 (FE):** Gallery cards clickable → **in-app modal** with the full screen (sandboxed iframe) + "Open in new tab".
+- [x] **GG-02 (BE):** Type-aware deterministic lo-fi — `inferScreenType()` (auth/form/list/dashboard/detail/checkout/generic) from screen name + annotations → distinct grey-box skeleton per type (replaces the uniform scaffold; still free, token-driven via `tokensToCss`).
+- [x] **GG-03 (BE+AI):** Optional **AI lo-fi** — `ai-service /lofi-generate` (Claude, grey-box/structural prompt) + `AiService.generateLofi` + `PipelineWireframeService.generateLoFi({ mode: 'deterministic' | 'ai' })`.
+- [x] **GG-04 (BE):** Hi-fi from a **user-selected subset** — `generateHiFi({ slugs })` filters the lo-fi set (supersedes first-N `limit`); `HifiService.generate` honors a `slugs`/`sequenceNums` filter.
+- [x] **GG-05 (FE):** Per-screen **selection checkboxes** + "Generate hi-fi for selected (N)"; lo-fi **mode toggle** (Deterministic default / AI) + per-card "regenerate with AI"; wire to GG-03/GG-04.
+- [x] **GG-06:** Unit test (`inferScreenType`) + smoke; `tsc` clean both apps.
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 15 | Gallery UX | GG-01 | P1 | S | Click-to-open modal (+ new tab) for gallery cards |
+| 16 | Lo-fi | GG-02 | P1 | M | Type-aware deterministic lo-fi skeletons (default) |
+| 17 | Lo-fi | GG-03 | P1 | M | Optional AI lo-fi (`/lofi-generate`, Claude) |
+| 18 | Hi-fi | GG-04 | P1 | S | Hi-fi from a selected subset of lo-fi screens |
+| 19 | Gallery UX | GG-05 | P1 | M | Selection checkboxes + "Generate hi-fi for selected" + lo-fi mode toggle |
+| 20 | Wire-up | GG-06 | P1 | S | Unit test + smoke + tsc clean |
+
+---
+
 ## Track FF — Import reference screens/templates → presets (follow-on, added 2026-06-04)
 
 > **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v8-prd-sourced-wireframes`. Verified: HTML `:root` reference → preset with extracted primary/accent/semantic; image path via Vision; multi-file + folder; backend+frontend `tsc` clean; 15 unit tests. **Decision:** an **Upload reference** button in the Template Library that ingests reference screens/templates (multi-file **or** folder) and turns each into an applicable preset. **HTML/CSS → deterministic `:root`/color extraction** (exact); **PNG/JPG/SVG → Vision** (`/extract-brand-tokens`). Derived presets fill colors confidently; type/shape stay at defaults (labelled "imported"). The uploaded artifact is kept as the preset thumbnail.

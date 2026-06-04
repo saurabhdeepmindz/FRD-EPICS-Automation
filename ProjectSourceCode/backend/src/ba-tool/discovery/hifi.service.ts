@@ -27,6 +27,8 @@ interface GenerateHifiOptions {
   syntheticDataHint?: string;
   /** Sample mode — only generate hi-fi for the first N lo-fi screens (e.g. one batch). */
   limit?: number;
+  /** Selection mode — only generate hi-fi for the lo-fi screens with these slugs. */
+  slugs?: string[];
 }
 
 /**
@@ -101,14 +103,20 @@ export class HifiService {
       );
     }
 
-    // Sample mode: only polish the first N lo-fi screens (e.g. one batch) so a
-    // small, cheap preview can be reviewed before committing to the full set.
-    const sourceScreens =
-      opts.limit && opts.limit > 0 ? lofi.screens.slice(0, opts.limit) : lofi.screens;
-    if (opts.limit && opts.limit > 0) {
+    // Selection mode (explicit slugs) takes precedence; else sample mode (first N);
+    // else the whole set. Lets the BA pick exactly which lo-fi screens become hi-fi.
+    const sourceScreens = opts.slugs?.length
+      ? lofi.screens.filter((s) => opts.slugs!.includes(s.slug))
+      : opts.limit && opts.limit > 0
+        ? lofi.screens.slice(0, opts.limit)
+        : lofi.screens;
+    if (opts.slugs?.length || (opts.limit && opts.limit > 0)) {
       this.logger.log(
-        `Hi-fi SAMPLE mode: generating ${sourceScreens.length}/${lofi.screens.length} screens (project=${opts.projectId})`,
+        `Hi-fi ${opts.slugs?.length ? 'SELECTION' : 'SAMPLE'} mode: generating ${sourceScreens.length}/${lofi.screens.length} screens (project=${opts.projectId})`,
       );
+    }
+    if (!sourceScreens.length) {
+      throw new BadRequestException('No matching lo-fi screens selected for hi-fi generation.');
     }
 
     const brandTokens =
