@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { DiscoveryModule } from '../discovery/discovery.module';
+import { AiModule } from '../../ai/ai.module';
 import { PipelineController } from './pipeline.controller';
 import { PipelineAdminController } from './pipeline-admin.controller';
 import { E2eFlowController } from './e2e-flow.controller';
@@ -49,7 +50,7 @@ import { TextExtractionService } from '../text-extraction.service';
  * on-disk folder tree when a project is created.
  */
 @Module({
-  imports: [forwardRef(() => DiscoveryModule)],
+  imports: [AiModule, forwardRef(() => DiscoveryModule)],
   controllers: [PipelineController, PipelineAdminController, E2eFlowController],
   providers: [
     PipelineService,

@@ -480,6 +480,19 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  @Post('design-system/import-references')
+  @UseInterceptors(FilesInterceptor('files', 60))
+  async importDesignReferences(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    const data = await this.designSystem.importReferences(
+      id,
+      (files ?? []).map((f) => ({ originalname: f.originalname, buffer: f.buffer, mimetype: f.mimetype })),
+    );
+    return { success: true, data };
+  }
+
   // ── HLD (Track E) ───────────────────────────────────────────────────────────
 
   @Get('hld')

@@ -503,6 +503,18 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track FF — Import reference screens/templates → presets — Sprint v9, ✅ COMPLETE (2026-06-04)
+
+> **Decision (2026-06-04):** An **Upload reference** button in the Template Library ingests reference screens/templates (multi-file **or** folder) and turns each into an applicable preset. HTML/CSS → **deterministic** `:root`/color extraction; PNG/JPG/SVG → **Vision** (`/extract-brand-tokens`). Derived presets fill colors; type/shape default (labelled "imported"); uploaded artifact kept as thumbnail.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | FF-01 | Backend: `extractTokensFromHtml()` (deterministic) + `importReferences` (HTML→tokens, image→Vision, multi/folder) + route | `design-tokens`; `AiService.extractBrandTokens`; `FilesInterceptor` | PROJECT presets w/ thumbnail |
+| ✅ | FF-02 | Frontend: **Upload reference** (multi-file + folder) in Template Library | studio page; `pipeline-api` | imported-preset marker |
+| ✅ | FF-03 | Unit test (HTML extract) + smoke + tsc clean | — | — |
+
+---
+
 ### HLD Template
 
 > **Status:** ✅ User shared HRMS-HLD-Consolidated-v2.1.1 (63 pages). 17 section keys derived and implemented in `BaHld` model and stub AI endpoint.

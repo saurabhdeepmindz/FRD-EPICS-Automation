@@ -279,3 +279,114 @@ ${base}
 <div style="display:flex;gap:8px;margin-top:12px"><span class="chip pill" style="background:var(--persona-employee)">Employee</span><span class="chip pill" style="background:var(--persona-manager)">Manager</span><span class="chip pill" style="background:var(--persona-admin)">Admin</span></div></div></div>
 </main></div></body></html>`;
 }
+
+// ── Reference import (Sprint v9 · Track FF) ──────────────────────────────────
+// Derive a token preset from an uploaded reference. HTML/CSS → deterministic
+// `:root` variable parse, with a hex-frequency fallback for the brand colors.
+
+const COLOR_RE = /^(#([0-9a-f]{3}|[0-9a-f]{6})|rgb|hsl)/i;
+
+function isColor(v: string | undefined): v is string {
+  return !!v && COLOR_RE.test(v.trim());
+}
+
+/** Relative luminance of a #rgb/#rrggbb hex (0=black … 1=white). */
+function hexLuminance(hex: string): number {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  if (full.length !== 6) return 0.5;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Saturation proxy (max-min channel) of a hex — gray ≈ 0. */
+function hexSaturation(hex: string): number {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  if (full.length !== 6) return 0;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+}
+
+/**
+ * Extract a partial token set from reference HTML/CSS. Prefers `:root` custom
+ * properties (exact), and falls back to a hex-frequency heuristic for the brand
+ * primary/accent when no usable variables are present.
+ */
+export function extractTokensFromHtml(html: string): Partial<DesignTokens> {
+  const vars: Record<string, string> = {};
+  for (const block of html.match(/:root\s*\{[^}]*\}/gi) ?? []) {
+    const re = /--([\w-]+)\s*:\s*([^;]+);/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(block))) vars[m[1].toLowerCase().trim()] = m[2].trim();
+  }
+  const pick = (...names: string[]): string | undefined => {
+    for (const n of names) if (isColor(vars[n])) return vars[n].trim();
+    return undefined;
+  };
+
+  const brand: Partial<DesignTokens['brand']> = {};
+  const neutral: Partial<DesignTokens['neutral']> = {};
+  const semantic: Partial<DesignTokens['semantic']> = {};
+
+  let primary = pick('brand-primary', 'primary', 'color-primary', 'brand', 'navy');
+  let cta = pick('brand-cta', 'cta', 'accent', 'color-accent', 'brand-secondary', 'primary-accent');
+  const surface = pick('brand-surface', 'surface', 'card', 'white');
+  const ctaHover = pick('brand-cta-hover', 'cta-hover', 'accent-hover');
+  const bgPage = pick('bg-page', 'bg', 'background', 'page-bg');
+  const bgSoft = pick('bg-soft', 'bg-subtle', 'soft-bg', 'muted-bg');
+  const textPrimary = pick('text-primary', 'text', 'fg', 'foreground');
+  const textMuted = pick('text-muted', 'muted', 'text-secondary');
+  const textSubtle = pick('text-subtle', 'subtle', 'text-tertiary');
+  const border = pick('border', 'border-subtle', 'divider');
+  const success = pick('success', 'green', 'positive', 'ok');
+  const warning = pick('warning', 'amber', 'yellow', 'caution');
+  const danger = pick('danger', 'red', 'error', 'destructive', 'negative');
+  const info = pick('info', 'blue', 'primary-info');
+  const teal = pick('teal', 'cyan');
+  const purple = pick('purple', 'violet');
+
+  // Fallback: derive brand colors from hex frequency when :root lacked them.
+  if (!primary || !cta) {
+    const counts = new Map<string, number>();
+    for (const hex of html.match(/#[0-9a-fA-F]{6}\b/g) ?? []) {
+      const k = hex.toLowerCase();
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([h]) => h);
+    if (!primary) {
+      // most-frequent dark, saturated-or-neutral color reads as a brand primary
+      primary = ranked.find((h) => hexLuminance(h) < 0.4) ?? ranked[0];
+    }
+    if (!cta) {
+      cta = ranked.find((h) => hexSaturation(h) > 0.35 && h !== primary) ?? primary;
+    }
+  }
+
+  if (primary) brand.primary = primary;
+  if (cta) brand.cta = cta;
+  if (ctaHover) brand.ctaHover = ctaHover;
+  if (surface) brand.surface = surface;
+  if (bgPage) neutral.bgPage = bgPage;
+  if (bgSoft) neutral.bgSoft = bgSoft;
+  if (textPrimary) neutral.textPrimary = textPrimary;
+  if (textMuted) neutral.textMuted = textMuted;
+  if (textSubtle) neutral.textSubtle = textSubtle;
+  if (border) neutral.border = border;
+  if (success) semantic.success = success;
+  if (warning) semantic.warning = warning;
+  if (danger) semantic.danger = danger;
+  if (info) semantic.info = info;
+  if (teal) semantic.teal = teal;
+  if (purple) semantic.purple = purple;
+
+  const partial: Partial<DesignTokens> = {};
+  if (Object.keys(brand).length) partial.brand = brand as DesignTokens['brand'];
+  if (Object.keys(neutral).length) partial.neutral = neutral as DesignTokens['neutral'];
+  if (Object.keys(semantic).length) partial.semantic = semantic as DesignTokens['semantic'];
+  return partial;
+}

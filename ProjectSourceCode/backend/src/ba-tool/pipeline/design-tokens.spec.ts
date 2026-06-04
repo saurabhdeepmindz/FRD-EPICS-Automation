@@ -5,6 +5,7 @@ import {
   tokensToCss,
   moduleColor,
   renderSamplePreview,
+  extractTokensFromHtml,
 } from './design-tokens';
 import { SEED_PRESETS } from './design-presets';
 import { moduleKeyFromFr } from './wireframe-navigator.service';
@@ -78,6 +79,42 @@ describe('design-tokens (v9)', () => {
       for (const p of SEED_PRESETS) {
         expect(normalizeTokens(p.tokens)).toEqual(p.tokens);
       }
+    });
+  });
+
+  describe('extractTokensFromHtml (Track FF)', () => {
+    it('extracts tokens from a :root block (reference-style vars)', () => {
+      const html = `<style>:root{
+        --brand-primary:#0B1B2E; --brand-cta:#F97316; --bg-soft:#F8FAFC;
+        --text-primary:#1F2A3A; --green:#10b981; --red:#ef4444; --blue:#3b82f6;
+        --radius:8px; --gap:12px;
+      }</style>`;
+      const p = extractTokensFromHtml(html);
+      expect(p.brand?.primary).toBe('#0B1B2E');
+      expect(p.brand?.cta).toBe('#F97316');
+      expect(p.neutral?.bgSoft).toBe('#F8FAFC');
+      expect(p.semantic?.success).toBe('#10b981'); // --green
+      expect(p.semantic?.danger).toBe('#ef4444'); // --red
+      expect(p.semantic?.info).toBe('#3b82f6'); // --blue
+    });
+
+    it('ignores non-color custom properties', () => {
+      const p = extractTokensFromHtml(':root{--radius:8px;--gap:12px}');
+      // no colors → no brand/neutral/semantic groups
+      expect(p.brand).toBeUndefined();
+    });
+
+    it('falls back to hex frequency when there is no usable :root', () => {
+      // #0b1b2e (dark) appears most often → primary; #f97316 (saturated) → cta
+      const html = `
+        <div style="background:#0b1b2e">x</div>
+        <div style="background:#0b1b2e">y</div>
+        <div style="background:#0b1b2e">z</div>
+        <button style="background:#f97316">cta</button>
+        <button style="background:#f97316">cta2</button>`;
+      const p = extractTokensFromHtml(html);
+      expect(p.brand?.primary).toBe('#0b1b2e');
+      expect(p.brand?.cta).toBe('#f97316');
     });
   });
 

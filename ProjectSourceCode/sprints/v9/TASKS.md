@@ -65,6 +65,22 @@
 
 ---
 
+## Track FF — Import reference screens/templates → presets (follow-on, added 2026-06-04)
+
+> **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v8-prd-sourced-wireframes`. Verified: HTML `:root` reference → preset with extracted primary/accent/semantic; image path via Vision; multi-file + folder; backend+frontend `tsc` clean; 15 unit tests. **Decision:** an **Upload reference** button in the Template Library that ingests reference screens/templates (multi-file **or** folder) and turns each into an applicable preset. **HTML/CSS → deterministic `:root`/color extraction** (exact); **PNG/JPG/SVG → Vision** (`/extract-brand-tokens`). Derived presets fill colors confidently; type/shape stay at defaults (labelled "imported"). The uploaded artifact is kept as the preset thumbnail.
+
+- [x] **FF-01 (BE):** `extractTokensFromHtml()` (deterministic `:root` var + hex-frequency fallback) in `design-tokens.ts`; `DesignSystemService.importReferences(projectId, files)` — HTML→deterministic, image→`AiService.extractBrandTokens` (Vision), multi-file + folder; create PROJECT `BaDesignPreset`(s) with thumbnail; reject unsupported. Route `POST design-system/import-references` (FilesInterceptor).
+- [x] **FF-02 (FE):** "Upload reference" button (files **and** folder via `webkitdirectory`) in the Template Library; `importDesignReferences` helper; refresh + surface imported presets (with an "imported" marker).
+- [x] **FF-03:** unit test for `extractTokensFromHtml` (`:root` parse + fallback) + smoke; `tsc` clean both apps.
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 12 | Library | FF-01 | P1 | M | Backend: HTML→tokens (deterministic) + image→Vision; `importReferences` + route |
+| 13 | Library | FF-02 | P1 | S | Frontend: Upload reference (multi + folder) in Template Library |
+| 14 | Library | FF-03 | P1 | S | Unit test (HTML extract) + smoke + tsc clean |
+
+---
+
 ## Acceptance criteria
 
 - [x] A UX resource can define a project's **design tokens + logo** with strong defaults; the page is styled in line with the LLD/architecture pages.

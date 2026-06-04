@@ -1337,6 +1337,21 @@ export async function saveDesignPreset(
   return data.data;
 }
 
+/** Track FF — import reference screens/templates (multi-file or folder) → presets. */
+export async function importDesignReferences(
+  projectId: string,
+  files: File[],
+): Promise<{ created: { id: string; name: string }[]; rejected: string[] }> {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', f));
+  const { data } = await api.post<ApiEnvelope<{ created: { id: string; name: string }[]; rejected: string[] }>>(
+    `/ba/projects/${projectId}/design-system/import-references`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 180_000 },
+  );
+  return data.data;
+}
+
 // ─── Wireframe Navigator (Track DD) ──────────────────────────────────────────
 
 export async function getWireframeNavigator(projectId: string, kind: 'lofi' | 'hifi'): Promise<string> {

@@ -15,6 +15,7 @@ import {
   Smartphone,
   BookmarkPlus,
   Plus,
+  FolderUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +27,7 @@ import {
   listDesignPresets,
   getDesignPresetTokens,
   saveDesignPreset,
+  importDesignReferences,
   type DesignTokens,
   type DesignLogo,
   type DesignPreset,
@@ -62,7 +64,18 @@ export default function DesignSystemPage() {
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<'web' | 'mobile'>('web');
   const [preview, setPreview] = useState('');
+  const [importing, setImporting] = useState(false);
   const logoRef = useRef<HTMLInputElement>(null);
+  const refFilesRef = useRef<HTMLInputElement>(null);
+  const refFolderRef = useRef<HTMLInputElement>(null);
+
+  // Enable folder selection on the hidden folder input (non-standard attribute).
+  useEffect(() => {
+    if (refFolderRef.current) {
+      refFolderRef.current.setAttribute('webkitdirectory', '');
+      refFolderRef.current.setAttribute('directory', '');
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,6 +169,22 @@ export default function DesignSystemPage() {
     }
   };
 
+  const onImportReferences = async (fileList: FileList | null) => {
+    const files = Array.from(fileList ?? []).filter((f) => /\.(html?|css|svg|png|jpe?g)$/i.test(f.name));
+    if (!files.length) { setError('No supported reference files (HTML/CSS/SVG/PNG/JPG).'); return; }
+    setImporting(true);
+    setError(null);
+    try {
+      const res = await importDesignReferences(projectId, files);
+      setPresets(await listDesignPresets(projectId));
+      if (res.rejected.length) setError(`Imported ${res.created.length}; skipped: ${res.rejected.join('; ')}`);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -202,10 +231,27 @@ export default function DesignSystemPage() {
                 >
                   <Swatches t={p.tokens} />
                   <span className="font-medium text-gray-800">{p.name}</span>
+                  {!p.isSeed && p.scope === 'PROJECT' && (
+                    <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">imported</span>
+                  )}
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-2">Pick a template to fill the parameters, then tweak below — the preview updates live.</p>
+            <div className="flex items-center gap-2 mt-3">
+              <Button size="sm" variant="outline" onClick={() => refFilesRef.current?.click()} disabled={importing}>
+                {importing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Upload references
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => refFolderRef.current?.click()} disabled={importing}>
+                <FolderUp className="h-4 w-4 mr-1" /> Upload folder
+              </Button>
+              <input ref={refFilesRef} type="file" multiple accept=".html,.htm,.css,.svg,.png,.jpg,.jpeg" className="hidden"
+                onChange={(e) => { void onImportReferences(e.target.files); e.target.value = ''; }} />
+              <input ref={refFolderRef} type="file" multiple className="hidden"
+                onChange={(e) => { void onImportReferences(e.target.files); e.target.value = ''; }} />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Pick a template to fill the parameters, then tweak below — preview updates live. Or <b>upload reference screens/templates</b> (HTML/CSS/SVG/PNG/JPG, multi-select or a folder) to derive a preset — colors are extracted, type/shape stay at defaults.
+            </p>
           </Group>
 
           {/* Brand + logo */}

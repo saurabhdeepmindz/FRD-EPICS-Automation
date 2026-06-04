@@ -6,8 +6,11 @@ import {
   DEFAULT_TOKENS,
   normalizeTokens,
   renderSamplePreview,
+  tokensToCss,
+  extractTokensFromHtml,
 } from './design-tokens';
 import { SEED_PRESETS } from './design-presets';
+import { AiService } from '../../ai/ai.service';
 
 /**
  * Design System / "Look & Feel" Studio (Sprint v9 · Track BB).
@@ -37,7 +40,10 @@ const MAX_LOGO_BYTES = 1_500_000;
 export class DesignSystemService {
   private readonly logger = new Logger(DesignSystemService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly aiService: AiService,
+  ) {}
 
   /** Latest design system for a project, or null. */
   async getActive(projectId: string) {
@@ -145,6 +151,85 @@ export class DesignSystemService {
         isSeed: false,
       },
     });
+  }
+
+  /**
+   * Track FF — import reference screens/templates and derive presets.
+   * HTML/CSS/SVG → deterministic `:root`/hex extraction; PNG/JPG → Vision. Multiple
+   * files (or a folder) are de-duplicated by resulting primary+accent so a folder
+   * of one product's screens yields a single preset.
+   */
+  async importReferences(
+    projectId: string,
+    files: { originalname: string; buffer: Buffer; mimetype?: string }[],
+  ): Promise<{ created: { id: string; name: string }[]; rejected: string[] }> {
+    if (!files?.length) throw new BadRequestException('No reference files uploaded.');
+    const rejected: string[] = [];
+    const unique = new Map<string, { tokens: DesignTokens; name: string; thumbnail: string }>();
+
+    for (const f of files) {
+      const ext = (f.originalname.split('.').pop() ?? '').toLowerCase();
+      let partial: Partial<DesignTokens> | null = null;
+      let thumbnail = '';
+
+      if (['html', 'htm', 'css', 'svg'].includes(ext)) {
+        const text = f.buffer.toString('utf-8');
+        partial = extractTokensFromHtml(text);
+        thumbnail = ext === 'html' || ext === 'htm' ? (text.length < 300_000 ? text : '') : '';
+      } else if (['png', 'jpg', 'jpeg'].includes(ext)) {
+        try {
+          const bt = await this.aiService.extractBrandTokens({
+            originalname: f.originalname, buffer: f.buffer, mimetype: f.mimetype,
+          } as never);
+          partial = { brand: { primary: bt.primary, cta: bt.cta, surface: bt.surface } as DesignTokens['brand'] };
+          const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+          thumbnail = `<img src="data:${mime};base64,${f.buffer.toString('base64')}" style="width:100%;display:block">`;
+        } catch {
+          rejected.push(`${f.originalname} (vision unavailable)`);
+          continue;
+        }
+      } else {
+        rejected.push(`${f.originalname} (unsupported — use HTML/CSS/SVG/PNG/JPG)`);
+        continue;
+      }
+
+      if (!partial?.brand?.primary) {
+        rejected.push(`${f.originalname} (no usable colors found)`);
+        continue;
+      }
+      const tokens = normalizeTokens(partial);
+      const key = `${tokens.brand.primary}|${tokens.brand.cta}`;
+      if (!unique.has(key)) {
+        const name = f.originalname.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 60) || 'Imported';
+        unique.set(key, { tokens, name, thumbnail: thumbnail || this.swatchThumbnail(tokens) });
+      }
+    }
+
+    const created: { id: string; name: string }[] = [];
+    for (const { tokens, name, thumbnail } of unique.values()) {
+      const preset = await this.prisma.baDesignPreset.create({
+        data: {
+          name: `${name} (imported)`,
+          scope: 'PROJECT',
+          projectId,
+          tokens: tokens as unknown as Prisma.InputJsonValue,
+          thumbnail,
+          isSeed: false,
+        },
+      });
+      created.push({ id: preset.id, name: preset.name });
+    }
+    this.logger.log(`Imported ${created.length} preset(s) from ${files.length} reference file(s); ${rejected.length} rejected`);
+    return { created, rejected };
+  }
+
+  /** Tiny swatch-strip thumbnail for references without a renderable preview. */
+  private swatchThumbnail(t: DesignTokens): string {
+    const cs = [t.brand.primary, t.brand.cta, t.semantic.success, t.semantic.warning, t.semantic.purple];
+    const css = tokensToCss(t);
+    return `<!doctype html><html><head><style>${css}body{margin:0}</style></head><body><div style="display:flex;height:100%">${cs
+      .map((c) => `<span style="flex:1;background:${c}"></span>`)
+      .join('')}</div></body></html>`;
   }
 
   /** Idempotently seed the shipped starter presets (by name, isSeed=true). */
