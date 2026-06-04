@@ -451,6 +451,25 @@ export async function getHld(projectId: string): Promise<Hld | null> {
   return data.data;
 }
 
+// ─── Project structure diagram (v9 Track KK) ─────────────────────────────────
+
+export type StructureLayer = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';
+export interface StructureGroup {
+  key: string;
+  title: string;
+  layer: StructureLayer;
+  items: { name: string; note?: string }[];
+}
+export interface ProjectStructure {
+  productName: string;
+  groups: StructureGroup[];
+}
+
+export async function getProjectStructure(projectId: string): Promise<ProjectStructure> {
+  const { data } = await api.get<ApiEnvelope<ProjectStructure>>(`/ba/projects/${projectId}/hld/project-structure`);
+  return data.data;
+}
+
 export async function generateHld(
   projectId: string,
 ): Promise<{ id: string; gaps: PrdGap[] }> {
@@ -1269,12 +1288,18 @@ export async function uploadWireframes(
 
 // ─── Design System / Look & Feel Studio (Track CC) ───────────────────────────
 
+export interface DiagramLayer { fill: string; border: string; text: string }
+
 export interface DesignTokens {
   brand: { productName: string; primary: string; cta: string; ctaHover: string; surface: string };
   neutral: { bgPage: string; bgSoft: string; textPrimary: string; textMuted: string; textSubtle: string; border: string; borderMedium: string };
   semantic: { success: string; warning: string; danger: string; info: string; teal: string; purple: string };
   modulePalette: { mode: 'auto' | 'manual'; colors: Record<string, string> };
   personaPalette: { employee: string; manager: string; hrAdmin: string; finance: string; admin: string; visitor: string };
+  diagramPalette: {
+    frontend: DiagramLayer; backend: DiagramLayer; calcEngine: DiagramLayer;
+    shared: DiagramLayer; db: DiagramLayer; config: DiagramLayer; node: DiagramLayer;
+  };
   typography: { uiFont: string; monoFont: string; baseSize: number; weightNormal: number; weightBold: number };
   shape: { radiusCard: number; radiusPill: number; density: 'comfortable' | 'compact'; elevation: 'flat' | 'soft' | 'raised' };
   platform: { mobileFrameWidth: number; breakpointMobile: number; breakpointTablet: number; touchTarget: number };

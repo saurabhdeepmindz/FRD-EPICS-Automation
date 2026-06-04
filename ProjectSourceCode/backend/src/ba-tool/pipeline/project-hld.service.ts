@@ -62,6 +62,70 @@ export class HldService {
     });
   }
 
+  /**
+   * v9 KK — deterministically derive a monorepo "project structure" from the
+   * project's modules (or §6 FR-ID prefixes), grouped by layer. Rendered as the
+   * pastel structure grid under HLD §17. Structure is deterministic (not LLM) so
+   * it's accurate + instant; layer keys map to the design system's diagramPalette.
+   */
+  async buildProjectStructure(projectId: string) {
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: projectId },
+      select: { name: true, productName: true, modules: { select: { moduleName: true }, orderBy: { createdAt: 'asc' } } },
+    });
+    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+
+    const tc = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    let modules = project.modules.map((m) => m.moduleName).filter(Boolean);
+    if (!modules.length) {
+      const map = await this.prisma.baScreenMap.findFirst({
+        where: { projectId }, orderBy: { version: 'desc' }, include: { rows: { select: { featureRefs: true } } },
+      });
+      const prefixes = new Set<string>();
+      for (const r of map?.rows ?? []) for (const fr of r.featureRefs) {
+        const m = /^FR-([A-Za-z0-9]+)-/.exec(fr);
+        if (m) prefixes.add(tc(m[1]));
+      }
+      modules = [...prefixes];
+    }
+    if (!modules.length) modules = ['Core'];
+    const top = modules.slice(0, 10);
+    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mod';
+    const table = (s: string) => `${slug(s).replace(/-/g, '_')}s`;
+
+    const groups = [
+      {
+        key: 'frontend', title: 'apps/frontend/ (Next.js)', layer: 'frontend',
+        items: [
+          { name: 'app/', note: 'routes' }, { name: 'components/' }, { name: 'hooks/' },
+          { name: 'services/' }, { name: 'types/' },
+          ...top.map((m) => ({ name: `app/${slug(m)}/`, note: 'route' })),
+        ],
+      },
+      {
+        key: 'backend', title: 'apps/backend/ (NestJS)', layer: 'backend',
+        items: [
+          { name: 'modules/', note: 'controller + service + model + dto' },
+          ...top.map((m) => ({ name: `modules/${slug(m)}/` })),
+          { name: 'database/' }, { name: 'migrations/' }, { name: 'common/' }, { name: 'config/' },
+        ],
+      },
+      {
+        key: 'db', title: 'database tables (PostgreSQL)', layer: 'db',
+        items: [...top.map((m) => ({ name: table(m) })), { name: 'users' }, { name: 'audit_log' }],
+      },
+      {
+        key: 'shared', title: 'packages/ (shared)', layer: 'shared',
+        items: [{ name: 'shared-types/' }, { name: 'shared-utils/' }, { name: 'ui-components/' }, { name: 'eslint-config/' }, { name: 'tsconfig/' }],
+      },
+      {
+        key: 'config', title: 'root config files', layer: 'config',
+        items: [{ name: 'package.json' }, { name: 'turbo.json' }, { name: 'docker-compose.yml' }, { name: '.env.example' }, { name: 'README.md' }],
+      },
+    ];
+    return { productName: project.productName ?? project.name, groups };
+  }
+
   async getLatest(projectId: string) {
     return this.prisma.baHld.findFirst({
       where: { projectId },

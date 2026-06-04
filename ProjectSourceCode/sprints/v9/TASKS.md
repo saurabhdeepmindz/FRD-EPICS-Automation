@@ -87,6 +87,24 @@
 
 ---
 
+## Track KK — Pastel diagram palette (in Design System) + project-structure diagram (follow-on, added 2026-06-04)
+
+> **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-pastel-diagrams`. **Decisions (user):** add the reference diagram's **exact pastel palette into the Design System** and drive **both** the architecture (Mermaid) diagrams and a new **project-structure diagram** from it; structure rendered as a **pastel HTML grid** (grouped boxes + legend) like the attached. Verified (Playwright + screenshot): Mermaid renders pastel (10 svg); §17 grid shows monorepo groups (frontend/backend/db/shared/config) + legend, items derived from the project's modules ("Luggage Room").
+
+- [x] **KK-01 (BE+FE):** add `diagramPalette` (exact attached pastels: frontend/backend/calcEngine/shared/db/config/node, each fill/border/text) to `DesignTokens` (defaults + `normalizeTokens` + `tokensToCss` CSS vars); mirror the type on the frontend; Studio FALLBACK updated. (Seed presets inherit it.)
+- [x] **KK-02 (FE):** HLD `Mermaid` renderer themed from the project's `diagramPalette` (Mermaid `base` theme + pastel `themeVariables`); HLD page fetches the active Design System for the palette (fallback = attached defaults).
+- [x] **KK-03 (BE+FE):** `HldService.buildProjectStructure` deterministically derives monorepo groups (layers → folders/items) from the project's §6 modules + stack (no LLM — accurate & instant); `GET hld/project-structure`; frontend `ProjectStructureDiagram` pastel grid + legend rendered under §17.
+- [x] **KK-04:** `tsc` clean both apps; design-tokens tests 15/15; Playwright verified grid + pastel diagrams.
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 29 | Diagrams | KK-01 | P1 | M | `diagramPalette` (attached pastels) in Design System tokens |
+| 30 | Diagrams | KK-02 | P1 | S | Pastel Mermaid theme from the palette |
+| 31 | Diagrams | KK-03 | P1 | M | Project-structure derivation + endpoint + pastel grid (§17) |
+| 32 | Wire-up | KK-04 | P1 | S | tsc + tests + Playwright |
+
+---
+
 ## Track JJ — HLD page: left section menu + switchable panels + Mermaid render fix (follow-on, added 2026-06-04)
 
 > **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-hld-stepper`. Left section menu (Architecture Diagrams + 17 headings) with one-panel-at-a-time switching, verified via Playwright (rail present; switching shows the section + hides diagrams; diagrams render to `<svg>`). **Mermaid needed no fix** — it renders on a fresh build; the screenshot's raw code was a stale dev-build/cache (hard refresh fixes it). `tsc` clean. **Why:** the HLD page was a long scroll of 17 sections + diagrams (hard to navigate); the diagrams *appeared* as raw Mermaid code due to the stale build. **Decisions (user):** add a **left menu of section headings**; clicking one shows that section on the right (one at a time), consistent with the wireframes/PRD screens. Plus fix Mermaid so diagrams actually draw.

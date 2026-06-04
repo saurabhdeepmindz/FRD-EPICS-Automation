@@ -530,6 +530,19 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track KK — Pastel diagram palette (in Design System) + project-structure diagram — Sprint v9, ✅ COMPLETE (2026-06-04)
+
+> **Decision (2026-06-04):** add the reference diagram's exact pastel palette **into the Design System** (`diagramPalette`) and drive both the architecture (Mermaid) diagrams and a new **project-structure diagram** (pastel HTML grid + legend) from it. Structure derived deterministically from the project's §6 modules + stack.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | KK-01 | `diagramPalette` (attached pastels) in `DesignTokens` + tokensToCss vars + FE type | `design-tokens` | seed presets inherit |
+| ✅ | KK-02 | Pastel Mermaid theme from the palette | `Mermaid`; `mermaid@11` | fallback = attached defaults |
+| ✅ | KK-03 | `buildProjectStructure` (deterministic) + `GET hld/project-structure` + pastel grid in §17 | `HldService`; `BaModule` | grid + legend like the attached |
+| ✅ | KK-04 | tsc + design-tokens tests (15) + Playwright | — | — |
+
+---
+
 ### Track JJ — HLD page: left section menu + switchable panels — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** the HLD page was a long scroll (17 sections + diagrams) and the architecture diagrams rendered as raw Mermaid code (render error → amber source fallback). Add a **left section menu** (Diagrams + 17 headings) with one-panel-at-a-time switching (like wireframes/PRD), and **fix the Mermaid renderer** so diagrams draw.
