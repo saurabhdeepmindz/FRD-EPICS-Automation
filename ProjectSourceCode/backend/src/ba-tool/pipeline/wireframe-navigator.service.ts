@@ -107,7 +107,13 @@ export class WireframeNavigatorService {
       });
       rows = (hifiSet?.screens ?? []).map((s) => ({ slug: s.slug, title: s.title, htmlContent: s.htmlContent, meta: s.meta }));
     } else {
-      rows = lofiSet.screens.map((s) => ({ slug: s.slug, title: s.title, htmlContent: s.htmlContent, meta: s.meta }));
+      // HH-01: export the ACTIVE lo-fi variant per screen (deterministic by default,
+      // the AI variant when the user marked it active).
+      rows = lofiSet.screens.map((s) => {
+        const m = (s.meta as { aiHtml?: string; activeVariant?: string } | null) ?? {};
+        const html = m.activeVariant === 'ai' && m.aiHtml ? m.aiHtml : s.htmlContent;
+        return { slug: s.slug, title: s.title, htmlContent: html, meta: s.meta };
+      });
     }
 
     return rows.map((s) => {

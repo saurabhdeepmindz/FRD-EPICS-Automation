@@ -87,6 +87,22 @@
 
 ---
 
+## Track HH — Coexisting lo-fi variants (deterministic + AI) + active selection (follow-on, added 2026-06-04)
+
+> **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-lofi-variants`. Verified (Playwright + API): deterministic preserved + AI stored as `meta.aiHtml`; per-card `[Deterministic|AI]` toggle; modal side-by-side compare (2 iframes + "Set active"); active variant persists & drives the navigator; default active = deterministic. `tsc` clean both apps. **Why:** AI lo-fi overwrote the deterministic wireframe in place. **Decisions (user):** keep BOTH variants per screen — deterministic is never destroyed; AI is an added variant. **UX:** a per-card `[Deterministic | AI]` toggle + a modal **side-by-side compare**; an **active** marker. **Active variant is user-chosen** per screen (default deterministic) and drives navigator/zip/export. Hi-fi stays **checkbox-driven** (callout-based, variant-agnostic).
+
+- [x] **HH-01 (BE):** AI lo-fi stored as a variant — `regenerateLoFiWithAI` writes `meta.aiHtml` and PRESERVES the deterministic `htmlContent`; `meta.activeVariant` ('deterministic'|'ai', default deterministic). Endpoint `POST wireframes/screen-variant {slug,variant}` to set active. `listScreens` returns `{ htmlContent, aiHtmlContent, activeVariant }`. `WireframeNavigatorService` exports the **active** variant per screen.
+- [x] **HH-02 (FE):** lo-fi card `[Deterministic | AI]` segmented toggle (persists active via API) + "active" marker; modal shows BOTH side-by-side when an AI variant exists; "AI lo-fi (N)" keeps deterministic intact.
+- [x] **HH-03:** smoke + `tsc` clean both apps.
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 21 | Lo-fi variants | HH-01 | P1 | M | AI lo-fi as a variant (keep deterministic) + active-variant API + navigator uses active |
+| 22 | Lo-fi variants | HH-02 | P1 | M | Card toggle + modal compare + active marker |
+| 23 | Wire-up | HH-03 | P1 | S | Smoke + tsc clean |
+
+---
+
 ## Track FF — Import reference screens/templates → presets (follow-on, added 2026-06-04)
 
 > **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v8-prd-sourced-wireframes`. Verified: HTML `:root` reference → preset with extracted primary/accent/semantic; image path via Vision; multi-file + folder; backend+frontend `tsc` clean; 15 unit tests. **Decision:** an **Upload reference** button in the Template Library that ingests reference screens/templates (multi-file **or** folder) and turns each into an applicable preset. **HTML/CSS → deterministic `:root`/color extraction** (exact); **PNG/JPG/SVG → Vision** (`/extract-brand-tokens`). Derived presets fill colors confidently; type/shape stay at defaults (labelled "imported"). The uploaded artifact is kept as the preset thumbnail.

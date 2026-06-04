@@ -208,9 +208,15 @@ export class PipelineWireframeService {
           });
           const html = ai.screens?.[0]?.htmlContent;
           if (!html) { failed.push(s.slug); continue; }
+          // HH-01: store the AI version as a SEPARATE variant; never overwrite the
+          // deterministic `htmlContent`. Active stays deterministic by default —
+          // the user flips to AI per screen via the card toggle.
+          const meta = (s.meta as { activeVariant?: string } | null) ?? {};
           await this.prisma.baWireframeScreen.update({
             where: { id: s.id },
-            data: { htmlContent: html, meta: { ...(s.meta as object), aiLoFi: true } as unknown as Prisma.InputJsonValue },
+            data: {
+              meta: { ...meta, aiHtml: html, activeVariant: meta.activeVariant ?? 'deterministic' } as unknown as Prisma.InputJsonValue,
+            },
           });
           updated += 1;
         } catch (e) {
@@ -291,15 +297,45 @@ export class PipelineWireframeService {
         })
       : null;
     return {
-      lofi: (lofiSet?.screens ?? []).map((s) => ({
-        id: s.id, slug: s.slug, title: s.title, htmlContent: s.htmlContent,
-        uploaded: !!(s.meta as { uploaded?: boolean } | null)?.uploaded,
-      })),
+      lofi: (lofiSet?.screens ?? []).map((s) => {
+        const meta = (s.meta as { uploaded?: boolean; aiHtml?: string; activeVariant?: string } | null) ?? {};
+        return {
+          id: s.id, slug: s.slug, title: s.title,
+          htmlContent: s.htmlContent, // deterministic — always preserved
+          aiHtmlContent: meta.aiHtml ?? null, // AI variant (HH-01), or null
+          activeVariant: (meta.activeVariant === 'ai' ? 'ai' : 'deterministic') as 'ai' | 'deterministic',
+          uploaded: !!meta.uploaded,
+        };
+      }),
       hifi: (hifiSet?.screens ?? []).map((s) => ({
         id: s.id, slug: s.slug, title: s.title, htmlContent: s.htmlContent,
+        aiHtmlContent: null as string | null,
+        activeVariant: 'deterministic' as const,
         uploaded: !!(s.meta as { uploaded?: boolean } | null)?.uploaded,
       })),
     };
+  }
+
+  /** HH-01 — set which lo-fi variant ('deterministic'|'ai') is active for a screen. */
+  async setScreenVariant(projectId: string, slug: string, variant: 'deterministic' | 'ai'): Promise<{ slug: string; activeVariant: string }> {
+    const set = await this.prisma.baWireframeSet.findFirst({
+      where: { projectId, source: 'PIPELINE' },
+      orderBy: { createdAt: 'desc' },
+      include: { screens: { where: { slug } } },
+    });
+    const screen = set?.screens[0];
+    if (!screen) throw new NotFoundException(`Lo-fi screen "${slug}" not found`);
+    const meta = (screen.meta as { aiHtml?: string } | null) ?? {};
+    if (variant === 'ai' && !meta.aiHtml) {
+      throw new BadRequestException('No AI variant exists for this screen yet — generate AI lo-fi first.');
+    }
+    await this.prisma.baWireframeScreen.update({
+      where: { id: screen.id },
+      data: { meta: { ...meta, activeVariant: variant } as unknown as Prisma.InputJsonValue },
+    });
+    // Keep the navigator/zip in sync with the active variant.
+    await this.navigator.writeToDisk(projectId, 'lofi').catch(() => undefined);
+    return { slug, activeVariant: variant };
   }
 
   /** Reflect wireframes the customer uploaded in the Inputs section. */

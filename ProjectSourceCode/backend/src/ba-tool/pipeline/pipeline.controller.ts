@@ -385,6 +385,20 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  @Post('wireframes/screen-variant')
+  async setWireframeScreenVariant(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { slug: string; variant: 'deterministic' | 'ai' },
+  ) {
+    if (!body?.slug) throw new BadRequestException('slug is required.');
+    const data = await this.pipelineWireframes.setScreenVariant(
+      id,
+      body.slug,
+      body.variant === 'ai' ? 'ai' : 'deterministic',
+    );
+    return { success: true, data };
+  }
+
   @Post('wireframes/upload')
   @UseInterceptors(FilesInterceptor('files', 50))
   async uploadWireframes(
