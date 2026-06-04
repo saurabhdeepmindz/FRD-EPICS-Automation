@@ -19,6 +19,8 @@ import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
 import { ScreenMapService } from './screen-map.service';
 import { PipelineWireframeService } from './pipeline-wireframe.service';
+import { DesignSystemService } from './design-system.service';
+import { WireframeNavigatorService } from './wireframe-navigator.service';
 import { E2eFlowService } from './e2e-flow.service';
 import { E2eElaborationService } from './e2e-elaboration.service';
 import { E2eMappingService } from './e2e-mapping.service';
@@ -66,6 +68,8 @@ import { TextExtractionService } from '../text-extraction.service';
     ArtifactFreshnessService,
     ScreenMapService,
     PipelineWireframeService,
+    DesignSystemService,
+    WireframeNavigatorService,
     E2eFlowService,
     E2eElaborationService,
     E2eMappingService,

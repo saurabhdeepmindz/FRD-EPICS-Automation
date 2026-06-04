@@ -5,6 +5,9 @@ import { ProjectFolderService } from './project-folder.service';
 import { WireframeExportService } from './wireframe-export.service';
 import { HifiService } from '../discovery/hifi.service';
 import type { ScreenAnnotation } from './screen-map.service';
+import { DesignSystemService } from './design-system.service';
+import { WireframeNavigatorService } from './wireframe-navigator.service';
+import { tokensToCss, type DesignTokens } from './design-tokens';
 
 /**
  * Pipeline (PRD-sourced) wireframes (Sprint v8 · Track Z). Generates lo-fi screens
@@ -36,6 +39,8 @@ export class PipelineWireframeService {
     private readonly projectFolders: ProjectFolderService,
     private readonly wireframeExport: WireframeExportService,
     @Inject(forwardRef(() => HifiService)) private readonly hifiService: HifiService,
+    private readonly designSystem: DesignSystemService,
+    private readonly navigator: WireframeNavigatorService,
   ) {}
 
   /** Z-02 — deterministic lo-fi from the latest screen map (callouts = annotations). */
@@ -54,6 +59,10 @@ export class PipelineWireframeService {
     const prd = await this.prisma.baProjectPrd.findFirst({
       where: { projectId }, orderBy: { version: 'desc' }, select: { version: true },
     });
+
+    // v9 — apply the project's Design System tokens (falls back to defaults).
+    const tokens = await this.designSystem.resolveTokens(projectId);
+    const ds = await this.designSystem.getActive(projectId);
 
     // Preserve uploaded lo-fi screens from the latest PIPELINE set (merge, not overwrite).
     const prevSet = await this.prisma.baWireframeSet.findFirst({
@@ -78,7 +87,7 @@ export class PipelineWireframeService {
           n: a.marker, description: `${a.title} — ${a.description}`, mappedTo: a.prdRef,
         })) as unknown as Prisma.InputJsonValue,
         mdContent: null as string | null,
-        htmlContent: this.loFiHtml(r.screenName, r.screenDescription, annotations),
+        htmlContent: this.loFiHtml(r.screenName, r.screenDescription, annotations, tokens),
         meta: { frRefs: r.featureRefs, generatedFromScreenMap: true } as unknown as Prisma.InputJsonValue,
       };
     });
@@ -95,9 +104,22 @@ export class PipelineWireframeService {
         projectId,
         source: 'PIPELINE',
         screenMapId: map.id,
+        designSystemId: ds?.id ?? null,
         approachNoteVersionId: null,
-        sourceArtifactVersions: { prdVersion: prd?.version, screenMapVersion: map.version } as Prisma.InputJsonValue,
-        brandTokensSnapshot: { ...DEFAULT_BRAND, productName: project.name } as Prisma.InputJsonValue,
+        sourceArtifactVersions: {
+          prdVersion: prd?.version,
+          screenMapVersion: map.version,
+          designSystemVersion: ds?.version,
+        } as Prisma.InputJsonValue,
+        // Legacy keys (primary/surface/cta/productName) keep HifiService working;
+        // the full design tokens ride along for richer downstream use.
+        brandTokensSnapshot: {
+          primary: tokens.brand.primary,
+          surface: tokens.brand.surface,
+          cta: tokens.brand.cta,
+          productName: tokens.brand.productName !== '—' ? tokens.brand.productName : project.name,
+          designTokens: tokens,
+        } as unknown as Prisma.InputJsonValue,
         status: 'DRAFT',
         screens: { create: [...generated, ...preserved] },
       },
@@ -107,6 +129,9 @@ export class PipelineWireframeService {
     await this.wireframeExport
       .exportLoFi(projectId, set.screens.map((s) => ({ sequenceNum: s.sequenceNum, slug: s.slug, title: s.title, htmlContent: s.htmlContent ?? '' })))
       .catch((e) => this.logger.warn(`lo-fi export failed: ${e instanceof Error ? e.message : e}`));
+
+    // v9 — (re)build the stitched index.html navigator for the lo-fi set.
+    await this.navigator.writeToDisk(projectId, 'lofi').catch((e) => this.logger.warn(`navigator (lofi) failed: ${e}`));
 
     this.logger.log(`Generated PIPELINE lo-fi for ${project.name}: ${generated.length} from map + ${preserved.length} preserved uploads`);
     return { id: set.id, screens: generated.length, preservedUploads: preserved.length };
@@ -123,6 +148,8 @@ export class PipelineWireframeService {
     });
     if (!set) throw new BadRequestException('No pipeline lo-fi wireframes yet. Generate lo-fi first.');
     const hifi = await this.hifiService.generate({ projectId, wireframeSetId: set.id, limit });
+    // v9 — (re)build the stitched index.html navigator for the hi-fi set.
+    await this.navigator.writeToDisk(projectId, 'hifi').catch((e) => this.logger.warn(`navigator (hifi) failed: ${e}`));
     return { id: hifi.id, screens: hifi.screens.length };
   }
 
@@ -258,23 +285,33 @@ export class PipelineWireframeService {
     return name.toLowerCase().replace(/\.[^.]+$/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'screen';
   }
 
-  /** Deterministic grayscale lo-fi wireframe HTML built from the screen-map annotations. */
-  private loFiHtml(screenName: string, screenDescription: string, annotations: ScreenAnnotation[]): string {
+  /**
+   * Deterministic lo-fi wireframe HTML from the screen-map annotations, tinted by
+   * the project's Design System tokens (shared `tokensToCss`) so it stays low-fi
+   * but on-brand. Falls back to defaults when no design system is set.
+   */
+  private loFiHtml(
+    screenName: string,
+    screenDescription: string,
+    annotations: ScreenAnnotation[],
+    tokens?: DesignTokens,
+  ): string {
     const callouts = (annotations ?? [])
       .map(
         (a) => `<div class="cz"><span class="n">${esc(a.marker)}</span><div class="cb"><b>${esc(a.title)}</b><p>${esc(a.description)}</p>${a.prdRef ? `<small>${esc(a.prdRef)}</small>` : ''}</div></div>`,
       )
       .join('');
     return `<!doctype html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box;font-family:system-ui,Segoe UI,Arial,sans-serif}
-body{margin:0;background:#f4f4f5;color:#3f3f46}
+${tokensToCss(tokens)}
+*{box-sizing:border-box;font-family:var(--ui-font)}
+body{margin:0;background:var(--bg-page);color:var(--text-primary)}
 .wf{max-width:880px;margin:0 auto;padding:16px}
-.bar{height:44px;background:#e4e4e7;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;padding:0 12px;font-weight:600;color:#52525b}
-.hero{margin-top:10px;height:120px;background:#e4e4e7;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#71717a}
-.desc{margin:12px 2px;color:#52525b;font-size:13px;line-height:1.5}
-.cz{display:flex;gap:10px;background:#fff;border:1px solid #e4e4e7;border-radius:6px;padding:10px;margin:8px 0}
-.n{flex:0 0 22px;height:22px;border-radius:50%;background:#3f3f46;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;font-weight:700}
-.cb b{font-size:13px;color:#27272a}.cb p{margin:2px 0;font-size:12px;color:#52525b}.cb small{color:#a1a1aa;font-size:11px}
+.bar{height:44px;background:var(--brand-primary);color:#fff;border-radius:var(--radius-card);display:flex;align-items:center;padding:0 14px;font-weight:var(--weight-bold)}
+.hero{margin-top:10px;height:120px;background:var(--bg-soft);border:1px dashed var(--border-medium);border-radius:var(--radius-card);display:flex;align-items:center;justify-content:center;color:var(--text-subtle)}
+.desc{margin:12px 2px;color:var(--text-muted);font-size:13px;line-height:1.5}
+.cz{display:flex;gap:10px;background:var(--brand-surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:10px;margin:8px 0}
+.n{flex:0 0 22px;height:22px;border-radius:50%;background:var(--brand-cta);color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.cb b{font-size:13px;color:var(--text-primary)}.cb p{margin:2px 0;font-size:12px;color:var(--text-muted)}.cb small{color:var(--text-subtle);font-size:11px;font-family:var(--mono-font)}
 </style></head><body><div class="wf">
 <div class="bar">${esc(screenName)}</div>
 <div class="hero">[ ${esc(screenName)} — lo-fi wireframe ]</div>

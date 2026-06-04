@@ -2,17 +2,21 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Param,
   Body,
   Query,
+  Res,
   ParseUUIDPipe,
+  BadRequestException,
   UploadedFile,
   UploadedFiles,
   UseInterceptors,
   Sse,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { map, type Observable } from 'rxjs';
 import { PipelineService } from './pipeline.service';
@@ -26,6 +30,8 @@ import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
 import { ScreenMapService, type ScreenAnnotation } from './screen-map.service';
 import { PipelineWireframeService } from './pipeline-wireframe.service';
+import { DesignSystemService } from './design-system.service';
+import { WireframeNavigatorService } from './wireframe-navigator.service';
 import type { ReviewStatus } from './section-status';
 import { ModuleReadinessService } from './module-readiness.service';
 import { CodeTaskPlannerService } from './code-task-planner.service';
@@ -66,6 +72,8 @@ export class PipelineController {
     private readonly freshness: ArtifactFreshnessService,
     private readonly screenMap: ScreenMapService,
     private readonly pipelineWireframes: PipelineWireframeService,
+    private readonly designSystem: DesignSystemService,
+    private readonly wireframeNavigator: WireframeNavigatorService,
     private readonly readiness: ModuleReadinessService,
     private readonly codeTasks: CodeTaskPlannerService,
     private readonly testRunner: TestRunnerService,
@@ -374,6 +382,100 @@ export class PipelineController {
       id,
       (files ?? []).map((f) => ({ originalname: f.originalname, buffer: f.buffer, mimetype: f.mimetype })),
       kind === 'hifi' ? 'hifi' : 'lofi',
+    );
+    return { success: true, data };
+  }
+
+  @Get('wireframes/navigator')
+  async getWireframeNavigator(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('kind') kind?: string,
+  ) {
+    const data = await this.wireframeNavigator.buildHtml(id, kind === 'hifi' ? 'hifi' : 'lofi');
+    return { success: true, data };
+  }
+
+  @Get('wireframes/export-zip')
+  async exportWireframeZip(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+    @Query('kind') kind?: string,
+  ) {
+    const { fileName, buffer } = await this.wireframeNavigator.buildZip(id, kind === 'hifi' ? 'hifi' : 'lofi');
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': String(buffer.length),
+    });
+    res.end(buffer);
+  }
+
+  // ── Design System / Look & Feel Studio (Track BB) ───────────────────────────
+
+  @Get('design-system')
+  async getDesignSystem(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.designSystem.getActive(id);
+    return { success: true, data: data ?? null };
+  }
+
+  @Put('design-system')
+  async saveDesignSystem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { tokens: unknown; logo?: { dataUri: string; fileName: string; mimeType: string } | null; presetId?: string | null },
+  ) {
+    const data = await this.designSystem.save(id, body.tokens, body.logo ?? null, body.presetId ?? null);
+    return { success: true, data };
+  }
+
+  @Post('design-system/logo')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadDesignLogo(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('No logo file uploaded.');
+    const data = this.designSystem.processLogo({ originalname: file.originalname, buffer: file.buffer, mimetype: file.mimetype });
+    return { success: true, data };
+  }
+
+  @Post('design-system/preview')
+  async previewDesignSystem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { tokens?: unknown; platform?: string },
+  ) {
+    const html = await this.designSystem.preview(
+      id,
+      body.platform === 'mobile' ? 'mobile' : 'web',
+      body.tokens,
+    );
+    return { success: true, data: html };
+  }
+
+  @Get('design-presets')
+  async listDesignPresets(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.designSystem.listPresets(id);
+    return { success: true, data };
+  }
+
+  @Get('design-presets/:presetId')
+  async getDesignPreset(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('presetId', ParseUUIDPipe) presetId: string,
+  ) {
+    const data = await this.designSystem.getPresetTokens(presetId);
+    return { success: true, data };
+  }
+
+  @Post('design-presets')
+  async saveDesignPreset(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { name: string; tokens: unknown; scope?: string },
+  ) {
+    const data = await this.designSystem.saveAsPreset(
+      body.name,
+      body.tokens,
+      body.scope === 'PROJECT' ? 'PROJECT' : 'GLOBAL',
+      id,
     );
     return { success: true, data };
   }

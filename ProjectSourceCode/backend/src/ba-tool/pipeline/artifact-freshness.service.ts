@@ -17,11 +17,11 @@ import { PrismaService } from '../../prisma/prisma.service';
  */
 
 export interface FreshnessEntry {
-  artifactType: 'SCREEN_MAP' | 'WIREFRAME' | 'HLD' | 'E2E_FLOW';
+  artifactType: 'SCREEN_MAP' | 'DESIGN_SYSTEM' | 'WIREFRAME' | 'HLD' | 'E2E_FLOW';
   id: string;
   label: string;
-  builtFrom: { prdVersion?: number; hldVersion?: number; screenMapVersion?: number };
-  current: { prdVersion?: number; hldVersion?: number; screenMapVersion?: number };
+  builtFrom: { prdVersion?: number; hldVersion?: number; screenMapVersion?: number; designSystemVersion?: number };
+  current: { prdVersion?: number; hldVersion?: number; screenMapVersion?: number; designSystemVersion?: number };
   stale: boolean;
   reason: string;
 }
@@ -32,6 +32,7 @@ export interface FreshnessReport {
   currentPrdVersion: number | null;
   currentHldVersion: number | null;
   currentScreenMapVersion: number | null;
+  currentDesignSystemVersion: number | null;
   downstream: FreshnessEntry[];
   staleCount: number;
 }
@@ -75,11 +76,35 @@ export class ArtifactFreshnessService {
         select: { id: true, sourceArtifactVersions: true },
       }),
     ]);
+    const latestDesign = await this.prisma.baDesignSystem.findFirst({
+      where: { projectId },
+      orderBy: { version: 'desc' },
+      select: { id: true, version: true, sourceArtifactVersions: true },
+    });
 
     const currentPrdVersion = latestPrd?.version ?? null;
     const currentHldVersion = latestHld?.version ?? null;
     const currentScreenMapVersion = latestMap?.version ?? null;
+    const currentDesignSystemVersion = latestDesign?.version ?? null;
     const downstream: FreshnessEntry[] = [];
+
+    // ── Design System vs latest PRD ──
+    if (latestDesign && currentPrdVersion != null) {
+      const src = (latestDesign.sourceArtifactVersions as Record<string, unknown> | null) ?? {};
+      const builtPrd = numOrUndef(src.prdVersion);
+      const stale = builtPrd != null && builtPrd < currentPrdVersion;
+      downstream.push({
+        artifactType: 'DESIGN_SYSTEM',
+        id: latestDesign.id,
+        label: `Design System v${latestDesign.version}`,
+        builtFrom: { prdVersion: builtPrd },
+        current: { prdVersion: currentPrdVersion },
+        stale,
+        reason: stale
+          ? `Built from PRD v${builtPrd}; current PRD is v${currentPrdVersion} — re-check tokens if the PRD changed scope.`
+          : `Up to date with PRD v${currentPrdVersion}.`,
+      });
+    }
 
     // ── Screen Map vs latest PRD ──
     if (latestMap && currentPrdVersion != null) {
@@ -107,10 +132,13 @@ export class ArtifactFreshnessService {
       const src = (latestWf.sourceArtifactVersions as Record<string, unknown> | null) ?? {};
       const builtPrd = numOrUndef(src.prdVersion);
       const builtMap = numOrUndef(src.screenMapVersion);
+      const builtDs = numOrUndef(src.designSystemVersion);
       const stalePrd = currentPrdVersion != null && (builtPrd == null || builtPrd < currentPrdVersion);
       const staleMap =
         currentScreenMapVersion != null && (builtMap == null || builtMap < currentScreenMapVersion);
-      const stale = stalePrd || staleMap;
+      const staleDs =
+        currentDesignSystemVersion != null && (builtDs == null || builtDs < currentDesignSystemVersion);
+      const stale = stalePrd || staleMap || staleDs;
       const reasons: string[] = [];
       if (stalePrd) {
         reasons.push(builtPrd == null ? 'unknown source PRD version' : `built from PRD v${builtPrd} (current v${currentPrdVersion})`);
@@ -118,12 +146,19 @@ export class ArtifactFreshnessService {
       if (staleMap) {
         reasons.push(builtMap == null ? 'unknown source Screen Map version' : `built from Screen Map v${builtMap} (current v${currentScreenMapVersion})`);
       }
+      if (staleDs) {
+        reasons.push(builtDs == null ? 'unknown source Design System version' : `built from Design System v${builtDs} (current v${currentDesignSystemVersion})`);
+      }
       downstream.push({
         artifactType: 'WIREFRAME',
         id: latestWf.id,
         label: 'PRD-sourced wireframes',
-        builtFrom: { prdVersion: builtPrd, screenMapVersion: builtMap },
-        current: { prdVersion: currentPrdVersion ?? undefined, screenMapVersion: currentScreenMapVersion ?? undefined },
+        builtFrom: { prdVersion: builtPrd, screenMapVersion: builtMap, designSystemVersion: builtDs },
+        current: {
+          prdVersion: currentPrdVersion ?? undefined,
+          screenMapVersion: currentScreenMapVersion ?? undefined,
+          designSystemVersion: currentDesignSystemVersion ?? undefined,
+        },
         stale,
         reason: stale ? `Stale — ${reasons.join('; ')}.` : 'Up to date.',
       });
@@ -190,6 +225,7 @@ export class ArtifactFreshnessService {
       currentPrdVersion,
       currentHldVersion,
       currentScreenMapVersion,
+      currentDesignSystemVersion,
       downstream,
       staleCount: downstream.filter((d) => d.stale).length,
     };
