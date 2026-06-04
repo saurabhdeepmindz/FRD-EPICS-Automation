@@ -87,6 +87,22 @@
 
 ---
 
+## Track JJ — HLD page: left section menu + switchable panels + Mermaid render fix (follow-on, added 2026-06-04)
+
+> **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-hld-stepper`. Left section menu (Architecture Diagrams + 17 headings) with one-panel-at-a-time switching, verified via Playwright (rail present; switching shows the section + hides diagrams; diagrams render to `<svg>`). **Mermaid needed no fix** — it renders on a fresh build; the screenshot's raw code was a stale dev-build/cache (hard refresh fixes it). `tsc` clean. **Why:** the HLD page was a long scroll of 17 sections + diagrams (hard to navigate); the diagrams *appeared* as raw Mermaid code due to the stale build. **Decisions (user):** add a **left menu of section headings**; clicking one shows that section on the right (one at a time), consistent with the wireframes/PRD screens. Plus fix Mermaid so diagrams actually draw.
+
+- [x] **JJ-01 (FE):** refactor `/hld` into a left sidebar (Architecture Diagrams entry + the 17 section headings, with §num) + active-panel switching (render only the selected section / the diagrams panel). Keep header (Regenerate · ← PRD+FRD), freshness banner, export note, gaps.
+- [x] **JJ-02 (FE):** ~~fix the `Mermaid` renderer~~ — **no code change needed.** Playwright on a fresh build showed Mermaid renders correctly (10 `<svg>`, 0 amber fallbacks, no console errors); the raw-code in the screenshot was a **stale dev-build/cache**. A hard refresh shows the diagrams.
+- [x] **JJ-03:** Playwright smoke (sidebar present, panel switches, a diagram renders to `<svg>`) + `tsc` clean.
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 26 | HLD UX | JJ-01 | P1 | M | Left section menu + switchable panels |
+| 27 | HLD UX | JJ-02 | P1 | S | Fix Mermaid diagram rendering |
+| 28 | Wire-up | JJ-03 | P1 | S | Playwright smoke + tsc clean |
+
+---
+
 ## Track II — Wireframes page: left-rail stepper + switchable panels (follow-on, added 2026-06-04)
 
 > **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-wireframes-stepper`. Verified (Playwright): left rail with 3 stages (status/✓/🔒 + "N selected"); one panel at a time (Lo-fi → 41 checkboxes, mapping hidden; Mapping → table, no gallery); switching + gating work; `tsc` clean. **Why:** the 3 stages (Mapping / Lo-fi / Hi-fi) were stacked in a long vertical scroll — lower stages were easy to miss, with no progress/gating. **Decisions (user):** a **left sticky stepper rail** with **one panel shown at a time** (matches the v7 `PrdStepper`/`PrdSidebar`). Frontend-only; no API/DB changes.
