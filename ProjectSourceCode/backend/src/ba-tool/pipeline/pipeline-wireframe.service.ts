@@ -112,15 +112,18 @@ export class PipelineWireframeService {
     return { id: set.id, screens: generated.length, preservedUploads: preserved.length };
   }
 
-  /** Z-02 — hi-fi from the latest PIPELINE lo-fi set (reuses the Discovery HifiService). */
-  async generateHiFi(projectId: string): Promise<{ id: string }> {
+  /**
+   * Z-02 — hi-fi from the latest PIPELINE lo-fi set (reuses the Discovery HifiService).
+   * `limit` enables sample mode (only the first N screens — e.g. one batch).
+   */
+  async generateHiFi(projectId: string, limit?: number): Promise<{ id: string; screens: number }> {
     const set = await this.prisma.baWireframeSet.findFirst({
       where: { projectId, source: 'PIPELINE' },
       orderBy: { createdAt: 'desc' },
     });
     if (!set) throw new BadRequestException('No pipeline lo-fi wireframes yet. Generate lo-fi first.');
-    const hifi = await this.hifiService.generate({ projectId, wireframeSetId: set.id });
-    return { id: hifi.id };
+    const hifi = await this.hifiService.generate({ projectId, wireframeSetId: set.id, limit });
+    return { id: hifi.id, screens: hifi.screens.length };
   }
 
   /** Z-03 — ingest single/bulk uploaded wireframes (HTML/PNG/JPG/PDF/SVG) into a PIPELINE set. */

@@ -351,8 +351,15 @@ export class PipelineController {
   }
 
   @Post('wireframes/generate-hifi')
-  async generateHiFiWireframes(@Param('id', ParseUUIDPipe) id: string) {
-    const data = await this.pipelineWireframes.generateHiFi(id);
+  async generateHiFiWireframes(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('limit') limit?: string,
+  ) {
+    const n = limit ? Number(limit) : undefined;
+    const data = await this.pipelineWireframes.generateHiFi(
+      id,
+      n && Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined,
+    );
     return { success: true, data };
   }
 

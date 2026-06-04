@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AiService,
+  type GenerateHifiRequest,
   type GenerateHifiResponse,
   type HifiScreenPayload,
 } from '../../ai/ai.service';
@@ -24,7 +25,23 @@ interface GenerateHifiOptions {
   wireframeSetId?: string;
   productName?: string;
   syntheticDataHint?: string;
+  /** Sample mode — only generate hi-fi for the first N lo-fi screens (e.g. one batch). */
+  limit?: number;
 }
+
+/**
+ * Hi-fi is generated in batches so large sets (e.g. a 40-screen PRD-sourced
+ * pipeline set) don't truncate against the model's output budget. Each batch is
+ * an independent AI call sharing the same brand tokens + synthetic seed for
+ * cross-screen coherence. Tunable via env; defaults suit Sonnet 4.6.
+ */
+// Hi-fi HTML is dense — a single screen's branded markup can approach the model's
+// per-response output budget, so even 2–3 screens in one JSON envelope truncate
+// (→ invalid JSON). Generate ONE screen per call by default; raise concurrency to
+// recover throughput, with retry/backoff for transient rate limits.
+const HIFI_BATCH_SIZE = Math.max(1, Number(process.env.HIFI_BATCH_SIZE) || 1);
+const HIFI_BATCH_CONCURRENCY = Math.max(1, Number(process.env.HIFI_BATCH_CONCURRENCY) || 2);
+const HIFI_BATCH_RETRIES = Math.max(0, Number(process.env.HIFI_BATCH_RETRIES) || 2);
 
 interface CalloutShape {
   n: number | string;
@@ -84,6 +101,16 @@ export class HifiService {
       );
     }
 
+    // Sample mode: only polish the first N lo-fi screens (e.g. one batch) so a
+    // small, cheap preview can be reviewed before committing to the full set.
+    const sourceScreens =
+      opts.limit && opts.limit > 0 ? lofi.screens.slice(0, opts.limit) : lofi.screens;
+    if (opts.limit && opts.limit > 0) {
+      this.logger.log(
+        `Hi-fi SAMPLE mode: generating ${sourceScreens.length}/${lofi.screens.length} screens (project=${opts.projectId})`,
+      );
+    }
+
     const brandTokens =
       (lofi.brandTokensSnapshot as Record<string, unknown> | null) ?? {
         primary: '#0B1B2E',
@@ -94,7 +121,7 @@ export class HifiService {
 
     // Compose lo-fi screen payload for the AI (light-weight; markdown body
     // truncated to keep token budget sane — full structure is preserved).
-    const lofiScreens = lofi.screens.map((s) => ({
+    const lofiScreens = sourceScreens.map((s) => ({
       sequenceNum: s.sequenceNum,
       slug: s.slug,
       title: s.title,
@@ -103,17 +130,14 @@ export class HifiService {
       mdContent: s.mdContent ?? null,
     }));
 
-    const ai = await this.aiService.generateHifi({
-      lofiScreens,
+    const ai = await this.generateHifiInBatches(lofiScreens, {
       brandTokens: {
         primary: String(brandTokens.primary ?? '#0B1B2E'),
         surface: String(brandTokens.surface ?? '#FFFFFF'),
         cta: String(brandTokens.cta ?? '#F97316'),
         productName: String(brandTokens.productName ?? opts.productName ?? '—'),
       },
-      syntheticSeed: opts.syntheticDataHint
-        ? { hint: opts.syntheticDataHint }
-        : null,
+      syntheticSeed: opts.syntheticDataHint ? { hint: opts.syntheticDataHint } : null,
       productName: opts.productName,
     });
 
@@ -122,8 +146,14 @@ export class HifiService {
         'AI returned no hi-fi screens — try regenerating',
       );
     }
+    if (ai.screens.length < lofiScreens.length) {
+      this.logger.warn(
+        `Hi-fi partial: ${ai.screens.length}/${lofiScreens.length} screens returned ` +
+          `(some batches may have failed) — project=${opts.projectId}`,
+      );
+    }
 
-    const parity = this.validateParity(lofi.screens, ai.screens, ai.syntheticDataNotes);
+    const parity = this.validateParity(sourceScreens, ai.screens, ai.syntheticDataNotes);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const set = await tx.baHifiSet.create({
@@ -175,6 +205,90 @@ export class HifiService {
     // Track D — mirror hi-fi screens to ProjectArtifacts/04-Wireframes-HiFi/
     await this.wireframeExport.exportHiFi(opts.projectId, full.screens);
     return full;
+  }
+
+  /**
+   * Generate hi-fi screens in batches to avoid output-budget truncation on large
+   * sets. Batches share brand tokens + synthetic seed for coherence, run with
+   * bounded concurrency, and a failed batch yields no screens (logged) rather
+   * than aborting the whole set. Results are merged, de-duplicated by
+   * `sequenceNum`, and sorted. A single-batch set takes the direct path.
+   */
+  private async generateHifiInBatches(
+    lofiScreens: GenerateHifiRequest['lofiScreens'],
+    base: Omit<GenerateHifiRequest, 'lofiScreens'>,
+  ): Promise<GenerateHifiResponse> {
+    const chunks: GenerateHifiRequest['lofiScreens'][] = [];
+    for (let i = 0; i < lofiScreens.length; i += HIFI_BATCH_SIZE) {
+      chunks.push(lofiScreens.slice(i, i + HIFI_BATCH_SIZE));
+    }
+
+    if (chunks.length <= 1) {
+      return this.generateBatchWithRetry(lofiScreens, base, 0, 1);
+    }
+
+    this.logger.log(
+      `Hi-fi batching: ${lofiScreens.length} screens → ${chunks.length} batches ` +
+        `(size ${HIFI_BATCH_SIZE}, concurrency ${HIFI_BATCH_CONCURRENCY})`,
+    );
+
+    const results: GenerateHifiResponse[] = new Array(chunks.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (let idx = next++; idx < chunks.length; idx = next++) {
+        results[idx] = await this.generateBatchWithRetry(chunks[idx], base, idx, chunks.length);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(HIFI_BATCH_CONCURRENCY, chunks.length) }, () => worker()),
+    );
+
+    const failed = results.filter((r) => !r?.screens?.length).length;
+    if (failed) {
+      this.logger.warn(`Hi-fi batching: ${failed}/${chunks.length} batches yielded no screens`);
+    }
+
+    // Merge — first occurrence per sequenceNum wins; preserve lo-fi order.
+    const bySeq = new Map<number, HifiScreenPayload>();
+    for (const r of results) {
+      for (const s of r?.screens ?? []) {
+        if (!bySeq.has(s.sequenceNum)) bySeq.set(s.sequenceNum, s);
+      }
+    }
+    const screens = Array.from(bySeq.values()).sort((a, b) => a.sequenceNum - b.sequenceNum);
+    return {
+      screens,
+      syntheticDataNotes: results.map((r) => r?.syntheticDataNotes).find(Boolean) ?? null,
+      model: results.find((r) => r?.model)?.model,
+    };
+  }
+
+  /**
+   * One batch with bounded retry + exponential backoff. Retries transient
+   * failures (rate limits, truncated/invalid JSON) before giving up; an
+   * exhausted batch returns no screens (logged) so siblings still persist.
+   */
+  private async generateBatchWithRetry(
+    lofiScreens: GenerateHifiRequest['lofiScreens'],
+    base: Omit<GenerateHifiRequest, 'lofiScreens'>,
+    idx: number,
+    total: number,
+  ): Promise<GenerateHifiResponse> {
+    for (let attempt = 0; attempt <= HIFI_BATCH_RETRIES; attempt++) {
+      try {
+        return await this.aiService.generateHifi({ lofiScreens, ...base });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const last = attempt === HIFI_BATCH_RETRIES;
+        this.logger.error(
+          `Hi-fi batch ${idx + 1}/${total} attempt ${attempt + 1}/${HIFI_BATCH_RETRIES + 1} failed: ${msg}` +
+            (last ? ' — giving up' : ' — retrying'),
+        );
+        if (last) break;
+        await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt)); // 2s, 4s, …
+      }
+    }
+    return { screens: [], syntheticDataNotes: null, model: undefined };
   }
 
   async findLatestForProject(projectId: string): Promise<BaHifiSetWithScreens | null> {
