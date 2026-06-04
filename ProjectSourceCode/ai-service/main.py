@@ -8,6 +8,7 @@ import logging
 from typing import Annotated
 
 import openai
+import anthropic
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -115,6 +116,50 @@ class GapCheckResponse(BaseModel):
 
 def get_openai_client(settings: Annotated[Settings, Depends(get_settings)]) -> openai.AsyncOpenAI:
     return openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+
+# ─── Dependency — Anthropic (Claude) client ───────────────────────────────────
+
+def get_anthropic_client(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> anthropic.AsyncAnthropic:
+    return anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+
+async def _claude_complete(
+    client: anthropic.AsyncAnthropic,
+    *,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """
+    Call Claude and return the concatenated text content. The caller's system
+    prompt already requests JSON; we append a terse JSON-only reminder because
+    Claude has no `response_format=json_object`. Anthropic errors are mapped to
+    the same HTTP codes the OpenAI paths use, so callers stay uniform.
+    """
+    try:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=f"{system}\n\nReturn ONLY a single valid JSON object — no prose, no markdown fences.",
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.AuthenticationError as exc:
+        logger.error("Anthropic auth failed: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except anthropic.RateLimitError as exc:
+        logger.warning("Anthropic rate limit hit: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except anthropic.APIError as exc:
+        logger.error("Anthropic error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    return "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -1165,12 +1210,16 @@ async def hifi_generate(
     body: HifiRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
 ) -> HifiResponse:
     """
-    Stage 5 of the Discovery Track. Polish lo-fi wireframes into branded
-    high-fidelity HTML mockups per skill 05. Callout numbers preserved 1:1
-    from the lo-fi parent (skill 05 §7 invariant — server-side validator
-    enforces this).
+    Stage 5 of the Discovery Track (also reused by the PRD-sourced pipeline
+    wireframes). Polish lo-fi wireframes into branded high-fidelity HTML mockups
+    per skill 05. Callout numbers preserved 1:1 from the lo-fi parent (skill 05
+    §7 invariant — server-side validator enforces this).
+
+    Engine is selectable via `HIFI_PROVIDER` (default "anthropic" → Claude
+    `ANTHROPIC_MODEL`; set to "openai" to fall back to `OPENAI_MODEL`).
     """
     user_message = build_hifi_user_message(
         body.lofiScreens,
@@ -1179,30 +1228,46 @@ async def hifi_generate(
         body.productName,
     )
 
-    try:
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": HIFI_SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            # Even larger output budget than lo-fi: hi-fi HTML is denser due
-            # to inline styles, real content, and proper element structure.
-            max_tokens=16384,
-            temperature=settings.OPENAI_TEMPERATURE,
-            response_format={"type": "json_object"},
-        )
-    except openai.AuthenticationError as exc:
-        logger.error("OpenAI auth failed during hi-fi generation: %s", exc)
-        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
-    except openai.RateLimitError as exc:
-        logger.warning("OpenAI rate limit hit during hi-fi generation: %s", exc)
-        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
-    except openai.OpenAIError as exc:
-        logger.error("OpenAI error during hi-fi generation: %s", exc)
-        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+    # hi-fi HTML is dense (inline styles, real content) — needs a large budget.
+    max_tokens = 16384
 
-    raw = response.choices[0].message.content or "{}"
+    if settings.HIFI_PROVIDER == "anthropic":
+        if not settings.ANTHROPIC_API_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="ANTHROPIC_API_KEY not configured in the AI service (.env).",
+            )
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=HIFI_SYSTEM_PROMPT,
+            user=user_message,
+            max_tokens=max_tokens,
+            temperature=settings.OPENAI_TEMPERATURE,
+        ) or "{}"
+    else:
+        try:
+            response = await client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": HIFI_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                max_tokens=max_tokens,
+                temperature=settings.OPENAI_TEMPERATURE,
+                response_format={"type": "json_object"},
+            )
+        except openai.AuthenticationError as exc:
+            logger.error("OpenAI auth failed during hi-fi generation: %s", exc)
+            raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+        except openai.RateLimitError as exc:
+            logger.warning("OpenAI rate limit hit during hi-fi generation: %s", exc)
+            raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+        except openai.OpenAIError as exc:
+            logger.error("OpenAI error during hi-fi generation: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = response.choices[0].message.content or "{}"
+
     try:
         parsed = _parse_ai_json(raw)
     except json.JSONDecodeError as exc:
@@ -1246,7 +1311,7 @@ async def hifi_generate(
     return HifiResponse(
         screens=screens,
         syntheticDataNotes=parsed.get("syntheticDataNotes"),
-        model=settings.OPENAI_MODEL,
+        model=(settings.ANTHROPIC_MODEL if settings.HIFI_PROVIDER == "anthropic" else settings.OPENAI_MODEL),
     )
 
 
