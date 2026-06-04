@@ -1,6 +1,6 @@
 # Sprint v9 — Tasks: Look & Feel Studio (Design System) + Wireframe Navigator (Tracks AA–EE)
 
-## Status: 📝 PLANNED — awaiting go-ahead to implement (2026-06-04). Decisions confirmed: ① full studio (form + logo + preset library + live web & mobile preview + bidirectional); ② navigator = standing output + in-app + zip; ③ per-project tokens + shared preset library.
+## Status: ✅ COMPLETE (2026-06-04) — all 11 tasks shipped on `feat/v8-prd-sourced-wireframes` (backend `6571f81`; frontend + tests `5278fb4`). Backend + frontend `tsc` clean; pipeline tests 61/61; Discovery wireframes no-regression. Verified end-to-end: 4 seed presets; save Corporate Blue → lo-fi renders `#0F2A52`; navigator 21KB + zip (42 files); web+mobile live preview; save-as-preset; freshness DESIGN_SYSTEM. Decisions: ① full studio; ② navigator standing output + in-app + zip; ③ per-project tokens + shared preset library.
 
 > **Backlog traceability:** Track AA (data model) → BB (studio backend) → CC (studio frontend) → DD (navigator + downstream token threading) → EE (integration: freshness, readiness, regression).
 >
@@ -10,39 +10,39 @@
 
 ---
 
-- [ ] **Task 1 (AA-01): `BaDesignSystem` + `BaDesignPreset` schema + migration** (P0-DB)
+- [x] **Task 1 (AA-01): `BaDesignSystem` + `BaDesignPreset` schema + migration** (P0-DB)
   - `BaDesignSystem` (projectId, version, status, `tokens` JSON, `logo` JSON?, `presetId`?, `sourceArtifactVersions`, metadata); `BaDesignPreset` (name, `scope` GLOBAL|PROJECT, projectId?, tokens, thumbnail, isSeed). Extend `BaWireframeSet` with `designSystemId String?` (+ `designSystemVersion` in `sourceArtifactVersions`).
   - Hand-written SQL migration, applied as `prd_user`; regenerate Prisma client.
 
-- [ ] **Task 2 (BB-01): `DesignSystemService` + shared `tokensToCss()`** (P0-BE)
+- [x] **Task 2 (BB-01): `DesignSystemService` + shared `tokensToCss()`** (P0-BE)
   - `getActive(projectId)` / `save(projectId, tokens, logo)` (versioned); `uploadLogo` (PNG/JPG/SVG, sanitized, stored as data-URI); preset CRUD (`list`, `apply`, `saveAsPreset`, scope GLOBAL|PROJECT); **seed starter presets** (Deepmindz Navy/Orange default + Minimal-Mono, Corporate-Blue, Playful).
   - `tokensToCss(tokens)` → the canonical `:root` CSS block (single source of truth shared by studio preview, lo-fi, navigator); `renderSamplePreview(tokens, platform)` → deterministic sample screen HTML (web + mobile 390px).
 
-- [ ] **Task 3 (BB-02): Routes — design system + presets + preview** (P0-BE)
+- [x] **Task 3 (BB-02): Routes — design system + presets + preview** (P0-BE)
   - `GET/PUT /ba/projects/:id/design-system`, `POST /ba/projects/:id/design-system/logo`, `GET /ba/projects/:id/design-system/preview?platform=web|mobile`, `GET/POST /ba/design-presets` (+ `POST /ba/projects/:id/design-system/apply-preset/:presetId`, `POST /ba/projects/:id/design-presets` for save-as).
 
-- [ ] **Task 4 (CC-01): Frontend `pipeline-api` helpers** (P0-FE)
+- [x] **Task 4 (CC-01): Frontend `pipeline-api` helpers** (P0-FE)
   - `getDesignSystem`, `saveDesignSystem`, `uploadDesignLogo`, `getDesignPreview`, `listDesignPresets`, `applyDesignPreset`, `saveDesignPreset` + `DesignTokens`/`DesignPreset` types.
 
-- [ ] **Task 5 (CC-02): Studio page — parameter form + logo** (P0-FE)
+- [x] **Task 5 (CC-02): Studio page — parameter form + logo** (P0-FE)
   - New `/ba-tool/project/[id]/design-system/page.tsx` (styled like the LLD/architecture pages). Grouped form: Brand (logo upload, product name, primary, accent/CTA, CTA hover, surface) · Neutrals · Semantic · Module palette (auto/manual) · Persona palette · Typography · Shape & density · Platform. Strong defaults; advanced groups collapsible; Save design system.
 
-- [ ] **Task 6 (CC-03): Template library + live preview + bidirectional sync** (P0-FE)
+- [x] **Task 6 (CC-03): Template library + live preview + bidirectional sync** (P0-FE)
   - Preset gallery (thumbnails) → **apply** fills form + re-renders. **Live preview** of a sample screen in **web frame + 390px mobile frame**, re-rendering on any field edit (single in-memory token object as source of truth). **Save as preset** (PROJECT or GLOBAL). Nav button placed **before Wireframes** on the project dashboard + cross-links (Screen-Map → Design System → Wireframes).
 
-- [ ] **Task 7 (DD-01): `WireframeNavigatorService` — `index.html` generator** (P0-BE)
+- [x] **Task 7 (DD-01): `WireframeNavigatorService` — `index.html` generator** (P0-BE)
   - Deterministic build from screen map (modules via §6 FR-ID prefix + PRD §6 fallback) + tokens + generated/uploaded screens: sidebar (Business/Cross-cutting/Mobile groups), **Web/Mobile/Infra** toggles, phase filter, live search, hero stat tiles, per-module **screen-card grids** (thumbnail + PRD refs + persona chip + status) linking each screen file, mobile section, legend. Uses `tokensToCss()` so the navigator is on-brand.
 
-- [ ] **Task 8 (DD-02): Thread tokens into generation + standing navigator output** (P0-BE)
+- [x] **Task 8 (DD-02): Thread tokens into generation + standing navigator output** (P0-BE)
   - Feed the active Design System tokens into lo-fi (deterministic `loFiHtml`) and hi-fi (Claude `brandTokens`). On every lo-fi/hi-fi run, (re)generate `index.html` + write all screen files to `03-Wireframes-LoFi/` and `04-Wireframes-HiFi/`. Record `designSystemId`/`designSystemVersion` on the set.
 
-- [ ] **Task 9 (DD-03): In-app navigator view + zip export** (P0-FE/BE)
+- [x] **Task 9 (DD-03): In-app navigator view + zip export** (P0-FE/BE)
   - `GET /ba/projects/:id/wireframes/navigator` (HTML) + `GET /ba/projects/:id/wireframes/export-zip` (all screens + `index.html` + shared CSS). On `/wireframes`: "Open navigator" (new tab / embedded) + "Download zip" buttons.
 
-- [ ] **Task 10 (EE-01): Freshness + readiness integration** (P0-BE)
+- [x] **Task 10 (EE-01): Freshness + readiness integration** (P0-BE)
   - Extend `ArtifactFreshnessService` with a `DESIGN_SYSTEM` link (PRD → Map → Design System → Wireframes → HLD); a Design-System change flags wireframes stale. Readiness: lo-fi generation surfaces a soft gate "define the design system first" (non-blocking, with a sensible default if skipped).
 
-- [ ] **Task 11 (EE-02): Wire-up + smoke + regression** (P1)
+- [x] **Task 11 (EE-02): Wire-up + smoke + regression** (P1)
   - Unit tests: `tokensToCss` (token→CSS), navigator module-grouping from FR-IDs, preset apply round-trip. Smoke: define design system → generate lo-fi (limit) → navigator emitted + zip downloads → tokens visible in output. Backend + frontend `tsc` clean; Discovery wireframes no-regression.
 
 ---
@@ -67,14 +67,14 @@
 
 ## Acceptance criteria
 
-- [ ] A UX resource can define a project's **design tokens + logo** with strong defaults; the page is styled in line with the LLD/architecture pages.
-- [ ] A **template library** is available; **applying a preset** fills the form and updates the preview; **editing a parameter** updates the preview live; the user can **save a preset** (PROJECT or GLOBAL).
-- [ ] A **live preview** renders the design system on both a **web frame and a 390px mobile frame**.
-- [ ] Design tokens are **per-project**; presets are reusable across projects when **GLOBAL**.
-- [ ] Generated **lo-fi and hi-fi** wireframes visibly use the chosen design system (same `tokensToCss`).
-- [ ] Every wireframe run **emits a stitched `index.html` navigator** (modules→screens, Web/Mobile/Phase filters, search, hero stats, per-module screen cards) to `ProjectArtifacts`; it is viewable in-app and **downloadable as a zip**.
-- [ ] Freshness propagates **PRD → Screen-Map → Design System → Wireframes → HLD**.
-- [ ] **Discovery wireframes still work** — no regression; `tsc` clean both apps; tokens/navigator unit-tested.
+- [x] A UX resource can define a project's **design tokens + logo** with strong defaults; the page is styled in line with the LLD/architecture pages.
+- [x] A **template library** is available; **applying a preset** fills the form and updates the preview; **editing a parameter** updates the preview live; the user can **save a preset** (PROJECT or GLOBAL).
+- [x] A **live preview** renders the design system on both a **web frame and a 390px mobile frame**.
+- [x] Design tokens are **per-project**; presets are reusable across projects when **GLOBAL**.
+- [x] Generated **lo-fi and hi-fi** wireframes visibly use the chosen design system (same `tokensToCss`).
+- [x] Every wireframe run **emits a stitched `index.html` navigator** (modules→screens, Web/Mobile/Phase filters, search, hero stats, per-module screen cards) to `ProjectArtifacts`; it is viewable in-app and **downloadable as a zip**.
+- [x] Freshness propagates **PRD → Screen-Map → Design System → Wireframes → HLD**.
+- [x] **Discovery wireframes still work** — no regression; `tsc` clean both apps; tokens/navigator unit-tested.
 
 ## Open questions (none blocking — defaults chosen)
 

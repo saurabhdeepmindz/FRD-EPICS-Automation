@@ -453,53 +453,53 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
-### Track AA — Design System data model — Sprint v9, PLAN ONLY
+### Track AA — Design System data model — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** A new **Look & Feel / Design System Studio** stage **between Screen-Map and Lo-fi**. Per-project active tokens + a **shared (GLOBAL) preset library**; tokens formalize the existing `brandTokensSnapshot` shape (lifted from the user's reference `:root`). Full spec in `sprints/v9/`.
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | AA-01 | Prisma: `BaDesignSystem` (per-project tokens + logo) + `BaDesignPreset` (GLOBAL/PROJECT library) + `BaWireframeSet.designSystemId` + migration | v8 wireframe models; `brandTokensSnapshot` shape | additive; applied as `prd_user` |
+| ✅ | AA-01 | Prisma: `BaDesignSystem` (per-project tokens + logo) + `BaDesignPreset` (GLOBAL/PROJECT library) + `BaWireframeSet.designSystemId` + migration | v8 wireframe models; `brandTokensSnapshot` shape | additive; applied as `prd_user` |
 
 ---
 
-### Track BB — Design System backend (Studio service) — Sprint v9, PLAN ONLY
+### Track BB — Design System backend (Studio service) — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | BB-01 | `DesignSystemService`: get/save tokens · logo upload · preset CRUD · **seed starter presets** · shared **`tokensToCss()`** · `renderSamplePreview` (web + mobile) | `ProjectFolderService`; brand-token util | one token→CSS util shared by studio/lo-fi/navigator |
-| ⬜ | BB-02 | Routes: design-system (get/put/logo/preview) + design-presets (list/apply/save) | `PipelineController` patterns | preview `?platform=web\|mobile` |
+| ✅ | BB-01 | `DesignSystemService`: get/save tokens · logo upload · preset CRUD · **seed starter presets** · shared **`tokensToCss()`** · `renderSamplePreview` (web + mobile) | `ProjectFolderService`; brand-token util | one token→CSS util shared by studio/lo-fi/navigator |
+| ✅ | BB-02 | Routes: design-system (get/put/logo/preview) + design-presets (list/apply/save) | `PipelineController` patterns | preview `?platform=web\|mobile` |
 
 ---
 
-### Track CC — Design System Studio frontend — Sprint v9, PLAN ONLY
+### Track CC — Design System Studio frontend — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | CC-01 | `pipeline-api` helpers + `DesignTokens`/`DesignPreset` types | `pipeline-api.ts` | — |
-| ⬜ | CC-02 | Studio page — grouped parameter form (brand/neutral/semantic/module/persona/type/shape/platform) + **logo upload** | LLD/architecture page styling | strong defaults; collapsible advanced |
-| ⬜ | CC-03 | **Template library** + **live web/mobile preview** + **bidirectional sync** (preset ↔ param) + save-as-preset + nav (before Wireframes) | iframe preview pattern | single in-memory token object = source of truth |
+| ✅ | CC-01 | `pipeline-api` helpers + `DesignTokens`/`DesignPreset` types | `pipeline-api.ts` | — |
+| ✅ | CC-02 | Studio page — grouped parameter form (brand/neutral/semantic/module/persona/type/shape/platform) + **logo upload** | LLD/architecture page styling | strong defaults; collapsible advanced |
+| ✅ | CC-03 | **Template library** + **live web/mobile preview** + **bidirectional sync** (preset ↔ param) + save-as-preset + nav (before Wireframes) | iframe preview pattern | single in-memory token object = source of truth |
 
 ---
 
-### Track DD — Wireframe Navigator + token threading — Sprint v9, PLAN ONLY
+### Track DD — Wireframe Navigator + token threading — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** The wireframe stage **always emits a stitched `index.html` navigator** (modules→screens) — standing output to `ProjectArtifacts`, viewable in-app, downloadable as a zip. Per the user's reference navigator.
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | DD-01 | `WireframeNavigatorService`: deterministic `index.html` from screen-map (modules via §6 FR-ID prefix) + tokens + screens (sidebar groups · Web/Mobile/Infra · phase · search · hero · screen cards · mobile section · legend) | screen-map; `tokensToCss()` | mirrors the user's reference `index.html` |
-| ⬜ | DD-02 | Thread tokens into **lo-fi** (deterministic) + **hi-fi** (Claude); navigator as **standing output** to `03-/04-` folders | v8 `PipelineWireframeService`/`HifiService` | record `designSystemId/Version` on set |
-| ⬜ | DD-03 | In-app navigator view + **zip export** (screens + index.html + shared CSS) + `/wireframes` buttons | `WireframeExportService` | "Open navigator" + "Download zip" |
+| ✅ | DD-01 | `WireframeNavigatorService`: deterministic `index.html` from screen-map (modules via §6 FR-ID prefix) + tokens + screens (sidebar groups · Web/Mobile/Infra · phase · search · hero · screen cards · mobile section · legend) | screen-map; `tokensToCss()` | mirrors the user's reference `index.html` |
+| ✅ | DD-02 | Thread tokens into **lo-fi** (deterministic) + **hi-fi** (Claude); navigator as **standing output** to `03-/04-` folders | v8 `PipelineWireframeService`/`HifiService` | record `designSystemId/Version` on set |
+| ✅ | DD-03 | In-app navigator view + **zip export** (screens + index.html + shared CSS) + `/wireframes` buttons | `WireframeExportService` | "Open navigator" + "Download zip" |
 
 ---
 
-### Track EE — Integration (freshness, readiness, regression) — Sprint v9, PLAN ONLY
+### Track EE — Integration (freshness, readiness, regression) — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | EE-01 | Freshness: add `DESIGN_SYSTEM` to the chain (PRD → Map → Design System → Wireframes → HLD); readiness soft-gate before lo-fi | v8 `ArtifactFreshnessService` | design-system change ⇒ wireframes stale |
-| ⬜ | EE-02 | Wire-up: unit tests (`tokensToCss`, navigator grouping, preset round-trip) + smoke + Discovery no-regression | — | tsc clean both apps |
+| ✅ | EE-01 | Freshness: add `DESIGN_SYSTEM` to the chain (PRD → Map → Design System → Wireframes → HLD); readiness soft-gate before lo-fi | v8 `ArtifactFreshnessService` | design-system change ⇒ wireframes stale |
+| ✅ | EE-02 | Wire-up: unit tests (`tokensToCss`, navigator grouping, preset round-trip) + smoke + Discovery no-regression | — | tsc clean both apps |
 
 ---
 
