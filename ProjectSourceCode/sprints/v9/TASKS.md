@@ -87,6 +87,20 @@
 
 ---
 
+## Track II — Wireframes page: left-rail stepper + switchable panels (follow-on, added 2026-06-04)
+
+> **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-wireframes-stepper`. Verified (Playwright): left rail with 3 stages (status/✓/🔒 + "N selected"); one panel at a time (Lo-fi → 41 checkboxes, mapping hidden; Mapping → table, no gallery); switching + gating work; `tsc` clean. **Why:** the 3 stages (Mapping / Lo-fi / Hi-fi) were stacked in a long vertical scroll — lower stages were easy to miss, with no progress/gating. **Decisions (user):** a **left sticky stepper rail** with **one panel shown at a time** (matches the v7 `PrdStepper`/`PrdSidebar`). Frontend-only; no API/DB changes.
+
+- [x] **II-01 (FE):** refactor `/wireframes` into a left rail (3 stages with live status — counts, ✓, locked) + a persistent "N selected for hi-fi" indicator; render only the active stage's panel; gating (lo-fi locked until mapping, hi-fi locked until lo-fi) with a hint; contextual actions in each panel header; keep top-bar links (Design System · Open navigator · Zip · ← PRD · HLD →). Behavior of mapping/lo-fi/variants/selection/hi-fi unchanged.
+- [x] **II-02:** Playwright smoke (rail present, panel switches, locked states) + `tsc` clean.
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 24 | Wireframes UX | II-01 | P1 | M | Left-rail stepper + switchable panels + status/gating |
+| 25 | Wire-up | II-02 | P1 | S | Playwright smoke + tsc clean |
+
+---
+
 ## Track HH — Coexisting lo-fi variants (deterministic + AI) + active selection (follow-on, added 2026-06-04)
 
 > **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-lofi-variants`. Verified (Playwright + API): deterministic preserved + AI stored as `meta.aiHtml`; per-card `[Deterministic|AI]` toggle; modal side-by-side compare (2 iframes + "Set active"); active variant persists & drives the navigator; default active = deterministic. `tsc` clean both apps. **Why:** AI lo-fi overwrote the deterministic wireframe in place. **Decisions (user):** keep BOTH variants per screen — deterministic is never destroyed; AI is an added variant. **UX:** a per-card `[Deterministic | AI]` toggle + a modal **side-by-side compare**; an **active** marker. **Active variant is user-chosen** per screen (default deterministic) and drives navigator/zip/export. Hi-fi stays **checkbox-driven** (callout-based, variant-agnostic).

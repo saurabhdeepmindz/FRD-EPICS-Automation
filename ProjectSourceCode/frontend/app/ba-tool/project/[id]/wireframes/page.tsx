@@ -61,6 +61,8 @@ export default function WireframesPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [modalScreen, setModalScreen] = useState<PipelineWireframeScreen | null>(null);
+  const [activeStage, setActiveStage] = useState<'mapping' | 'lofi' | 'hifi'>('mapping');
+  const initedStage = useRef(false);
 
   const toggleSelected = (slug: string) =>
     setSelected((prev) => {
@@ -89,6 +91,13 @@ export default function WireframesPage() {
     void load();
   }, [load]);
 
+  // Land on the furthest stage that has content (returning users see their work).
+  useEffect(() => {
+    if (loading || initedStage.current) return;
+    initedStage.current = true;
+    setActiveStage(wf.hifi.length ? 'hifi' : wf.lofi.length ? 'lofi' : 'mapping');
+  }, [loading, wf]);
+
   const refreshWf = async () => setWf(await getPipelineWireframes(projectId));
 
   const onGenerate = async (kind: 'lofi' | 'hifi') => {
@@ -103,6 +112,7 @@ export default function WireframesPage() {
         await generateHiFiWireframes(projectId, { slugs });
       }
       await refreshWf();
+      setActiveStage(kind); // jump to the stage we just produced
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -199,9 +209,9 @@ export default function WireframesPage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
+      <div className="max-w-[1400px] mx-auto px-6 py-6">
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">{error}</div>
+          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700 mb-4">{error}</div>
         )}
 
         {loading ? (
@@ -209,93 +219,104 @@ export default function WireframesPage() {
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : (
-          <>
-            {/* Customer-supplied wireframes (reflected from Inputs) */}
-            {customer.length > 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-800 flex items-start gap-2">
-                <Users className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>
-                  <span className="font-medium">{customer.length}</span> customer-supplied wireframe input(s) on file:{' '}
-                  {customer.map((c) => c.fileName ?? c.label).join(', ')}. Upload them below to bring them into this stage.
-                </span>
+          <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6 items-start">
+            {/* Left stepper rail */}
+            <StageRail
+              active={activeStage}
+              onSelect={setActiveStage}
+              mapDone={!!map}
+              mapCount={map?.rows.length ?? 0}
+              orphan={map?.coverage?.orphanFrs?.length ?? 0}
+              lofiCount={wf.lofi.length}
+              lofiAi={wf.lofi.filter((s) => s.aiHtmlContent).length}
+              hifiCount={wf.hifi.length}
+              selectedCount={selected.size}
+            />
+
+            {/* Active stage panel */}
+            <div className="space-y-4 min-w-0">
+              {activeStage === 'mapping' && (
+                <Panel
+                  title="Screen ↔ Feature Mapping"
+                  subtitle="Generated from the PRD. Annotations cite PRD §/FR-IDs. Edit rows inline or round-trip via CSV."
+                >
+                  <ScreenMapTable projectId={projectId} map={map} onChanged={setMap} />
+                </Panel>
+              )}
+
+              {activeStage === 'lofi' && (
+                !map ? (
+                  <LockedNote title="Lo-fi Wireframes" hint="Generate the Screen ↔ Feature Mapping first." onGo={() => setActiveStage('mapping')} goLabel="Go to Mapping" />
+                ) : (
+                  <Panel
+                    title="Lo-fi Wireframes"
+                    subtitle="Type-aware grey-box skeletons from the mapping (default, free). Tick screens to AI-upgrade or carry into hi-fi. Click a card to open / compare."
+                    actions={
+                      <div className="flex items-center gap-2 shrink-0">
+                        {wf.lofi.length > 0 && (
+                          <Button size="sm" variant="outline" onClick={onRegenAiLoFi} disabled={busy !== null}
+                            title="Regenerate selected lo-fi screens with AI (Claude grey-box); all generated screens if none selected">
+                            {busy === 'ai-lofi' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
+                            AI lo-fi{selected.size ? ` (${selected.size})` : ''}
+                          </Button>
+                        )}
+                        <GalleryActions kind="lofi" busy={busy === 'lofi'} hasMap={!!map} onGenerate={() => onGenerate('lofi')} onUpload={(fl) => onUpload(fl, 'lofi')} />
+                      </div>
+                    }
+                  >
+                    {customer.length > 0 && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-800 flex items-start gap-2 mb-4">
+                        <Users className="h-4 w-4 mt-0.5 shrink-0" />
+                        <span>
+                          <span className="font-medium">{customer.length}</span> customer-supplied wireframe input(s) on file:{' '}
+                          {customer.map((c) => c.fileName ?? c.label).join(', ')}. Use Upload to bring them into this stage.
+                        </span>
+                      </div>
+                    )}
+                    <Gallery
+                      screens={wf.lofi}
+                      emptyHint="Generate lo-fi from the mapping, or upload files."
+                      selectable
+                      selected={selected}
+                      onToggle={toggleSelected}
+                      onOpen={setModalScreen}
+                      onSetVariant={onSetVariant}
+                    />
+                  </Panel>
+                )
+              )}
+
+              {activeStage === 'hifi' && (
+                wf.lofi.length === 0 ? (
+                  <LockedNote title="Hi-fi Wireframes" hint="Generate Lo-fi wireframes first." onGo={() => setActiveStage('lofi')} goLabel="Go to Lo-fi" />
+                ) : (
+                  <Panel
+                    title="Hi-fi Wireframes"
+                    subtitle={selected.size
+                      ? `Will generate hi-fi for the ${selected.size} selected lo-fi screen(s).`
+                      : 'Polished branded mockups (Claude). Tick lo-fi screens to limit hi-fi to those; otherwise the whole set.'}
+                    actions={
+                      <GalleryActions
+                        kind="hifi"
+                        busy={busy === 'hifi'}
+                        hasMap={wf.lofi.length > 0}
+                        generateLabel={selected.size ? `Generate hi-fi (${selected.size})` : 'Generate from lo-fi'}
+                        onGenerate={() => onGenerate('hifi')}
+                        onUpload={(fl) => onUpload(fl, 'hifi')}
+                      />
+                    }
+                  >
+                    <Gallery screens={wf.hifi} emptyHint="Generate hi-fi from the lo-fi set, or upload files." onOpen={setModalScreen} />
+                  </Panel>
+                )
+              )}
+
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 text-sm text-emerald-800 flex items-center gap-2">
+                <FolderOpen className="h-4 w-4 shrink-0" />
+                Mapping → <code className="text-xs">02b-ScreenMap/</code> · lo-fi → <code className="text-xs">03-Wireframes-LoFi/</code> · hi-fi → <code className="text-xs">04-Wireframes-HiFi/</code>
               </div>
-            )}
-
-            {/* Step 1 — Mapping */}
-            <Section
-              step={1}
-              title="Screen ↔ Feature Mapping"
-              subtitle="Generated from the PRD. Annotations cite PRD §/FR-IDs. Edit rows inline or round-trip via CSV."
-            >
-              <ScreenMapTable projectId={projectId} map={map} onChanged={setMap} />
-            </Section>
-
-            {/* Step 2 — Lo-fi */}
-            <Section
-              step={2}
-              title="Lo-fi Wireframes"
-              subtitle="Type-aware grey-box skeletons from the mapping (default, free). Tick screens to AI-upgrade or carry into hi-fi. Click a card to open it."
-              actions={
-                <div className="flex items-center gap-2 shrink-0">
-                  {wf.lofi.length > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={onRegenAiLoFi}
-                      disabled={busy !== null}
-                      title="Regenerate selected lo-fi screens with AI (Claude grey-box); all generated screens if none selected"
-                    >
-                      {busy === 'ai-lofi' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
-                      AI lo-fi{selected.size ? ` (${selected.size})` : ''}
-                    </Button>
-                  )}
-                  <GalleryActions
-                    kind="lofi"
-                    busy={busy === 'lofi'}
-                    hasMap={!!map}
-                    onGenerate={() => onGenerate('lofi')}
-                    onUpload={(fl) => onUpload(fl, 'lofi')}
-                  />
-                </div>
-              }
-            >
-              <Gallery
-                screens={wf.lofi}
-                emptyHint="Generate lo-fi from the mapping above, or upload files."
-                selectable
-                selected={selected}
-                onToggle={toggleSelected}
-                onOpen={setModalScreen}
-                onSetVariant={onSetVariant}
-              />
-            </Section>
-
-            {/* Step 3 — Hi-fi */}
-            <Section
-              step={3}
-              title="Hi-fi Wireframes"
-              subtitle={selected.size
-                ? `Will generate hi-fi for the ${selected.size} selected lo-fi screen(s).`
-                : "Polished branded mockups (Claude). Tick lo-fi screens above to limit hi-fi to those; otherwise the whole set."}
-              actions={
-                <GalleryActions
-                  kind="hifi"
-                  busy={busy === 'hifi'}
-                  hasMap={wf.lofi.length > 0}
-                  generateLabel={selected.size ? `Generate hi-fi (${selected.size})` : 'Generate from lo-fi'}
-                  onGenerate={() => onGenerate('hifi')}
-                  onUpload={(fl) => onUpload(fl, 'hifi')}
-                />
-              }
-            >
-              <Gallery screens={wf.hifi} emptyHint="Generate hi-fi from the lo-fi set, or upload files." onOpen={setModalScreen} />
-            </Section>
-
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 text-sm text-emerald-800 flex items-center gap-2">
-              <FolderOpen className="h-4 w-4 shrink-0" />
-              Mapping → <code className="text-xs">02b-ScreenMap/</code> · lo-fi → <code className="text-xs">03-Wireframes-LoFi/</code> · hi-fi → <code className="text-xs">04-Wireframes-HiFi/</code>
             </div>
-          </>
+          </div>
         )}
       </div>
 
@@ -366,32 +387,97 @@ export default function WireframesPage() {
   );
 }
 
-function Section({
-  step,
-  title,
-  subtitle,
-  actions,
-  children,
-}: {
-  step: number;
-  title: string;
-  subtitle: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-}) {
+interface StageRailProps {
+  active: 'mapping' | 'lofi' | 'hifi';
+  onSelect: (s: 'mapping' | 'lofi' | 'hifi') => void;
+  mapDone: boolean;
+  mapCount: number;
+  orphan: number;
+  lofiCount: number;
+  lofiAi: number;
+  hifiCount: number;
+  selectedCount: number;
+}
+
+function StageRail(p: StageRailProps) {
+  const lofiLocked = !p.mapDone;
+  const hifiLocked = p.lofiCount === 0;
+  const stages = [
+    {
+      key: 'mapping' as const, n: 1, title: 'Screen ↔ Feature Mapping', locked: false,
+      done: p.mapDone,
+      status: p.mapDone ? `${p.mapCount} screens · ${p.orphan} unmapped` : 'Not generated',
+    },
+    {
+      key: 'lofi' as const, n: 2, title: 'Lo-fi Wireframes', locked: lofiLocked,
+      done: p.lofiCount > 0,
+      status: lofiLocked ? 'Needs mapping' : p.lofiCount > 0 ? `${p.lofiCount} screens${p.lofiAi ? ` · ${p.lofiAi} AI` : ''}` : 'Not generated',
+    },
+    {
+      key: 'hifi' as const, n: 3, title: 'Hi-fi Wireframes', locked: hifiLocked,
+      done: p.hifiCount > 0,
+      status: hifiLocked ? 'Needs lo-fi' : p.hifiCount > 0 ? `${p.hifiCount} of ${p.lofiCount}` : 'Not generated',
+    },
+  ];
+  return (
+    <aside className="lg:sticky lg:top-6 space-y-1.5">
+      {stages.map((s) => {
+        const isActive = p.active === s.key;
+        return (
+          <button
+            key={s.key}
+            onClick={() => p.onSelect(s.key)}
+            className={`w-full text-left flex items-start gap-3 rounded-lg border px-3 py-2.5 transition ${
+              isActive ? 'border-gray-900 bg-white shadow-sm' : 'border-transparent bg-white/60 hover:bg-white hover:border-gray-200'
+            } ${s.locked ? 'opacity-60' : ''}`}
+          >
+            <span className={`mt-0.5 h-6 w-6 shrink-0 rounded-full text-xs font-bold flex items-center justify-center ${
+              s.done ? 'bg-emerald-500 text-white' : isActive ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-600'
+            }`}>
+              {s.locked ? '🔒' : s.done ? '✓' : s.n}
+            </span>
+            <span className="min-w-0">
+              <span className={`block text-sm font-medium ${isActive ? 'text-gray-900' : 'text-gray-700'}`}>{s.title}</span>
+              <span className="block text-xs text-gray-400">{s.status}</span>
+            </span>
+          </button>
+        );
+      })}
+      {p.selectedCount > 0 && (
+        <div className="mt-2 rounded-lg bg-gray-900 text-white text-xs px-3 py-2">
+          <b>{p.selectedCount}</b> screen{p.selectedCount === 1 ? '' : 's'} selected → AI lo-fi / hi-fi
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function Panel({ title, subtitle, actions, children }: { title: string; subtitle: string; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="space-y-3">
       <div className="flex items-start gap-3">
-        <span className="h-7 w-7 rounded-full bg-gray-900 text-white text-sm font-semibold flex items-center justify-center shrink-0">
-          {step}
-        </span>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <h2 className="font-semibold text-gray-900">{title}</h2>
           <p className="text-sm text-gray-500">{subtitle}</p>
         </div>
         {actions}
       </div>
       {children}
+    </section>
+  );
+}
+
+function LockedNote({ title, hint, onGo, goLabel }: { title: string; hint: string; onGo: () => void; goLabel: string }) {
+  return (
+    <section className="space-y-3">
+      <h2 className="font-semibold text-gray-900">{title}</h2>
+      <Card>
+        <CardContent className="py-12 text-center space-y-3">
+          <div className="text-3xl">🔒</div>
+          <p className="text-sm text-gray-600">{hint}</p>
+          <Button size="sm" variant="outline" onClick={onGo}>{goLabel}</Button>
+        </CardContent>
+      </Card>
     </section>
   );
 }
