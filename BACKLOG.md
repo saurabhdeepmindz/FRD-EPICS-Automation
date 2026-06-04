@@ -530,6 +530,18 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track JJ — HLD page: left section menu + switchable panels — Sprint v9, ✅ COMPLETE (2026-06-04)
+
+> **Decision (2026-06-04):** the HLD page was a long scroll (17 sections + diagrams) and the architecture diagrams rendered as raw Mermaid code (render error → amber source fallback). Add a **left section menu** (Diagrams + 17 headings) with one-panel-at-a-time switching (like wireframes/PRD), and **fix the Mermaid renderer** so diagrams draw.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | JJ-01 | FE: HLD left section menu + switchable panels | `/hld` page; `HLD_SECTIONS` | no API/DB change |
+| ✅ | JJ-02 | FE: fix Mermaid v11 render (init-once, robust) | existing `Mermaid` component; `mermaid@11` | source fallback on genuine error only |
+| ✅ | JJ-03 | Playwright smoke (sidebar, switch, diagram→svg) + tsc | — | — |
+
+---
+
 ### Track II — Wireframes page: left-rail stepper + switchable panels — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** the 3 wireframe stages were a long vertical scroll (lower stages missed). Refactor `/wireframes` into a **left sticky stepper rail** (status/counts/✓/locked + "N selected") with **one panel shown at a time** (matches v7 `PrdStepper`/`PrdSidebar`). Frontend-only; behavior unchanged.

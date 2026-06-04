@@ -5,11 +5,9 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
-  Layers,
   Loader2,
   Sparkles,
   RefreshCw,
-  ChevronRight,
   AlertTriangle,
   FolderOpen,
   Network,
@@ -35,6 +33,8 @@ export default function HldPage() {
   const [generating, setGenerating] = useState(false);
   const [gaps, setGaps] = useState<PrdGap[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [activeKey, setActiveKey] = useState<string>('__diagrams');
+  const initedKey = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,6 +68,13 @@ export default function HldPage() {
 
   const diagramKeys = hld ? Object.keys(hld.mermaidDiagrams ?? {}) : [];
 
+  // Land on Diagrams (if any) else the first section, once HLD loads.
+  useEffect(() => {
+    if (loading || !hld || initedKey.current) return;
+    initedKey.current = true;
+    setActiveKey(diagramKeys.length ? '__diagrams' : HLD_SECTIONS[0]?.key ?? '__diagrams');
+  }, [loading, hld, diagramKeys.length]);
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -100,7 +107,7 @@ export default function HldPage() {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+      <div className="max-w-[1400px] mx-auto px-6 py-6 space-y-4">
         <FreshnessBanner projectId={projectId} artifactType="HLD" />
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
@@ -158,42 +165,86 @@ export default function HldPage() {
               </Card>
             )}
 
-            {/* Architecture diagrams */}
-            {diagramKeys.length > 0 && (
-              <div>
-                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-                  <Network className="h-4 w-4" /> Architecture Diagrams
-                </h2>
-                <div className="space-y-3">
-                  {diagramKeys.map((dk) => (
-                    <Card key={dk}>
-                      <CardContent className="p-4">
-                        <p className="text-sm font-medium text-gray-700 mb-2">
-                          {HLD_DIAGRAM_LABELS[dk] ?? dk}
-                        </p>
-                        <Mermaid content={hld.mermaidDiagrams[dk]} />
-                      </CardContent>
-                    </Card>
-                  ))}
+            <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6 items-start">
+              {/* Left section menu */}
+              <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto space-y-1 pr-1">
+                {diagramKeys.length > 0 && (
+                  <button
+                    onClick={() => setActiveKey('__diagrams')}
+                    className={`w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 text-sm border ${activeKey === '__diagrams' ? 'border-gray-900 bg-white font-medium text-gray-900' : 'border-transparent text-gray-600 hover:bg-white hover:border-gray-200'}`}
+                  >
+                    <Network className="h-4 w-4 shrink-0" /> Architecture Diagrams
+                    <span className="ml-auto text-[10px] text-gray-400">{diagramKeys.length}</span>
+                  </button>
+                )}
+                <div className="pt-1">
+                  {HLD_SECTIONS.map((s, i) => {
+                    const has = !!hld.sections[s.key];
+                    const isActive = activeKey === s.key;
+                    return (
+                      <button
+                        key={s.key}
+                        onClick={() => setActiveKey(s.key)}
+                        className={`w-full text-left flex items-start gap-2 rounded-lg px-3 py-2 text-sm border ${isActive ? 'border-gray-900 bg-white font-medium text-gray-900' : 'border-transparent text-gray-600 hover:bg-white hover:border-gray-200'}`}
+                      >
+                        <span className="text-xs font-mono text-gray-400 w-5 shrink-0 mt-0.5">{i + 1}</span>
+                        <span className="min-w-0">{s.name}</span>
+                        {!has && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
-            )}
+              </aside>
 
-            {/* Sections */}
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-                <Layers className="h-4 w-4" /> Sections
-              </h2>
-              <div className="space-y-2">
-                {HLD_SECTIONS.map((s, i) => (
-                  <HldSection
-                    key={s.key}
-                    num={i + 1}
-                    name={s.name}
-                    body={hld.sections[s.key] as Record<string, unknown> | undefined}
-                    defaultOpen={i < 2}
-                  />
-                ))}
+              {/* Active panel */}
+              <div className="min-w-0">
+                {activeKey === '__diagrams' ? (
+                  <section className="space-y-3">
+                    <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
+                      <Network className="h-4 w-4" /> Architecture Diagrams
+                    </h2>
+                    {diagramKeys.map((dk) => (
+                      <Card key={dk}>
+                        <CardContent className="p-4">
+                          <p className="text-sm font-medium text-gray-700 mb-2">{HLD_DIAGRAM_LABELS[dk] ?? dk}</p>
+                          <Mermaid content={hld.mermaidDiagrams[dk]} />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </section>
+                ) : (
+                  (() => {
+                    const idx = HLD_SECTIONS.findIndex((s) => s.key === activeKey);
+                    const sec = HLD_SECTIONS[idx];
+                    if (!sec) return null;
+                    const body = hld.sections[sec.key] as Record<string, unknown> | undefined;
+                    return (
+                      <section className="space-y-3">
+                        <h2 className="font-semibold text-gray-900 flex items-baseline gap-2">
+                          <span className="text-sm font-mono text-gray-400">{idx + 1}</span> {sec.name}
+                        </h2>
+                        <Card>
+                          <CardContent className="p-4">
+                            {!body ? (
+                              <p className="text-sm text-gray-400">Not generated.</p>
+                            ) : (
+                              <dl className="space-y-3">
+                                {Object.entries(body).map(([k, v]) => (
+                                  <div key={k}>
+                                    <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                      {k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()}
+                                    </dt>
+                                    <dd className="text-sm text-gray-700 mt-0.5">{renderValue(v)}</dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </section>
+                    );
+                  })()
+                )}
               </div>
             </div>
           </>
@@ -203,54 +254,7 @@ export default function HldPage() {
   );
 }
 
-// ─── Section renderer ────────────────────────────────────────────────────────
-
-function HldSection({
-  num,
-  name,
-  body,
-  defaultOpen,
-}: {
-  num: number;
-  name: string;
-  body: Record<string, unknown> | undefined;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(!!defaultOpen);
-  return (
-    <Card>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left"
-      >
-        <span className="text-xs font-mono text-gray-400 w-6 shrink-0">{num}</span>
-        <span className="text-sm font-medium text-gray-800">{name}</span>
-        <ChevronRight
-          className={`h-4 w-4 text-gray-400 ml-auto shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
-        />
-      </button>
-      {open && (
-        <CardContent className="pt-0 pb-4 border-t">
-          {!body ? (
-            <p className="text-sm text-gray-400 pt-3">Not generated.</p>
-          ) : (
-            <dl className="pt-3 space-y-3">
-              {Object.entries(body).map(([k, v]) => (
-                <div key={k}>
-                  <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    {k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()}
-                  </dt>
-                  <dd className="text-sm text-gray-700 mt-0.5">{renderValue(v)}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
-        </CardContent>
-      )}
-    </Card>
-  );
-}
+// ─── Value renderers ─────────────────────────────────────────────────────────
 
 function AiText({ value }: { value: string }) {
   const isAi = value.startsWith('[AI] ');
