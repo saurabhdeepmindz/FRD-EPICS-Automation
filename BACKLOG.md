@@ -425,31 +425,31 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
-### Track Y — PRD-Sourced Screen↔Feature Mapping — Sprint v8, PLAN ONLY
+### Track Y — PRD-Sourced Screen↔Feature Mapping — Sprint v8, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** A new pipeline **Wireframes stage between PRD and HLD**, sourced from the **PRD** (not the BRD/Approach Note that drive Discovery wireframes). Step 1 is a screen↔feature **mapping** artifact (CSV-shaped, mirroring the customer reference RTM) where `frRefs` are §6 FR-IDs and every annotation cites **PRD §/FR-IDs**. Full spec in `sprints/v8/`.
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | Y-01 | Prisma: `BaScreenMap` + `BaScreenMapRow` (annotations JSON, PRD refs) + migration | Track M/v6 migration pattern | screen-centric, versioned, `sourceArtifactVersions={prdVersion}` |
-| ⬜ | Y-02 | AI: `/screen-map-generate` — PRD §6 FRD + §5/§8/§10 → screens + FR mapping + business rules + annotations | `parse`/`hld` prompt patterns; F2 normalizer | `screen_map_prompts.py`; refs cite PRD, never SRS/BRD/AN |
-| ⬜ | Y-03 | Backend: `ScreenMapService` — generate / CRUD / **CSV import + export** / coverage (orphan FRs/screens) | `ProjectFolderService`; F2 normalizer | exports to `02b-ScreenMap/` + CHANGELOG |
-| ⬜ | Y-04 | Frontend: mapping table + annotations editor (numbered + Persona) + CSV up/download | `pipeline-api`; Card/table patterns | "Generate from PRD" + edit + coverage |
+| ✅ | Y-01 | Prisma: `BaScreenMap` + `BaScreenMapRow` (annotations JSON, PRD refs) + migration | Track M/v6 migration pattern | screen-centric, versioned, `sourceArtifactVersions={prdVersion}` |
+| ✅ | Y-02 | AI: `/screen-map-generate` — PRD §6 FRD + §5/§8/§10 → screens + FR mapping + business rules + annotations | `parse`/`hld` prompt patterns; F2 normalizer | `screen_map_prompts.py`; refs cite PRD, never SRS/BRD/AN |
+| ✅ | Y-03 | Backend: `ScreenMapService` — generate / CRUD / **CSV import + export** / coverage (orphan FRs/screens) | `ProjectFolderService`; F2 normalizer | exports to `02b-ScreenMap/` + CHANGELOG |
+| ✅ | Y-04 | Frontend: mapping table + annotations editor (numbered + Persona) + CSV up/download | `pipeline-api`; Card/table patterns | "Generate from PRD" + edit + coverage |
 
 ---
 
-### Track Z — Wireframes Stage (Lo-fi + Hi-fi, PRD-driven) + Bulk Upload — Sprint v8, PLAN ONLY
+### Track Z — Wireframes Stage (Lo-fi + Hi-fi, PRD-driven) + Bulk Upload — Sprint v8, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** Reuse + extend the Discovery wireframe models (`BaWireframeSet`/`BaHifiSet`) with a `source` discriminator (`DISCOVERY`/`PIPELINE`); generate lo-fi/hi-fi from the PRD-sourced screen map; **single + bulk upload** for 3rd-party wireframes; reflect `CUSTOMER_WIREFRAME` inputs. Discovery (BRD/AN) wireframes untouched.
 
 | Status | # | Action Item | Existing Reuse | Notes |
 |--------|---|-------------|----------------|-------|
-| ⬜ | Z-01 | Prisma: extend `BaWireframeSet` (nullable AN FK + `source` + `screenMapId` + `sourceArtifactVersions`) + migration | existing wireframe models | Discovery rows backfill `source=DISCOVERY` |
-| ⬜ | Z-02 | Backend: generate **lo-fi from screen map** → **hi-fi** (PIPELINE source) | `WireframeService`/`HifiService`/`WireframeExportService` | callouts=annotations; `meta.frRefs`=§6 FR-IDs; preserve uploaded |
-| ⬜ | Z-03 | Backend: **upload (single/bulk)** HTML/PNG/JPG → screens; reflect `CUSTOMER_WIREFRAME` inputs | `FileInterceptor`; attachment storage | `meta.uploaded=true`; disk mirror |
-| ⬜ | Z-04 | Frontend: **`/wireframes` page** (mapping → lo-fi → hi-fi galleries + Upload) + nav between PRD and HLD | `pipeline-api`; iframe preview (Discovery pattern) | new pipeline stage |
-| ⬜ | Z-05 | Integration: HLD `buildWireframeContext` prefers PIPELINE; readiness N-01; **freshness** PRD→map→wf→HLD | v6 Track T; `project-hld.service` | extends `ArtifactFreshnessService`/`RequirementChangeService` |
-| ⬜ | Z-06 | Wire-up: smoke + regression (incl. Discovery no-regression) | — | tsc clean; CSV parser unit-tested |
+| ✅ | Z-01 | Prisma: extend `BaWireframeSet` (nullable AN FK + `source` + `screenMapId` + `sourceArtifactVersions`) + migration | existing wireframe models | Discovery rows backfill `source=DISCOVERY` |
+| ✅ | Z-02 | Backend: generate **lo-fi from screen map** → **hi-fi** (PIPELINE source) | `WireframeService`/`HifiService`/`WireframeExportService` | callouts=annotations; `meta.frRefs`=§6 FR-IDs; preserve uploaded |
+| ✅ | Z-03 | Backend: **upload (single/bulk)** HTML/PNG/JPG → screens; reflect `CUSTOMER_WIREFRAME` inputs | `FileInterceptor`; attachment storage | `meta.uploaded=true`; disk mirror |
+| ✅ | Z-04 | Frontend: **`/wireframes` page** (mapping → lo-fi → hi-fi galleries + Upload) + nav between PRD and HLD | `pipeline-api`; iframe preview (Discovery pattern) | new pipeline stage |
+| ✅ | Z-05 | Integration: HLD `buildWireframeContext` prefers PIPELINE; readiness N-01; **freshness** PRD→map→wf→HLD | v6 Track T; `project-hld.service` | extends `ArtifactFreshnessService`/`RequirementChangeService` |
+| ✅ | Z-06 | Wire-up: smoke + regression (incl. Discovery no-regression) | — | tsc clean; CSV parser unit-tested |
 
 ---
 

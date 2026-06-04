@@ -1,6 +1,6 @@
 # Sprint v8 — Tasks: PRD-Sourced Wireframes Stage — Screen↔Feature Mapping → Lo-fi → Hi-fi (Tracks Y + Z)
 
-## Status: 🔄 APPROVED — in progress (2026-06-04). Open questions resolved: ① screen-map → `02b-ScreenMap/`; ② uploads = HTML/PNG/JPG/PDF/SVG (Figma exports as PDF/SVG/PNG); ③ regeneration merges (uploads preserved).
+## Status: ✅ COMPLETE (2026-06-04) — all 10 tasks shipped on `feat/v8-prd-sourced-wireframes` (Track Y backend + Z-01 `86ecaf5`; Track Z `65c19b8`). Backend + frontend `tsc` clean; pipeline tests 49/49; Discovery wireframes no-regression. Open questions resolved: ① screen-map → `02b-ScreenMap/`; ② uploads = HTML/PNG/JPG/PDF/SVG (Figma exports as PDF/SVG/PNG); ③ regeneration merges (uploads preserved).
 
 > **Backlog traceability:** Track Y (PRD-sourced Screen↔Feature Mapping) → Track Z (Wireframes stage: lo-fi + hi-fi + upload, between PRD and HLD).
 >
@@ -14,14 +14,14 @@
 
 ### P0 DB / AI
 
-- [ ] **Task 1 (Y-01): `BaScreenMap` + `BaScreenMapRow` schema + migration** (P0-DB)
+- [x] **Task 1 (Y-01): `BaScreenMap` + `BaScreenMapRow` schema + migration** (P0-DB)
   - Acceptance:
     - `BaScreenMap` (projectId, version, status, `sourceArtifactVersions` {prdVersion}, `triggeredBy`, `metadata` {coverage}, timestamps) + `BaScreenMapRow` (screenMapId, screenId, sequenceNum, screenName, `prdSections String[]`, `featureRefs String[]`, featureDescription, businessRulesPrd, businessRulesArchitect, screenDescription, `annotations Json` = `[{marker, title, description, prdRef}]`)
     - SQL migration applied **as `prd_user`**; `npx prisma generate`; existing endpoints still 200
   - Files: `backend/prisma/schema.prisma`, `backend/prisma/migrations/<ts>_screen_map.sql` (new)
   - Effort: S
 
-- [ ] **Task 2 (Y-02): AI `/screen-map-generate` (PRD-grounded) + prompt** (P0-AI)
+- [x] **Task 2 (Y-02): AI `/screen-map-generate` (PRD-grounded) + prompt** (P0-AI)
   - Acceptance:
     - `POST /screen-map-generate { project_id, prd_sections, product_name }` → `{ screens: [{ screenId, screenName, prdSections[], frRefs[], featureDescription, businessRulesPrd, businessRulesArchitect, screenDescription, annotations: [{marker, title, description, prdRef}] }], coverage: { orphanFrs[], orphanScreens[] } }`
     - Prompt grounded in the **PRD**: `frRefs` are §6 FR-IDs; every annotation `prdRef` cites a PRD §/FR-ID (never SRS/BRD/AN); a Persona annotation (`marker:"P"`) is produced per screen
@@ -31,7 +31,7 @@
 
 ### P0 Backend / Frontend
 
-- [ ] **Task 3 (Y-03): `ScreenMapService` — generate / CRUD / CSV import + export** (P0-BE)
+- [x] **Task 3 (Y-03): `ScreenMapService` — generate / CRUD / CSV import + export** (P0-BE)
   - Acceptance:
     - `generate(projectId)` — consolidates the latest PRD (§6 FRD + §5/§8/§10, flattened via the F2 `section-normalizer`), calls `/screen-map-generate`, persists a versioned `BaScreenMap` + rows, stamps `sourceArtifactVersions={prdVersion}`, validates `frRefs` against the PRD's actual §6 FR-IDs (flag unknowns), computes coverage (orphan FRs/screens)
     - `getLatest` / `list` / `get` / `updateRow` (edit fields + annotations) / `addRow` / `deleteRow`
@@ -40,7 +40,7 @@
   - Files: `backend/src/ba-tool/pipeline/screen-map.service.ts` (new), `pipeline.controller.ts`, `pipeline.module.ts`
   - Effort: L
 
-- [ ] **Task 4 (Y-04): Frontend — Screen↔Feature Mapping UI** (P0-FE)
+- [x] **Task 4 (Y-04): Frontend — Screen↔Feature Mapping UI** (P0-FE)
   - Acceptance:
     - On the new Wireframes page: a mapping table (Screen ID · PRD Section(s) · FR Ref(s) · Feature Desc · Screen Name · Business Rules (PRD) · Business Rules (Architect) · Screen Description) + an **annotations editor** (numbered + Persona row, each with `prdRef`)
     - **Generate from PRD** + Regenerate; inline edit; **CSV import (upload)** + **CSV/MD download**; coverage indicator (orphan FRs/screens) with the AI/`[NEW]` conventions where relevant
@@ -54,14 +54,14 @@
 
 ### P0 DB / Backend
 
-- [ ] **Task 5 (Z-01): Extend `BaWireframeSet` for PRD/upload sourcing + migration** (P0-DB)
+- [x] **Task 5 (Z-01): Extend `BaWireframeSet` for PRD/upload sourcing + migration** (P0-DB)
   - Acceptance:
     - `approachNoteVersionId` made **nullable**; add `source String @default("DISCOVERY")` (`DISCOVERY`|`PIPELINE`), `screenMapId String?`, `sourceArtifactVersions Json?`; `BaWireframeScreen`/`BaHifiScreen` `meta.uploaded` flag convention documented
     - Migration **as `prd_user`**; existing Discovery rows backfill `source='DISCOVERY'`; Discovery generation still works (verified)
   - Files: `backend/prisma/schema.prisma`, `backend/prisma/migrations/<ts>_wireframe_source.sql` (new)
   - Effort: S
 
-- [ ] **Task 6 (Z-02): Generate lo-fi from the screen map → hi-fi (PIPELINE source)** (P0-BE)
+- [x] **Task 6 (Z-02): Generate lo-fi from the screen map → hi-fi (PIPELINE source)** (P0-BE)
   - Acceptance:
     - New entrypoint (adapt `WireframeService`) that builds a `BaWireframeSet(source=PIPELINE, screenMapId, sourceArtifactVersions={prdVersion})` from the screen map: each row → `BaWireframeScreen` with `callouts` = the row's annotations and `meta.frRefs` = `featureRefs`; HTML/MD via the existing lo-fi prompt re-seeded from the map
     - Hi-fi generation reuses `HifiService` as-is (takes the PIPELINE wireframe set) → `BaHifiSet`/`BaHifiScreen`
@@ -70,7 +70,7 @@
   - Files: `backend/src/ba-tool/discovery/wireframe.service.ts` + `hifi.service.ts` (extend), `backend/src/ba-tool/pipeline/*` (orchestration), `pipeline.controller.ts`
   - Effort: L
 
-- [ ] **Task 7 (Z-03): Upload (single + bulk) + reflect `CUSTOMER_WIREFRAME` inputs** (P0-BE)
+- [x] **Task 7 (Z-03): Upload (single + bulk) + reflect `CUSTOMER_WIREFRAME` inputs** (P0-BE)
   - Acceptance:
     - `POST /ba/projects/:id/wireframes/upload` (FileInterceptor, multi-file) — accepts **HTML/PNG/JPG/PDF/SVG** (Figma exports as PDF/SVG/PNG); creates `BaWireframeScreen` (lo-fi) or `BaHifiScreen` (hi-fi) under a PIPELINE set with `meta.uploaded=true`; per-file size cap; rejects unsupported types (incl. raw `.fig` with a clear message to export first)
     - A read endpoint returns `CUSTOMER_WIREFRAME` customer inputs so the page can reflect them
@@ -80,7 +80,7 @@
 
 ### P0 Frontend / Integration
 
-- [ ] **Task 8 (Z-04): Frontend — Wireframes page (Lo-fi + Hi-fi galleries + Upload)** (P0-FE)
+- [x] **Task 8 (Z-04): Frontend — Wireframes page (Lo-fi + Hi-fi galleries + Upload)** (P0-FE)
   - Acceptance:
     - `/ba-tool/project/[id]/wireframes` page with 3 sections: **Mapping** (Track Y) → **Lo-fi gallery** (iframe preview + callouts) → **Hi-fi gallery** (iframe preview); Generate Lo-fi / Generate Hi-fi buttons gated on the mapping
     - **Upload (single/bulk)** button (HTML/PNG/JPG) + a panel reflecting `CUSTOMER_WIREFRAME` inputs
@@ -89,7 +89,7 @@
   - Files: `frontend/app/ba-tool/project/[id]/wireframes/page.tsx`, `frontend/components/ba-tool/WireframeGallery.tsx` (new), `frontend/app/ba-tool/project/[id]/page.tsx` (nav), `frontend/lib/pipeline-api.ts`
   - Effort: L
 
-- [ ] **Task 9 (Z-05): Pipeline integration — HLD context, readiness, freshness** (P0-BE)
+- [x] **Task 9 (Z-05): Pipeline integration — HLD context, readiness, freshness** (P0-BE)
   - Acceptance:
     - HLD `buildWireframeContext` prefers the latest `PIPELINE` wireframe set (falls back to `DISCOVERY`)
     - Module readiness (N-01) Wireframes gate satisfied by the PIPELINE set
@@ -97,7 +97,7 @@
   - Files: `backend/src/ba-tool/pipeline/project-hld.service.ts`, `artifact-freshness.service.ts`, `requirement-change.service.ts`, `module-readiness.service.ts`, `frontend/.../wireframes/page.tsx` (banner)
   - Effort: M
 
-- [ ] **Task 10 (Z-06): Wire-up + smoke + regression** (P1)
+- [x] **Task 10 (Z-06): Wire-up + smoke + regression** (P1)
   - Acceptance:
     - Full flow on a real project: generate PRD → generate screen map (annotations cite PRD §/FR) → edit + CSV round-trip → generate lo-fi → hi-fi → both mirrored to disk
     - Bulk-upload 3rd-party wireframes → reflected; `CUSTOMER_WIREFRAME` inputs reflected
@@ -132,13 +132,13 @@
 
 ## Acceptance Criteria — Sprint Complete
 
-- [ ] A screen↔feature mapping is generated **from the PRD**; every `frRef` is a §6 FR-ID and every annotation `prdRef` cites PRD content (no SRS/BRD/AN refs).
-- [ ] The mapping is editable and round-trips via CSV import/export (reference shape, PRD-referenced); coverage (orphan FRs/screens) is shown.
-- [ ] Lo-fi wireframes generate from the mapping (callouts = annotations); hi-fi generate from lo-fi; both mirror to disk.
-- [ ] 3rd-party wireframes can be **bulk-uploaded**; `CUSTOMER_WIREFRAME` inputs are reflected; regeneration preserves uploaded screens.
-- [ ] The Wireframes stage sits between PRD and HLD in the nav; HLD consumes the PIPELINE wireframes; readiness gate satisfied.
-- [ ] Freshness propagates PRD → screen-map → lo-fi → hi-fi → HLD.
-- [ ] **Discovery (BRD/AN) wireframes still work** — no regression; `tsc` clean both apps; CSV parser unit-tested.
+- [x] A screen↔feature mapping is generated **from the PRD**; every `frRef` is a §6 FR-ID and every annotation `prdRef` cites PRD content (no SRS/BRD/AN refs).
+- [x] The mapping is editable and round-trips via CSV import/export (reference shape, PRD-referenced); coverage (orphan FRs/screens) is shown.
+- [x] Lo-fi wireframes generate from the mapping (callouts = annotations); hi-fi generate from lo-fi; both mirror to disk.
+- [x] 3rd-party wireframes can be **bulk-uploaded**; `CUSTOMER_WIREFRAME` inputs are reflected; regeneration preserves uploaded screens.
+- [x] The Wireframes stage sits between PRD and HLD in the nav; HLD consumes the PIPELINE wireframes; readiness gate satisfied.
+- [x] Freshness propagates PRD → screen-map → lo-fi → hi-fi → HLD.
+- [x] **Discovery (BRD/AN) wireframes still work** — no regression; `tsc` clean both apps; CSV parser unit-tested.
 
 ---
 
