@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 1024
     OPENAI_TEMPERATURE: float = 0.4   # lower = more deterministic PRD suggestions
 
+    # Anthropic (Claude) — used for wireframe hi-fi generation.
+    # HIFI_PROVIDER selects the engine for /hifi-generate: "anthropic" | "openai".
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+    HIFI_PROVIDER: str = "anthropic"
+
     # Speech-to-Text (STT) — pluggable provider
     # Supported: "whisper" (OpenAI), "deepgram", "assemblyai", "elevenlabs", "cartesia"
     STT_PROVIDER: str = "whisper"

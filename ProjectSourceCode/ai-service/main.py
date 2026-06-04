@@ -8,6 +8,7 @@ import logging
 from typing import Annotated
 
 import openai
+import anthropic
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -21,6 +22,7 @@ from stt_providers import get_stt_provider, STTProvider
 from prompts.section_prompts import get_section_prompt, SYSTEM_BASE
 from prompts.parse_prompts import PARSE_SYSTEM_PROMPT, GAP_ANALYSIS_SUFFIX, INTERACTIVE_SUFFIX
 from prompts.gap_check_prompts import GAP_CHECK_SYSTEM_PROMPT
+from prompts.screen_map_prompts import SCREEN_MAP_SYSTEM_PROMPT
 from prompts.wft_prompts import WFT_SYSTEM_PROMPT, build_wft_user_message
 from prompts.brd_prompts import BRD_SYSTEM_PROMPT, build_brd_user_message
 from prompts.an_prompts import AN_SYSTEM_PROMPT, build_an_user_message
@@ -114,6 +116,50 @@ class GapCheckResponse(BaseModel):
 
 def get_openai_client(settings: Annotated[Settings, Depends(get_settings)]) -> openai.AsyncOpenAI:
     return openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+
+# ─── Dependency — Anthropic (Claude) client ───────────────────────────────────
+
+def get_anthropic_client(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> anthropic.AsyncAnthropic:
+    return anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+
+async def _claude_complete(
+    client: anthropic.AsyncAnthropic,
+    *,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """
+    Call Claude and return the concatenated text content. The caller's system
+    prompt already requests JSON; we append a terse JSON-only reminder because
+    Claude has no `response_format=json_object`. Anthropic errors are mapped to
+    the same HTTP codes the OpenAI paths use, so callers stay uniform.
+    """
+    try:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=f"{system}\n\nReturn ONLY a single valid JSON object — no prose, no markdown fences.",
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.AuthenticationError as exc:
+        logger.error("Anthropic auth failed: %s", exc)
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except anthropic.RateLimitError as exc:
+        logger.warning("Anthropic rate limit hit: %s", exc)
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except anthropic.APIError as exc:
+        logger.error("Anthropic error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    return "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -1164,12 +1210,16 @@ async def hifi_generate(
     body: HifiRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
 ) -> HifiResponse:
     """
-    Stage 5 of the Discovery Track. Polish lo-fi wireframes into branded
-    high-fidelity HTML mockups per skill 05. Callout numbers preserved 1:1
-    from the lo-fi parent (skill 05 §7 invariant — server-side validator
-    enforces this).
+    Stage 5 of the Discovery Track (also reused by the PRD-sourced pipeline
+    wireframes). Polish lo-fi wireframes into branded high-fidelity HTML mockups
+    per skill 05. Callout numbers preserved 1:1 from the lo-fi parent (skill 05
+    §7 invariant — server-side validator enforces this).
+
+    Engine is selectable via `HIFI_PROVIDER` (default "anthropic" → Claude
+    `ANTHROPIC_MODEL`; set to "openai" to fall back to `OPENAI_MODEL`).
     """
     user_message = build_hifi_user_message(
         body.lofiScreens,
@@ -1178,30 +1228,46 @@ async def hifi_generate(
         body.productName,
     )
 
-    try:
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": HIFI_SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            # Even larger output budget than lo-fi: hi-fi HTML is denser due
-            # to inline styles, real content, and proper element structure.
-            max_tokens=16384,
-            temperature=settings.OPENAI_TEMPERATURE,
-            response_format={"type": "json_object"},
-        )
-    except openai.AuthenticationError as exc:
-        logger.error("OpenAI auth failed during hi-fi generation: %s", exc)
-        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
-    except openai.RateLimitError as exc:
-        logger.warning("OpenAI rate limit hit during hi-fi generation: %s", exc)
-        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
-    except openai.OpenAIError as exc:
-        logger.error("OpenAI error during hi-fi generation: %s", exc)
-        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+    # hi-fi HTML is dense (inline styles, real content) — needs a large budget.
+    max_tokens = 16384
 
-    raw = response.choices[0].message.content or "{}"
+    if settings.HIFI_PROVIDER == "anthropic":
+        if not settings.ANTHROPIC_API_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="ANTHROPIC_API_KEY not configured in the AI service (.env).",
+            )
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=HIFI_SYSTEM_PROMPT,
+            user=user_message,
+            max_tokens=max_tokens,
+            temperature=settings.OPENAI_TEMPERATURE,
+        ) or "{}"
+    else:
+        try:
+            response = await client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": HIFI_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                max_tokens=max_tokens,
+                temperature=settings.OPENAI_TEMPERATURE,
+                response_format={"type": "json_object"},
+            )
+        except openai.AuthenticationError as exc:
+            logger.error("OpenAI auth failed during hi-fi generation: %s", exc)
+            raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+        except openai.RateLimitError as exc:
+            logger.warning("OpenAI rate limit hit during hi-fi generation: %s", exc)
+            raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+        except openai.OpenAIError as exc:
+            logger.error("OpenAI error during hi-fi generation: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = response.choices[0].message.content or "{}"
+
     try:
         parsed = _parse_ai_json(raw)
     except json.JSONDecodeError as exc:
@@ -1245,7 +1311,7 @@ async def hifi_generate(
     return HifiResponse(
         screens=screens,
         syntheticDataNotes=parsed.get("syntheticDataNotes"),
-        model=settings.OPENAI_MODEL,
+        model=(settings.ANTHROPIC_MODEL if settings.HIFI_PROVIDER == "anthropic" else settings.OPENAI_MODEL),
     )
 
 
@@ -2200,6 +2266,71 @@ async def project_prd_generate(
         for g in gaps_raw
     ]
     return ProjectPrdResponse(sections=sections, gaps=gaps)
+
+
+# ─── New Pipeline: Screen ↔ Feature Mapping (Track Y, v8) ────────────────────
+# PRD-sourced screen map: screens + §6 FR-IDs + PRD-referenced annotations.
+# Drives lo-fi/hi-fi wireframe generation (Stage 3a, between PRD and HLD).
+
+class ScreenMapRequest(BaseModel):
+    project_id: str
+    prd_sections: dict = Field(..., description="The 22-section PRD+FRD JSON (Section 6 = FRD)")
+    product_name: str | None = None
+
+class ScreenMapResponse(BaseModel):
+    screens: list[dict] = []
+    coverage: dict = Field(default_factory=dict)
+
+@app.post("/screen-map-generate", response_model=ScreenMapResponse, tags=["pipeline"])
+async def screen_map_generate(
+    body: ScreenMapRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> ScreenMapResponse:
+    """
+    Generate a PRD-sourced Screen ↔ Feature Mapping (Track Y). Every featureRef is a
+    §6 FR-ID and every annotation prdRef cites PRD content (never SRS/BRD/Approach-Note).
+    """
+    if not body.prd_sections:
+        raise HTTPException(status_code=400, detail="prd_sections is empty — generate the PRD first")
+
+    user_message = json.dumps(body.prd_sections, ensure_ascii=False)
+    if body.product_name:
+        user_message = f"Product name: {body.product_name}\n\nPRD (22 sections, §6 = FRD):\n{user_message}"
+
+    logger.info("screen-map-generate for %s (%d PRD chars)", body.project_id, len(user_message))
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": SCREEN_MAP_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=16384,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+    except openai.AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+    except openai.RateLimitError as exc:
+        raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+    except openai.OpenAIError as exc:
+        logger.error("OpenAI error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+
+    raw_content = (response.choices[0].message.content or "").strip()
+    logger.info("screen-map-generate response: %d chars", len(raw_content))
+
+    try:
+        parsed = _parse_ai_json(raw_content)
+    except json.JSONDecodeError:
+        logger.error("screen-map-generate invalid JSON: %s", raw_content[:500])
+        raise HTTPException(status_code=502, detail="AI returned invalid JSON")
+
+    screens = parsed.get("screens", []) if isinstance(parsed.get("screens"), list) else []
+    coverage = parsed.get("coverage", {}) if isinstance(parsed.get("coverage"), dict) else {}
+    return ScreenMapResponse(screens=screens, coverage=coverage)
 
 
 # ─── New Pipeline: HLD Generation (Track E) ──────────────────────────────────

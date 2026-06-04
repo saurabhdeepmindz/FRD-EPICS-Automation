@@ -152,14 +152,30 @@ export class HldService {
 
   /** Build a compact screen-context string from the latest wireframe set. */
   private async buildWireframeContext(projectId: string): Promise<string> {
-    const set = await this.prisma.baWireframeSet.findFirst({
-      where: { projectId },
-      orderBy: { createdAt: 'desc' },
-      include: { screens: { orderBy: { sequenceNum: 'asc' }, select: { title: true, slug: true, pattern: true } } },
-    });
+    // Prefer the PRD-sourced (PIPELINE) wireframe set so the HLD is grounded in the
+    // screen↔feature mapping; fall back to any latest set (e.g. Discovery) otherwise.
+    const screensSelect = {
+      orderBy: { sequenceNum: 'asc' as const },
+      select: { title: true, slug: true, pattern: true, meta: true },
+    };
+    const set =
+      (await this.prisma.baWireframeSet.findFirst({
+        where: { projectId, source: 'PIPELINE' },
+        orderBy: { createdAt: 'desc' },
+        include: { screens: screensSelect },
+      })) ??
+      (await this.prisma.baWireframeSet.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: 'desc' },
+        include: { screens: screensSelect },
+      }));
     if (!set || !set.screens.length) return '';
     return set.screens
-      .map((s) => `- ${s.title} (${s.slug})${s.pattern ? ` · pattern: ${s.pattern}` : ''}`)
+      .map((s) => {
+        const frRefs = (s.meta as { frRefs?: string[] } | null)?.frRefs ?? [];
+        const refs = frRefs.length ? ` · FRs: ${frRefs.join(', ')}` : '';
+        return `- ${s.title} (${s.slug})${s.pattern ? ` · pattern: ${s.pattern}` : ''}${refs}`;
+      })
       .join('\n');
   }
 

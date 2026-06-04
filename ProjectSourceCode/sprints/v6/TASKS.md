@@ -226,9 +226,9 @@
   - Files: `frontend/app/ba-tool/project/[id]/project-prd/page.tsx`
   - Effort: M
 
-### Track W — Draft Review & PRD Metadata (PLAN — DEFERRED)
-- [ ] **W-01:** Optional draft-review stage — per-section Accept/Edit/Skip + progress (X/22, accepted/edited/skipped/pending) before finalizing, matching the old "PRD Draft Review". (New pipeline currently creates directly + edits inline.)
-- [ ] **W-02:** PRD-level metadata (PRD Code, Client Name, Submitted By) on the new PRD + **version history UI** (view/compare/restore — `/project-prd/versions` API already exists).
+### Track W — Draft Review & PRD Metadata (✅ delivered in v7, Tracks X+W)
+- [x] **W-01:** Optional draft-review stage — per-section Accept/Edit/Skip + progress (X/22, accepted/edited/skipped/pending) before finalizing, matching the old "PRD Draft Review". (New pipeline currently creates directly + edits inline.)
+- [x] **W-02:** PRD-level metadata (PRD Code, Client Name, Submitted By) on the new PRD + **version history UI** (view/compare/restore — `/project-prd/versions` API already exists).
 
 ---
 
@@ -260,13 +260,13 @@
 
 ## Acceptance Criteria — Sprint Complete
 
-- [ ] Gaps persist on the PRD across refreshes; a BA can answer them in-place (voice or text); answers merge into the right sections and remaining gaps shrink
-- [ ] Answering gaps creates a new PRD version, re-exports the markdown, and fires forward propagation
-- [ ] Any section field is editable inline with AI Suggest + Mic; AI text renders blue, human edits in ink; a locked field survives regeneration
-- [ ] The 22 canonical sections are never exceeded — AI enrichment lands within sections or in §22 tagged `[AI] [NEW]`
-- [ ] A PRD change flags downstream HLD + E2E flows + module artifacts (not just modules) with a change-impact report and CHANGELOG entry
-- [ ] Every downstream page (HLD, E2E, Implementation) shows an accurate freshness banner derived from `sourceArtifactVersions`
-- [ ] `triggeredBy` + `sourceArtifactVersions` are populated on every PRD/HLD/E2E generation (M-06 closed)
-- [ ] Track I-03 is satisfied — impact data is surfaced in-UI via the freshness banner
-- [ ] `section-normalizer` round-trips legacy flat `[AI]` data without loss; all readers (export, FrdView, RTM, context-engineering) go through the seam
-- [ ] No regressions on existing routes; TypeScript compiles clean (`tsc --noEmit`) on backend + frontend
+- [x] Gaps persist on the PRD across refreshes; a BA can answer them in-place (voice or text); answers merge into the right sections and remaining gaps shrink
+- [x] Answering gaps creates a new PRD version, re-exports the markdown, and fires forward propagation
+- [x] Any section field is editable inline with AI Suggest + Mic; AI text renders blue, human edits in ink; a locked field survives regeneration
+- [x] The 22 canonical sections are never exceeded — AI enrichment lands within sections or in §22 tagged `[AI] [NEW]`
+- [x] A PRD change flags downstream HLD + E2E flows + module artifacts (not just modules) with a change-impact report and CHANGELOG entry
+- [x] Every downstream page (HLD, E2E, Implementation) shows an accurate freshness banner derived from `sourceArtifactVersions`
+- [x] `triggeredBy` + `sourceArtifactVersions` are populated on every PRD/HLD/E2E generation (M-06 closed)
+- [x] Track I-03 is satisfied — impact data is surfaced in-UI via the freshness banner
+- [x] `section-normalizer` round-trips legacy flat `[AI]` data without loss; all readers (export, FrdView, RTM, context-engineering) go through the seam
+- [x] No regressions on existing routes; TypeScript compiles clean (`tsc --noEmit`) on backend + frontend
