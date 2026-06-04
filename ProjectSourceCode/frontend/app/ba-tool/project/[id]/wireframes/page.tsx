@@ -30,6 +30,7 @@ import {
   generateLoFiWireframes,
   generateHiFiWireframes,
   regenerateLoFiWithAI,
+  setLoFiVariant,
   uploadWireframes,
   getWireframeNavigator,
   wireframeZipUrl,
@@ -106,6 +107,21 @@ export default function WireframesPage() {
       setError(errMsg(err));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const onSetVariant = async (slug: string, variant: 'deterministic' | 'ai') => {
+    // optimistic update, then persist
+    setWf((prev) => ({
+      ...prev,
+      lofi: prev.lofi.map((s) => (s.slug === slug ? { ...s, activeVariant: variant } : s)),
+    }));
+    setModalScreen((m) => (m && m.slug === slug ? { ...m, activeVariant: variant } : m));
+    try {
+      await setLoFiVariant(projectId, slug, variant);
+    } catch (err) {
+      setError(errMsg(err));
+      await refreshWf();
     }
   };
 
@@ -250,6 +266,7 @@ export default function WireframesPage() {
                 selected={selected}
                 onToggle={toggleSelected}
                 onOpen={setModalScreen}
+                onSetVariant={onSetVariant}
               />
             </Section>
 
@@ -303,12 +320,45 @@ export default function WireframesPage() {
                 <Button size="sm" variant="ghost" onClick={() => setModalScreen(null)}><X className="h-4 w-4" /></Button>
               </div>
             </div>
-            <iframe
-              title={modalScreen.title}
-              sandbox=""
-              srcDoc={modalScreen.htmlContent ?? '<p style="font:13px system-ui;color:#999;padding:16px">No preview</p>'}
-              className="flex-1 w-full rounded-b-lg bg-white"
-            />
+            {modalScreen.aiHtmlContent ? (
+              // Side-by-side compare (HH-02): deterministic vs AI, with "Set active".
+              <div className="flex-1 grid grid-cols-2 gap-px bg-gray-200 overflow-hidden rounded-b-lg">
+                {(['deterministic', 'ai'] as const).map((v) => {
+                  const isActive = (modalScreen.activeVariant === 'ai' ? 'ai' : 'deterministic') === v;
+                  const html = v === 'ai' ? modalScreen.aiHtmlContent : modalScreen.htmlContent;
+                  return (
+                    <div key={v} className="flex flex-col bg-white min-h-0">
+                      <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-gray-50">
+                        <span className="text-xs font-semibold text-gray-700">{v === 'ai' ? 'AI' : 'Deterministic'}</span>
+                        {isActive ? (
+                          <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">active</span>
+                        ) : (
+                          <button
+                            className="ml-auto text-[11px] font-medium px-2 py-0.5 rounded bg-gray-900 text-white"
+                            onClick={() => onSetVariant(modalScreen.slug, v)}
+                          >
+                            Set active
+                          </button>
+                        )}
+                      </div>
+                      <iframe
+                        title={`${modalScreen.title} (${v})`}
+                        sandbox=""
+                        srcDoc={html ?? '<p style="font:13px system-ui;color:#999;padding:16px">No preview</p>'}
+                        className="flex-1 w-full bg-white"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <iframe
+                title={modalScreen.title}
+                sandbox=""
+                srcDoc={modalScreen.htmlContent ?? '<p style="font:13px system-ui;color:#999;padding:16px">No preview</p>'}
+                className="flex-1 w-full rounded-b-lg bg-white"
+              />
+            )}
           </div>
         </div>
       )}
@@ -394,6 +444,7 @@ function Gallery({
   selected,
   onToggle,
   onOpen,
+  onSetVariant,
 }: {
   screens: PipelineWireframeScreen[];
   emptyHint: string;
@@ -401,6 +452,7 @@ function Gallery({
   selected?: Set<string>;
   onToggle?: (slug: string) => void;
   onOpen?: (screen: PipelineWireframeScreen) => void;
+  onSetVariant?: (slug: string, variant: 'deterministic' | 'ai') => void;
 }) {
   if (!screens.length) {
     return (
@@ -416,6 +468,9 @@ function Gallery({
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {screens.map((s) => {
         const isSel = !!selected?.has(s.slug);
+        const hasAi = !!s.aiHtmlContent;
+        const active = s.activeVariant === 'ai' && hasAi ? 'ai' : 'deterministic';
+        const shownHtml = active === 'ai' ? s.aiHtmlContent : s.htmlContent;
         return (
           <div key={s.id} className={`border rounded-lg overflow-hidden bg-white transition ${isSel ? 'ring-2 ring-gray-900 border-gray-900' : ''}`}>
             <div className="flex items-center gap-2 px-3 py-2 border-b bg-gray-50">
@@ -435,6 +490,23 @@ function Gallery({
                 <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">uploaded</span>
               )}
             </div>
+            {/* Variant toggle (only when an AI variant exists). Sets the active variant. */}
+            {hasAi && onSetVariant && (
+              <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-white">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 mr-1">Variant</span>
+                {(['deterministic', 'ai'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => onSetVariant(s.slug, v)}
+                    className={`text-[11px] font-medium px-2 py-0.5 rounded ${active === v ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    title={`Use the ${v} variant (drives navigator/export)`}
+                  >
+                    {v === 'ai' ? 'AI' : 'Deterministic'}{active === v ? ' ✓' : ''}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* Preview is click-to-open; an overlay captures the click (iframe is inert). */}
             <button
               type="button"
@@ -445,11 +517,14 @@ function Gallery({
               <iframe
                 title={s.title}
                 sandbox=""
-                srcDoc={s.htmlContent ?? '<p style="font:13px system-ui;color:#999;padding:12px">No preview</p>'}
+                srcDoc={shownHtml ?? '<p style="font:13px system-ui;color:#999;padding:12px">No preview</p>'}
                 className="w-full h-full bg-white pointer-events-none"
               />
+              <span className="absolute top-2 left-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-black/60 text-white">
+                {active === 'ai' ? 'AI' : 'Deterministic'}
+              </span>
               <span className="absolute inset-0 group-hover:bg-gray-900/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                <span className="text-xs font-medium bg-gray-900 text-white px-2 py-1 rounded">Open</span>
+                <span className="text-xs font-medium bg-gray-900 text-white px-2 py-1 rounded">Open{hasAi ? ' / compare' : ''}</span>
               </span>
             </button>
           </div>

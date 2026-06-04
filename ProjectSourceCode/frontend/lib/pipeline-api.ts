@@ -1172,7 +1172,9 @@ export interface PipelineWireframeScreen {
   id: string;
   slug: string;
   title: string;
-  htmlContent: string | null;
+  htmlContent: string | null; // deterministic variant (always present)
+  aiHtmlContent?: string | null; // AI variant (HH-01), or null
+  activeVariant?: 'deterministic' | 'ai';
   uploaded: boolean;
 }
 
@@ -1207,6 +1209,19 @@ export async function generateLoFiWireframes(
     `/ba/projects/${projectId}/wireframes/generate-lofi`,
     {},
     { timeout: 300_000 },
+  );
+  return data.data;
+}
+
+/** HH-01 — set which lo-fi variant ('deterministic' | 'ai') is active for a screen. */
+export async function setLoFiVariant(
+  projectId: string,
+  slug: string,
+  variant: 'deterministic' | 'ai',
+): Promise<{ slug: string; activeVariant: string }> {
+  const { data } = await api.post<ApiEnvelope<{ slug: string; activeVariant: string }>>(
+    `/ba/projects/${projectId}/wireframes/screen-variant`,
+    { slug, variant },
   );
   return data.data;
 }

@@ -530,6 +530,18 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track HH — Coexisting lo-fi variants (deterministic + AI) + active selection — Sprint v9, ✅ COMPLETE (2026-06-04)
+
+> **Decision (2026-06-04):** AI lo-fi no longer overwrites the deterministic wireframe — both variants coexist per screen. UX: per-card `[Deterministic | AI]` toggle + modal side-by-side compare + an "active" marker. Active variant (user-chosen, default deterministic) drives navigator/zip/export. Hi-fi stays checkbox-driven.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | HH-01 | BE: AI lo-fi as `meta.aiHtml` variant (keep deterministic `htmlContent`) + `meta.activeVariant` + set-variant route + navigator uses active | `regenerateLoFiWithAI`; navigator | no migration (meta JSON) |
+| ✅ | HH-02 | FE: card `[Deterministic\|AI]` toggle + modal compare + active marker | `/wireframes` Gallery | persists active via API |
+| ✅ | HH-03 | Smoke + tsc clean | — | — |
+
+---
+
 ### HLD Template
 
 > **Status:** ✅ User shared HRMS-HLD-Consolidated-v2.1.1 (63 pages). 17 section keys derived and implemented in `BaHld` model and stub AI endpoint.
