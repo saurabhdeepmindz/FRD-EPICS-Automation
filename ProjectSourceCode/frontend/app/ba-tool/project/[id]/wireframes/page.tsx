@@ -13,6 +13,9 @@ import {
   FolderOpen,
   Image as ImageIcon,
   Users,
+  Palette,
+  LayoutGrid,
+  Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -24,6 +27,8 @@ import {
   generateLoFiWireframes,
   generateHiFiWireframes,
   uploadWireframes,
+  getWireframeNavigator,
+  wireframeZipUrl,
   type ScreenMap,
   type PipelineWireframes,
   type PipelineWireframeScreen,
@@ -98,6 +103,17 @@ export default function WireframesPage() {
     }
   };
 
+  const openNavigator = async (kind: 'lofi' | 'hifi') => {
+    setError(null);
+    try {
+      const html = await getWireframeNavigator(projectId, kind);
+      const w = window.open('', '_blank');
+      if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -115,9 +131,19 @@ export default function WireframesPage() {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Link href={`/ba-tool/project/${projectId}/project-prd`}>
-            <Button variant="outline" size="sm">← PRD+FRD</Button>
+          <Link href={`/ba-tool/project/${projectId}/design-system`}>
+            <Button variant="outline" size="sm"><Palette className="h-4 w-4 mr-1" /> Design System</Button>
           </Link>
+          {(wf.lofi.length > 0 || wf.hifi.length > 0) && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => openNavigator(wf.hifi.length > 0 ? 'hifi' : 'lofi')}>
+                <LayoutGrid className="h-4 w-4 mr-1" /> Open navigator
+              </Button>
+              <a href={wireframeZipUrl(projectId, wf.hifi.length > 0 ? 'hifi' : 'lofi')}>
+                <Button variant="outline" size="sm"><Download className="h-4 w-4 mr-1" /> Zip</Button>
+              </a>
+            </>
+          )}
           <Link href={`/ba-tool/project/${projectId}/hld`}>
             <Button variant="outline" size="sm">HLD →</Button>
           </Link>

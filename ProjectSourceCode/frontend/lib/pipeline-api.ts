@@ -2,7 +2,7 @@
  * New Pipeline — Frontend API client.
  * Customer Discovery → PRD+FRD → HLD → Code. Endpoints under /api/ba/projects/:id/*.
  */
-import { api } from './api';
+import { api, API_BASE } from './api';
 
 // ─── Customer Inputs (Track B) ───────────────────────────────────────────────
 
@@ -1233,4 +1233,118 @@ export async function uploadWireframes(
     { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
   );
   return data.data;
+}
+
+// ─── Design System / Look & Feel Studio (Track CC) ───────────────────────────
+
+export interface DesignTokens {
+  brand: { productName: string; primary: string; cta: string; ctaHover: string; surface: string };
+  neutral: { bgPage: string; bgSoft: string; textPrimary: string; textMuted: string; textSubtle: string; border: string; borderMedium: string };
+  semantic: { success: string; warning: string; danger: string; info: string; teal: string; purple: string };
+  modulePalette: { mode: 'auto' | 'manual'; colors: Record<string, string> };
+  personaPalette: { employee: string; manager: string; hrAdmin: string; finance: string; admin: string; visitor: string };
+  typography: { uiFont: string; monoFont: string; baseSize: number; weightNormal: number; weightBold: number };
+  shape: { radiusCard: number; radiusPill: number; density: 'comfortable' | 'compact'; elevation: 'flat' | 'soft' | 'raised' };
+  platform: { mobileFrameWidth: number; breakpointMobile: number; breakpointTablet: number; touchTarget: number };
+}
+
+export interface DesignLogo {
+  dataUri: string;
+  fileName: string;
+  mimeType: string;
+}
+
+export interface DesignSystem {
+  id: string;
+  version: number;
+  status: string;
+  tokens: DesignTokens;
+  logo: DesignLogo | null;
+  presetId: string | null;
+  sourceArtifactVersions: { prdVersion?: number; screenMapVersion?: number } | null;
+}
+
+export interface DesignPreset {
+  id: string;
+  name: string;
+  scope: 'GLOBAL' | 'PROJECT';
+  tokens: DesignTokens;
+  isSeed: boolean;
+}
+
+export async function getDesignSystem(projectId: string): Promise<DesignSystem | null> {
+  const { data } = await api.get<ApiEnvelope<DesignSystem | null>>(`/ba/projects/${projectId}/design-system`);
+  return data.data;
+}
+
+export async function saveDesignSystem(
+  projectId: string,
+  tokens: DesignTokens,
+  logo?: DesignLogo | null,
+  presetId?: string | null,
+): Promise<DesignSystem> {
+  const { data } = await api.put<ApiEnvelope<DesignSystem>>(
+    `/ba/projects/${projectId}/design-system`,
+    { tokens, logo: logo ?? null, presetId: presetId ?? null },
+  );
+  return data.data;
+}
+
+export async function uploadDesignLogo(projectId: string, file: File): Promise<DesignLogo> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<ApiEnvelope<DesignLogo>>(
+    `/ba/projects/${projectId}/design-system/logo`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return data.data;
+}
+
+/** Live preview HTML for a (possibly unsaved) token set. */
+export async function getDesignPreview(
+  projectId: string,
+  tokens: DesignTokens,
+  platform: 'web' | 'mobile',
+): Promise<string> {
+  const { data } = await api.post<ApiEnvelope<string>>(
+    `/ba/projects/${projectId}/design-system/preview`,
+    { tokens, platform },
+  );
+  return data.data;
+}
+
+export async function listDesignPresets(projectId: string): Promise<DesignPreset[]> {
+  const { data } = await api.get<ApiEnvelope<DesignPreset[]>>(`/ba/projects/${projectId}/design-presets`);
+  return data.data;
+}
+
+export async function getDesignPresetTokens(projectId: string, presetId: string): Promise<DesignTokens> {
+  const { data } = await api.get<ApiEnvelope<DesignTokens>>(`/ba/projects/${projectId}/design-presets/${presetId}`);
+  return data.data;
+}
+
+export async function saveDesignPreset(
+  projectId: string,
+  name: string,
+  tokens: DesignTokens,
+  scope: 'GLOBAL' | 'PROJECT',
+): Promise<DesignPreset> {
+  const { data } = await api.post<ApiEnvelope<DesignPreset>>(
+    `/ba/projects/${projectId}/design-presets`,
+    { name, tokens, scope },
+  );
+  return data.data;
+}
+
+// ─── Wireframe Navigator (Track DD) ──────────────────────────────────────────
+
+export async function getWireframeNavigator(projectId: string, kind: 'lofi' | 'hifi'): Promise<string> {
+  const { data } = await api.get<ApiEnvelope<string>>(`/ba/projects/${projectId}/wireframes/navigator?kind=${kind}`);
+  return data.data;
+}
+
+/** Direct download URL for the wireframe zip (index.html + all screens). */
+export function wireframeZipUrl(projectId: string, kind: 'lofi' | 'hifi'): string {
+  return `${API_BASE}/api/ba/projects/${projectId}/wireframes/export-zip?kind=${kind}`;
 }

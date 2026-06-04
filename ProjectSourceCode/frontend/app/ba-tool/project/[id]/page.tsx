@@ -20,7 +20,7 @@ import {
   MODULE_STATUS_COLORS,
 } from '@/lib/ba-api';
 import { BurndownChart } from '@/components/ba-tool/BurndownChart';
-import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock, BookOpen, Mic, Inbox, FileText, Layers, Code2, Workflow, LayoutTemplate } from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, FolderOpen, ChevronRight, BarChart3, List, AlertTriangle, Download, Save, Edit3, Ruler, CheckCircle2, XCircle, Ban, Clock, Bug, CalendarClock, BookOpen, Mic, Inbox, FileText, Layers, Code2, Workflow, LayoutTemplate, Palette } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -203,6 +203,12 @@ export default function BaProjectWorkspacePage() {
             <Link href={`/ba-tool/project/${projectId}/project-prd`}>
               <FileText className="h-3.5 w-3.5 mr-1" />
               PRD+FRD
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild title="New Pipeline — Look & Feel / Design System Studio">
+            <Link href={`/ba-tool/project/${projectId}/design-system`}>
+              <Palette className="h-3.5 w-3.5 mr-1" />
+              Design System
             </Link>
           </Button>
           <Button size="sm" variant="outline" asChild title="New Pipeline — PRD-sourced Wireframes (lo-fi & hi-fi)">

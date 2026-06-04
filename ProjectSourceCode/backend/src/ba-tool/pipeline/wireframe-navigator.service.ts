@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import AdmZip from 'adm-zip';
+import * as AdmZip from 'adm-zip';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectFolderService } from './project-folder.service';
 import { DesignSystemService } from './design-system.service';
@@ -30,7 +30,7 @@ function esc(s: unknown): string {
 }
 
 /** Module key from a §6 FR-ID, e.g. "FR-AUTH-001" → "AUTH". */
-function moduleKeyFromFr(fr: string): string | null {
+export function moduleKeyFromFr(fr: string): string | null {
   const m = /^FR-([A-Za-z0-9]+)-/.exec(fr.trim());
   return m ? m[1].toUpperCase() : null;
 }
