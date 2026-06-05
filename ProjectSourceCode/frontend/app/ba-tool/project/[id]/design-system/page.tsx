@@ -53,6 +53,25 @@ const FALLBACK: DesignTokens = {
   platform: { mobileFrameWidth: 390, breakpointMobile: 480, breakpointTablet: 980, touchTarget: 44 },
 };
 
+/** Backfill any missing groups (esp. diagramPalette) onto loaded/preset tokens. */
+function withDefaults(t: Partial<DesignTokens> | null | undefined): DesignTokens {
+  const d = FALLBACK;
+  const dp = (t?.diagramPalette ?? {}) as Partial<DesignTokens['diagramPalette']>;
+  return {
+    ...d,
+    ...(t ?? {}),
+    diagramPalette: {
+      frontend: { ...d.diagramPalette.frontend, ...(dp.frontend ?? {}) },
+      backend: { ...d.diagramPalette.backend, ...(dp.backend ?? {}) },
+      calcEngine: { ...d.diagramPalette.calcEngine, ...(dp.calcEngine ?? {}) },
+      shared: { ...d.diagramPalette.shared, ...(dp.shared ?? {}) },
+      db: { ...d.diagramPalette.db, ...(dp.db ?? {}) },
+      config: { ...d.diagramPalette.config, ...(dp.config ?? {}) },
+      node: { ...d.diagramPalette.node, ...(dp.node ?? {}) },
+    },
+  };
+}
+
 function errMsg(err: unknown): string {
   return (
     (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -92,12 +111,12 @@ export default function DesignSystemPage() {
       const [ds, pl] = await Promise.all([getDesignSystem(projectId), listDesignPresets(projectId)]);
       setPresets(pl);
       if (ds) {
-        setTokens(ds.tokens);
+        setTokens(withDefaults(ds.tokens));
         setLogo(ds.logo);
         setPresetId(ds.presetId);
       } else {
         const seed = pl.find((p) => p.name.startsWith('Deepmindz')) ?? pl[0];
-        setTokens(seed?.tokens ?? FALLBACK);
+        setTokens(withDefaults(seed?.tokens));
         setPresetId(seed?.id ?? null);
       }
     } finally {
@@ -134,10 +153,16 @@ export default function DesignSystemPage() {
   const set = <K extends keyof DesignTokens>(group: K, patch: Partial<DesignTokens[K]>) =>
     setTokens((t) => (t ? { ...t, [group]: { ...t[group], ...patch } } : t));
 
+  // Nested setter for the diagram palette (layer → fill/border/text).
+  const setLayer = (layer: keyof DesignTokens['diagramPalette'], field: 'fill' | 'border' | 'text', value: string) =>
+    setTokens((t) =>
+      t ? { ...t, diagramPalette: { ...t.diagramPalette, [layer]: { ...t.diagramPalette[layer], [field]: value } } } : t,
+    );
+
   const onApplyPreset = async (id: string) => {
     setError(null);
     try {
-      const t = await getDesignPresetTokens(projectId, id);
+      const t = withDefaults(await getDesignPresetTokens(projectId, id));
       setTokens({ ...t, brand: { ...t.brand, productName: tokens.brand.productName } });
       setPresetId(id);
     } catch (err) {
@@ -337,6 +362,35 @@ export default function DesignSystemPage() {
             </div>
           </Group>
 
+          {/* Diagram palette — architecture + project-structure diagrams */}
+          <Group title="Diagram palette" icon={<Palette className="h-4 w-4" />}>
+            <p className="text-xs text-gray-400 mb-3">Pastel layers used by the HLD architecture diagrams &amp; the project-structure grid. Each layer has a box fill, border, and label color.</p>
+            <div className="space-y-2.5">
+              {([
+                ['frontend', 'Frontend'], ['backend', 'Backend'], ['calcEngine', 'Calc Engine'],
+                ['shared', 'Shared Pkgs'], ['db', 'DB Tables'], ['config', 'Config / Files'], ['node', 'Generic node'],
+              ] as [keyof DesignTokens['diagramPalette'], string][]).map(([key, label]) => {
+                const c = tokens.diagramPalette?.[key] ?? FALLBACK.diagramPalette[key];
+                return (
+                  <div key={key} className="flex items-center gap-3">
+                    <span
+                      className="shrink-0 w-28 text-xs font-medium rounded-md px-2 py-1.5 border text-center"
+                      style={{ background: c.fill, borderColor: c.border, color: c.text }}
+                      title="Live sample"
+                    >
+                      {label}
+                    </span>
+                    <div className="grid grid-cols-3 gap-2 flex-1">
+                      <SwatchInput label="Fill" value={c.fill} onChange={(v) => setLayer(key, 'fill', v)} />
+                      <SwatchInput label="Border" value={c.border} onChange={(v) => setLayer(key, 'border', v)} />
+                      <SwatchInput label="Text" value={c.text} onChange={(v) => setLayer(key, 'text', v)} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Group>
+
           {/* Typography */}
           <Group title="Typography">
             <div className="grid grid-cols-2 gap-3">
@@ -414,6 +468,18 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
       <div className="mt-1 flex items-center gap-2">
         <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-9 rounded border cursor-pointer p-0" />
         <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm font-mono" />
+      </div>
+    </label>
+  );
+}
+
+function SwatchInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] uppercase tracking-wide text-gray-400">{label}</span>
+      <div className="mt-0.5 flex items-center gap-1.5">
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-7 w-7 rounded border cursor-pointer p-0 shrink-0" />
+        <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full border rounded px-1.5 py-1 text-xs font-mono" />
       </div>
     </label>
   );

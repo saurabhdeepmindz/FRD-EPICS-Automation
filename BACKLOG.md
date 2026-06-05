@@ -530,6 +530,17 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track LL — Design System Studio: diagram-palette editor — Sprint v9, ✅ COMPLETE (2026-06-05)
+
+> **Decision (2026-06-05):** surface the `diagramPalette` in the Studio so a UX resource can recolor the 7 diagram layers per project; edits flow to the HLD diagrams + project-structure grid. Frontend-only.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | LL-01 | "Diagram palette" group (7 layers × fill/border/text + sample chip) + `setLayer` + `withDefaults` legacy backfill | Studio page; `diagramPalette` | fixes crash on pre-palette saved tokens |
+| ✅ | LL-02 | tsc + Playwright (group, 7 layers, 43 colour inputs) | — | — |
+
+---
+
 ### Track KK — Pastel diagram palette (in Design System) + project-structure diagram — Sprint v9, ✅ COMPLETE (2026-06-04)
 
 > **Decision (2026-06-04):** add the reference diagram's exact pastel palette **into the Design System** (`diagramPalette`) and drive both the architecture (Mermaid) diagrams and a new **project-structure diagram** (pastel HTML grid + legend) from it. Structure derived deterministically from the project's §6 modules + stack.
