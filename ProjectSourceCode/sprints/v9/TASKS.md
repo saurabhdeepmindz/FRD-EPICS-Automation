@@ -87,6 +87,20 @@
 
 ---
 
+## Track LL — Design System Studio: diagram-palette editor (follow-on, added 2026-06-05)
+
+> **Status:** ✅ COMPLETE (2026-06-05) — shipped on `feat/v9-studio-diagram-palette`. Adds a **"Diagram palette"** group to the Studio so a UX resource can recolor the 7 diagram layers (fill/border/text) per project; edits persist and flow to the HLD architecture diagrams + project-structure grid. Frontend-only.
+
+- [x] **LL-01 (FE):** "Diagram palette" group (7 layers × fill/border/text via compact `SwatchInput` + a live sample chip per layer); nested `setLayer` updater; **`withDefaults` backfill** so design systems/presets saved before `diagramPalette` existed don't crash (merge onto defaults on load/apply) + defensive render guard.
+- [x] **LL-02:** `tsc` clean; Playwright verified (group present, 7 layer labels, 43 colour inputs, no runtime error).
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 33 | Studio | LL-01 | P1 | S | Diagram-palette editor + legacy-token backfill |
+| 34 | Wire-up | LL-02 | P1 | S | tsc + Playwright |
+
+---
+
 ## Track KK — Pastel diagram palette (in Design System) + project-structure diagram (follow-on, added 2026-06-04)
 
 > **Status:** ✅ COMPLETE (2026-06-04) — shipped on `feat/v9-pastel-diagrams`. **Decisions (user):** add the reference diagram's **exact pastel palette into the Design System** and drive **both** the architecture (Mermaid) diagrams and a new **project-structure diagram** from it; structure rendered as a **pastel HTML grid** (grouped boxes + legend) like the attached. Verified (Playwright + screenshot): Mermaid renders pastel (10 svg); §17 grid shows monorepo groups (frontend/backend/db/shared/config) + legend, items derived from the project's modules ("Luggage Room").
