@@ -8,7 +8,7 @@ Adds a **References** capability to the HLD Architect Copilot so an architect ca
 
 When a source is added it is **ingested** (URL fetched + main text extracted, or document text extracted), **summarized** by the LLM, and stored. Included references are **injected into the `/hld-chat` context** so the Copilot's answers use them. References live in a new **"References" tab** in the Copilot drawer.
 
-This is the ad-hoc, per-HLD complement to the deferred **HD-10** (cross-project HLD repository + vector RAG): References v1 uses **summarize-and-inject** (no vector store); the same sources can later feed HD-10's vector store for deep retrieval — no rework of the UI contract.
+This is the ad-hoc, per-HLD complement to the deferred **HD-10** (cross-project HLD repository + vector RAG): References v1 uses **summarize-and-inject** (no vector store). The deferred **HD-13 (RAG upgrade for References)** later swaps in chunk → embed → top-k retrieval over these same sources, sharing HD-10's vector store — **no rework of the UI contract**.
 
 ## Decisions (user, 2026-06-07)
 
@@ -38,7 +38,7 @@ This is the ad-hoc, per-HLD complement to the deferred **HD-10** (cross-project 
 
 ## Out of scope (deferred)
 
-- Vector/semantic retrieval over references (chunk + embed + top-k) → **HD-10**.
+- Vector/semantic retrieval over references (chunk + embed + top-k) → **HD-13** (RAG upgrade for References; shares HD-10's vector store).
 - Recursive crawling / multi-page sites (v1 fetches the single given URL).
 - JS-rendered scraping (headless browser) — v1 is static fetch; note when content is thin.
 - Auto-refresh of URL content on a schedule.

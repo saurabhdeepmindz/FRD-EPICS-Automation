@@ -71,4 +71,4 @@
 
 ## Backlog linkage
 
-Supersedes the placeholder ideas; tracked here as **HD-11 (reference URLs)** + **HD-12 (reference documents)** in `backlog-hld-enhancement.md`. Deep semantic retrieval over these sources remains **HD-10** (RAG repository).
+Supersedes the placeholder ideas; tracked here as **HD-11 (reference URLs)** + **HD-12 (reference documents)** in `backlog-hld-enhancement.md`. Deep semantic retrieval over these sources is the deferred **HD-13 (RAG upgrade for References)** — chunk → embed → top-k, sharing the same vector store as **HD-10** (HLD repository). v1 here is summarize-and-inject; HD-13 swaps in retrieval with **no UI-contract change**.
