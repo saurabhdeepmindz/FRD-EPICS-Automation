@@ -151,6 +151,21 @@ export class HldCopilotController {
     return { success: true, data };
   }
 
+  /** POST .../hld/:hldId/copilot/save-from-library — borrow source-HLD sections into this section's Saved. */
+  @Post(':hldId/copilot/save-from-library')
+  async saveFromLibrary(
+    @Param('hldId', ParseUUIDPipe) hldId: string,
+    @Body() body: { sourceHldId: string; sectionKeys: string[]; targetSectionKey: string },
+  ) {
+    const data = await this.copilot.saveFromLibrary(
+      hldId,
+      body.targetSectionKey,
+      body.sourceHldId,
+      body.sectionKeys ?? [],
+    );
+    return { success: true, data };
+  }
+
   /** POST .../hld/:hldId/copilot/save-insight — flag/unflag a message as saved. */
   @Post(':hldId/copilot/save-insight')
   async saveInsight(@Body() body: { messageId: string; saved: boolean }) {

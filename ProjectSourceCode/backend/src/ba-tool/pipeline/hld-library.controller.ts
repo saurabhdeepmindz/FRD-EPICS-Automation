@@ -39,4 +39,11 @@ export class HldLibraryController {
     const data = await this.library.search(q ?? '');
     return { success: true, data };
   }
+
+  /** GET /ba/hld-library/:hldId — a source HLD's sections (for the "borrow sections" browser). */
+  @Get('hld-library/:hldId')
+  async sections(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.library.getHldSections(hldId);
+    return { success: true, data };
+  }
 }

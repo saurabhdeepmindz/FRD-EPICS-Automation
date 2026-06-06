@@ -799,6 +799,37 @@ export async function searchHldLibrary(q: string): Promise<HldSimilarHit[]> {
   return data.data;
 }
 
+export interface HldLibrarySection {
+  key: string;
+  name: string;
+  preview: string;
+  text: string;
+}
+export interface HldLibraryDetail {
+  hldId: string;
+  productName: string;
+  sections: HldLibrarySection[];
+}
+
+/** A source HLD's sections (for the "borrow sections" browser). */
+export async function getLibraryHldSections(hldId: string): Promise<HldLibraryDetail> {
+  const { data } = await api.get<ApiEnvelope<HldLibraryDetail>>(`/ba/hld-library/${hldId}`);
+  return data.data;
+}
+
+/** Borrow selected source-HLD sections into the current section's Saved insights. */
+export async function saveFromLibrary(
+  projectId: string,
+  hldId: string,
+  body: { sourceHldId: string; sectionKeys: string[]; targetSectionKey: string },
+): Promise<{ saved: number }> {
+  const { data } = await api.post<ApiEnvelope<{ saved: number }>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/save-from-library`,
+    body,
+  );
+  return data.data;
+}
+
 // ─── Project structure diagram (v9 Track KK) ─────────────────────────────────
 
 export type StructureLayer = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';

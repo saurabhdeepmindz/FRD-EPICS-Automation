@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { HLD_SECTION_NAMES, HLD_SECTION_ORDER } from './project-hld.service';
 import { BUILTIN_ARCH_TEMPLATES, libraryTemplateToHld, type HldTemplate } from './hld-templates';
 import { HldReferencesService } from './hld-references.service';
+import { HldLibraryService } from './hld-library.service';
 
 /**
  * HLD Architect Copilot (Sprint v10 / Track C). Per-section conversational AI:
@@ -21,6 +22,7 @@ export class HldCopilotService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly references: HldReferencesService,
+    private readonly library: HldLibraryService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
   }
@@ -162,6 +164,42 @@ export class HldCopilotService {
       },
     });
     return thread?.messages ?? [];
+  }
+
+  /**
+   * Borrow sections from another (library) HLD into the current section's Saved
+   * insights, so they can be synthesized into the section being authored.
+   */
+  async saveFromLibrary(
+    targetHldId: string,
+    targetSectionKey: string,
+    sourceHldId: string,
+    sectionKeys: string[],
+  ): Promise<{ saved: number }> {
+    const target = await this.prisma.baHld.findUnique({ where: { id: targetHldId }, select: { id: true } });
+    if (!target) throw new NotFoundException(`HLD ${targetHldId} not found`);
+    const src = await this.library.getHldSections(sourceHldId);
+    const picked = src.sections.filter((s) => sectionKeys.includes(s.key));
+    if (!picked.length) throw new BadRequestException('No sections selected.');
+
+    const thread = await this.prisma.baHldThread.upsert({
+      where: { hldId_sectionKey: { hldId: targetHldId, sectionKey: targetSectionKey } },
+      create: { hldId: targetHldId, sectionKey: targetSectionKey },
+      update: {},
+    });
+    for (const s of picked) {
+      await this.prisma.baHldMessage.create({
+        data: {
+          threadId: thread.id,
+          role: 'assistant',
+          model: `library:${src.productName}`,
+          content: `## ${s.name} — borrowed from ${src.productName}\n\n${s.text}`,
+          savedToSection: true,
+        },
+      });
+    }
+    this.logger.log(`Borrowed ${picked.length} section(s) from ${src.productName} into ${targetHldId}/${targetSectionKey}`);
+    return { saved: picked.length };
   }
 
   /** Flag (or unflag) a message as a saved insight. */
