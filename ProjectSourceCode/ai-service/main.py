@@ -2597,8 +2597,30 @@ async def _complete_text(
         return (response.choices[0].message.content or "").strip(), settings.OPENAI_MODEL
 
     if provider == "gemini":
-        # SDK/key not wired yet (deferred HD-03). The UI gates this off; guard anyway.
-        raise HTTPException(status_code=400, detail="Gemini is not configured yet. Choose Claude or OpenAI.")
+        if not settings.GEMINI_API_KEY:
+            raise HTTPException(status_code=400, detail="Gemini is not configured — set GEMINI_API_KEY.")
+        try:
+            import google.generativeai as genai  # lazy import; only needed when Gemini is used
+        except ImportError as exc:
+            raise HTTPException(status_code=400, detail="Gemini SDK not installed on the AI service.") from exc
+        try:
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            model_obj = genai.GenerativeModel(settings.GEMINI_MODEL, system_instruction=system)
+            contents = [
+                {"role": "model" if t["role"] == "assistant" else "user", "parts": [t["content"]]}
+                for t in turns
+            ]
+            contents.append({"role": "user", "parts": [user]})
+            resp = await model_obj.generate_content_async(
+                contents,
+                generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
+            )
+            return (resp.text or "").strip(), settings.GEMINI_MODEL
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — map any SDK error to a uniform 502
+            logger.error("Gemini error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable (Gemini)") from exc
 
     raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'.")
 

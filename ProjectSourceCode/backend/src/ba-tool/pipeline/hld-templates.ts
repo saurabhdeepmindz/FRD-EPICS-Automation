@@ -93,6 +93,90 @@ export const BUILTIN_ARCH_TEMPLATES: HldTemplate[] = [
       '- Trade-offs: high complexity and eventual consistency — reserve for domains that truly need auditability.',
     ].join('\n'),
   },
+  {
+    id: 'builtin:microservices',
+    name: 'Microservices (bounded contexts)',
+    summary: 'Independently deployable services per bounded context, each owning its data.',
+    source: 'builtin',
+    body: [
+      'Pattern: Microservices by bounded context.',
+      '- One service per business capability; database-per-service (no shared DB).',
+      '- Sync via API gateway, async via events; contracts versioned; observability is mandatory.',
+      '- Trade-offs: independent scale/deploy vs. distributed-systems complexity (latency, consistency, ops). Avoid prematurely; start modular-monolith.',
+    ].join('\n'),
+  },
+  {
+    id: 'builtin:modular-monolith',
+    name: 'Modular monolith',
+    summary: 'One deployable, strict internal module boundaries. The pragmatic default before microservices.',
+    source: 'builtin',
+    body: [
+      'Pattern: Modular monolith.',
+      '- Single deployable; enforce module boundaries (separate packages, explicit interfaces, no cross-module DB access).',
+      '- Easy to refactor and later extract a module into a service when a real scaling/ownership need appears.',
+      '- Trade-offs: simplest ops + fastest iteration; risk of erosion into a big ball of mud without discipline.',
+    ].join('\n'),
+  },
+  {
+    id: 'builtin:api-gateway-bff',
+    name: 'API Gateway + BFF',
+    summary: 'Edge gateway for cross-cutting concerns + a Backend-for-Frontend per client.',
+    source: 'builtin',
+    body: [
+      'Pattern: API Gateway + Backend-for-Frontend (BFF).',
+      '- Gateway handles authn, rate-limiting, routing, TLS; a BFF per client (web/mobile) tailors payloads + aggregation.',
+      '- Keeps clients simple and decouples them from internal service shape.',
+      '- Trade-offs: extra hop + components to operate; avoid putting business logic in the gateway.',
+    ].join('\n'),
+  },
+  {
+    id: 'builtin:serverless',
+    name: 'Serverless (FaaS + managed services)',
+    summary: 'Functions + managed queues/DB/auth. Scale-to-zero, pay-per-use, minimal ops.',
+    source: 'builtin',
+    body: [
+      'Pattern: Serverless.',
+      '- Event-driven functions (Lambda/Cloud Functions) over managed services (queues, DynamoDB/Firestore, auth, storage).',
+      '- Great for spiky/low-baseline workloads; minimal infra to run.',
+      '- Trade-offs: cold starts, execution/time limits, vendor lock-in, harder local testing + long-running jobs.',
+    ].join('\n'),
+  },
+  {
+    id: 'builtin:hexagonal',
+    name: 'Hexagonal / Clean architecture',
+    summary: 'Domain core isolated behind ports; adapters for DB/UI/external — highly testable.',
+    source: 'builtin',
+    body: [
+      'Pattern: Hexagonal (ports & adapters) / Clean architecture.',
+      '- Pure domain core depends on nothing; ports define interfaces; adapters implement DB/HTTP/queue/UI.',
+      '- Dependencies point inward; swap infrastructure without touching business rules; excellent unit-testability.',
+      '- Trade-offs: more indirection/boilerplate; worth it for complex, long-lived domains.',
+    ].join('\n'),
+  },
+  {
+    id: 'builtin:strangler-fig',
+    name: 'Strangler Fig (incremental migration)',
+    summary: 'Wrap a legacy system and replace it route-by-route behind a façade.',
+    source: 'builtin',
+    body: [
+      'Pattern: Strangler Fig migration.',
+      '- Put a façade/proxy in front of the legacy system; redirect one capability at a time to the new implementation.',
+      '- Ship continuously, reduce risk, retire the legacy once all routes are migrated.',
+      '- Trade-offs: dual-running cost + data-sync during transition; needs a clear seam + routing layer.',
+    ].join('\n'),
+  },
+  {
+    id: 'builtin:observability',
+    name: 'Observability stack (logs/metrics/traces)',
+    summary: 'Structured logs + metrics + distributed tracing with SLOs and alerting.',
+    source: 'builtin',
+    body: [
+      'Pattern: Observability baseline.',
+      '- Structured JSON logs, RED/USE metrics (Prometheus/Grafana), distributed tracing (OpenTelemetry), correlation IDs end-to-end.',
+      '- Define SLOs + alerts on symptoms (latency/error rate), dashboards per service; sample traces to control cost.',
+      '- Trade-offs: instrumentation effort + telemetry storage cost; non-negotiable for production microservices.',
+    ].join('\n'),
+  },
 ];
 
 /** Map a BaTemplate-like row into the shared HldTemplate shape. */

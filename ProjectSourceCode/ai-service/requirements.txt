@@ -10,3 +10,6 @@ httpx==0.27.0
 pytest==8.2.2
 pytest-asyncio==0.23.7
 httpx==0.27.0
+
+# Gemini provider (HD-03) — optional; used by the HLD Copilot model picker when GEMINI_API_KEY is set
+google-generativeai==0.8.6
