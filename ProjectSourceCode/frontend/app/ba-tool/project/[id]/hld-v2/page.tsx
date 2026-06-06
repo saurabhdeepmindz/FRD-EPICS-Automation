@@ -132,6 +132,9 @@ export default function HldV2Page() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <Link href={`/ba-tool/project/${projectId}/project-prd`}>
+            <Button variant="outline" size="sm">← PRD+FRD</Button>
+          </Link>
           {hld && (
             <>
               <div className="flex items-center rounded-lg border overflow-hidden">
