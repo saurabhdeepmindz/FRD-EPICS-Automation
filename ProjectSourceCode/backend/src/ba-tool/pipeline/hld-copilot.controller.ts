@@ -16,6 +16,13 @@ export class HldCopilotController {
     return { success: true, data };
   }
 
+  /** GET .../hld/copilot/templates — Architecture console (builtin + library). */
+  @Get('copilot/templates')
+  async templates(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.copilot.listTemplates(id);
+    return { success: true, data };
+  }
+
   /** GET .../hld/:hldId/copilot/thread?section=KEY — full conversation for a section. */
   @Get(':hldId/copilot/thread')
   async thread(

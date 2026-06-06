@@ -504,6 +504,22 @@ export interface HldChatMessage {
   createdAt: string;
 }
 
+export interface HldTemplate {
+  id: string;
+  name: string;
+  summary: string;
+  body: string;
+  source: 'builtin' | 'library';
+}
+
+/** Track D — Architecture console templates (builtin starter patterns + library). */
+export async function listHldTemplates(projectId: string): Promise<HldTemplate[]> {
+  const { data } = await api.get<ApiEnvelope<HldTemplate[]>>(
+    `/ba/projects/${projectId}/hld/copilot/templates`,
+  );
+  return data.data;
+}
+
 /** Which chat models are available (key-gated) — drives the model picker. */
 export async function listHldProviders(projectId: string): Promise<HldProvider[]> {
   const { data } = await api.get<ApiEnvelope<HldProvider[]>>(
