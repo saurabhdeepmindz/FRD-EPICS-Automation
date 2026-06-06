@@ -11,9 +11,9 @@ import {
   Sparkles,
   MessageSquare,
   Wand2,
-  Bot,
-  User,
   LayoutTemplate,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MicButton } from '@/components/forms/MicButton';
@@ -73,6 +73,10 @@ export function HldCopilot({
   const [merging, setMerging] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [savingSel, setSavingSel] = useState(false);
+  const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load providers once.
@@ -91,8 +95,14 @@ export function HldCopilot({
   useEffect(() => {
     setMessages([]);
     setDraft(null);
+    setSelected(new Set());
+    setExpanded(new Set());
     void getHldThread(projectId, hldId, sectionKey)
-      .then(setMessages)
+      .then((msgs) => {
+        setMessages(msgs);
+        const lastA = [...msgs].reverse().find((m) => m.role === 'assistant');
+        if (lastA) setExpanded(new Set([lastA.id])); // newest answer open by default
+      })
       .catch(() => setMessages([]));
   }, [projectId, hldId, sectionKey]);
 
@@ -115,6 +125,7 @@ export function HldCopilot({
           template: activeTemplate ? `${activeTemplate.name}\n${activeTemplate.body}` : null,
         });
         setMessages((m) => [...m, userMessage, assistantMessage]);
+        setExpanded((e) => new Set(e).add(assistantMessage.id)); // open the new answer
       } catch (err) {
         setError(
           (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -169,6 +180,87 @@ export function HldCopilot({
     }
   };
 
+  // ── Q&A pairing + bulk selection (accordion) ──────────────────────────────
+  interface QaItem {
+    key: string;
+    question: string;
+    answer: string;
+    model: string | null;
+    assistantId: string | null; // null = no answer yet (can't select/save)
+    savedToSection: boolean;
+  }
+  const qaItems: QaItem[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role === 'user') {
+      const a = messages[i + 1]?.role === 'assistant' ? messages[i + 1] : null;
+      qaItems.push({
+        key: m.id,
+        question: m.content,
+        answer: a?.content ?? '',
+        model: a?.model ?? null,
+        assistantId: a?.id ?? null,
+        savedToSection: a?.savedToSection ?? false,
+      });
+      if (a) i++;
+    } else {
+      qaItems.push({
+        key: m.id,
+        question: '(answer)',
+        answer: m.content,
+        model: m.model,
+        assistantId: m.id,
+        savedToSection: m.savedToSection,
+      });
+    }
+  }
+  const selectableIds = qaItems.map((q) => q.assistantId).filter((x): x is string => !!x);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  const allExpanded = qaItems.length > 0 && qaItems.every((q) => expanded.has(q.key));
+
+  const toggleExpand = (key: string) =>
+    setExpanded((e) => {
+      const n = new Set(e);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+  const toggleSelect = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  const toggleSelectAll = () => setSelected(allSelected ? new Set() : new Set(selectableIds));
+  const toggleExpandAll = () => setExpanded(allExpanded ? new Set() : new Set(qaItems.map((q) => q.key)));
+
+  /** Bulk-save all checked answers as insights. */
+  const saveSelected = async () => {
+    const ids = qaItems.filter((q) => q.assistantId && selected.has(q.assistantId) && !q.savedToSection).map((q) => q.assistantId!);
+    if (!ids.length) return;
+    setSavingSel(true);
+    setError(null);
+    try {
+      await Promise.all(ids.map((id) => saveHldInsight(projectId, hldId, id, true)));
+      setMessages((list) => list.map((x) => (ids.includes(x.id) ? { ...x, savedToSection: true } : x)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSavingSel(false);
+    }
+  };
+
+  /** Copy all checked answers (each prefixed with its question) to the clipboard. */
+  const copySelected = () => {
+    const text = qaItems
+      .filter((q) => q.assistantId && selected.has(q.assistantId))
+      .map((q) => `## ${q.question}\n\n${q.answer}`)
+      .join('\n\n---\n\n');
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
     <div className="fixed top-0 right-0 z-30 h-screen w-[400px] bg-white border-l shadow-xl flex flex-col">
       {/* Header */}
@@ -203,10 +295,30 @@ export function HldCopilot({
       {/* Body */}
       {tab === 'chat' ? (
         <>
-          <div ref={scrollRef} className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-3">
-            {messages.length === 0 && !sending && (
-              <div className="text-center text-xs text-gray-400 pt-6">
-                Ask the copilot about <span className="font-medium">{sectionName}</span> — it knows your PRD, FRD & stack.
+          {/* Top toolbar — query count + bulk controls */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b bg-gray-50/70 text-xs">
+            <span className="font-medium text-gray-700">
+              {qaItems.length} {qaItems.length === 1 ? 'query' : 'queries'}
+            </span>
+            {selected.size > 0 && <span className="text-purple-600">· {selected.size} selected</span>}
+            {qaItems.length > 0 && (
+              <>
+                <label className="ml-auto inline-flex items-center gap-1 cursor-pointer text-gray-600 select-none">
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="accent-purple-600" />
+                  Select all
+                </label>
+                <button onClick={toggleExpandAll} className="text-gray-500 hover:text-gray-800">
+                  {allExpanded ? 'Collapse all' : 'Expand all'}
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Conversation — accordion of Q&As (vertical + horizontal scroll) */}
+          <div ref={scrollRef} className="cp-scroll flex-1 overflow-auto px-3 py-3 space-y-2">
+            {qaItems.length === 0 && !sending && (
+              <div className="text-center text-xs text-gray-400 pt-2 pb-1">
+                Ask the copilot about <span className="font-medium">{sectionName}</span> — it knows your PRD, FRD &amp; stack.
               </div>
             )}
             <div className="flex flex-wrap gap-1.5">
@@ -221,15 +333,36 @@ export function HldCopilot({
                 </button>
               ))}
             </div>
-            {messages.map((m) => (
-              <MessageBubble key={m.id} m={m} onToggleSave={() => toggleSave(m)} />
+            {qaItems.map((it, idx) => (
+              <QaAccordion
+                key={it.key}
+                index={idx + 1}
+                item={it}
+                expanded={expanded.has(it.key)}
+                selected={!!it.assistantId && selected.has(it.assistantId)}
+                onToggleExpand={() => toggleExpand(it.key)}
+                onToggleSelect={() => it.assistantId && toggleSelect(it.assistantId)}
+              />
             ))}
             {sending && (
-              <div className="flex items-center gap-2 text-xs text-gray-400">
+              <div className="flex items-center gap-2 text-xs text-gray-400 px-1">
                 <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
               </div>
             )}
           </div>
+
+          {/* Bulk action bar — common Save / Copy, sized like Send, act on checked */}
+          {qaItems.length > 0 && (
+            <div className="border-t px-3 py-2 flex items-center gap-2">
+              <Button size="sm" onClick={saveSelected} disabled={selected.size === 0 || savingSel}>
+                {savingSel ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Bookmark className="h-4 w-4 mr-1" />}
+                Save to section{selected.size ? ` (${selected.size})` : ''}
+              </Button>
+              <Button size="sm" variant="outline" onClick={copySelected} disabled={selected.size === 0}>
+                <Copy className="h-4 w-4 mr-1" /> {copied ? 'Copied!' : `Copy${selected.size ? ` (${selected.size})` : ''}`}
+              </Button>
+            </div>
+          )}
 
           {/* Composer */}
           <div className="border-t p-3 space-y-2">
@@ -402,52 +535,52 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
   );
 }
 
-function MessageBubble({ m, onToggleSave }: { m: HldChatMessage; onToggleSave: () => void }) {
-  const isUser = m.role === 'user';
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard?.writeText(m.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+function QaAccordion({
+  index,
+  item,
+  expanded,
+  selected,
+  onToggleExpand,
+  onToggleSelect,
+}: {
+  index: number;
+  item: { question: string; answer: string; model: string | null; assistantId: string | null; savedToSection: boolean };
+  expanded: boolean;
+  selected: boolean;
+  onToggleExpand: () => void;
+  onToggleSelect: () => void;
+}) {
+  const canSelect = !!item.assistantId;
   return (
-    <div className={`flex gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
-      <div className={`shrink-0 h-6 w-6 rounded-full flex items-center justify-center ${isUser ? 'bg-indigo-100' : 'bg-purple-100'}`}>
-        {isUser ? <User className="h-3.5 w-3.5 text-indigo-600" /> : <Bot className="h-3.5 w-3.5 text-purple-600" />}
-      </div>
-      <div className={`min-w-0 max-w-[88%] ${isUser ? 'items-end' : ''} flex flex-col`}>
-        {isUser ? (
-          <div className="rounded-lg px-3 py-2 text-sm whitespace-pre-wrap text-left bg-indigo-50 text-gray-800">
-            {m.content}
-          </div>
-        ) : (
-          <div className="rounded-lg px-3 py-2 bg-white border text-left">
-            <Markdown>{m.content}</Markdown>
-          </div>
-        )}
-        {!isUser && (
-          <div className="flex items-center gap-1.5 mt-1.5">
-            <button
-              onClick={onToggleSave}
-              className={`text-[11px] font-medium inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors ${
-                m.savedToSection
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
-                  : 'bg-white border-gray-300 text-gray-600 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700'
-              }`}
-            >
-              {m.savedToSection ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
-              {m.savedToSection ? 'Saved to section' : 'Save to section'}
-            </button>
-            <button
-              onClick={copy}
-              className="text-[11px] font-medium inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50"
-            >
-              <Copy className="h-3.5 w-3.5" /> {copied ? 'Copied!' : 'Copy'}
-            </button>
-            <span className="text-[10px] text-gray-400 ml-0.5">{m.model ?? 'AI'}</span>
-          </div>
+    <div className={`border rounded-lg bg-white ${selected ? 'border-purple-300 ring-1 ring-purple-200' : 'border-gray-200'}`}>
+      <div className="flex items-start gap-2 px-2.5 py-2">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          disabled={!canSelect}
+          className="mt-1 accent-purple-600 shrink-0 disabled:opacity-40"
+          title={canSelect ? 'Select for Save / Copy' : 'No answer yet'}
+        />
+        <button onClick={onToggleExpand} className="flex items-start gap-1.5 min-w-0 flex-1 text-left">
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+          )}
+          <span className="text-[10px] font-mono text-gray-400 mt-0.5 shrink-0">Q{index}</span>
+          <span className={`text-sm text-gray-800 ${expanded ? '' : 'line-clamp-2'}`}>{item.question}</span>
+        </button>
+        {item.savedToSection && (
+          <BookmarkCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-1" aria-label="Saved to section" />
         )}
       </div>
+      {expanded && item.answer && (
+        <div className="cp-scroll border-t px-3 py-2 max-h-80 overflow-auto">
+          <Markdown>{item.answer}</Markdown>
+          {item.model && <p className="text-[10px] text-gray-400 mt-1">{item.model}</p>}
+        </div>
+      )}
     </div>
   );
 }
