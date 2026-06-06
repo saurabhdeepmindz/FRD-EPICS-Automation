@@ -2657,6 +2657,76 @@ async def hld_chat(
     return HldChatResponse(markdown=text, model=model)
 
 
+@app.post("/hld-chat-stream", tags=["copilot"])
+async def hld_chat_stream(
+    body: HldChatRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> StreamingResponse:
+    """HD-01 — streaming variant of /hld-chat. Emits SSE token deltas then [DONE]."""
+    user = build_hld_chat_user_message(
+        section_name=body.section_name,
+        section_content=body.section_content,
+        prd_context=body.prd_context,
+        stack=body.stack,
+        template=body.template,
+        user_message=body.user_message,
+        references=body.references,
+    )
+    turns = [{"role": t.role, "content": t.content} for t in body.history if t.content.strip()]
+
+    async def gen():
+        try:
+            if body.provider == "anthropic":
+                model = settings.ANTHROPIC_MODEL
+                yield _sse({"model": model})
+                async with anthropic_client.messages.stream(
+                    model=model,
+                    max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
+                    temperature=settings.HLD_COPILOT_TEMPERATURE,
+                    system=HLD_CHAT_SYSTEM_PROMPT,
+                    messages=[*turns, {"role": "user", "content": user}],
+                ) as stream:
+                    async for delta in stream.text_stream:
+                        if delta:
+                            yield _sse({"delta": delta})
+            elif body.provider == "openai":
+                model = settings.OPENAI_MODEL
+                yield _sse({"model": model})
+                resp = await openai_client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": HLD_CHAT_SYSTEM_PROMPT}, *turns, {"role": "user", "content": user}],
+                    max_tokens=max(settings.HLD_COPILOT_MAX_TOKENS, 1024),
+                    temperature=settings.HLD_COPILOT_TEMPERATURE,
+                    stream=True,
+                )
+                async for chunk in resp:
+                    delta = chunk.choices[0].delta.content or "" if chunk.choices else ""
+                    if delta:
+                        yield _sse({"delta": delta})
+            else:
+                # gemini / other → non-streaming fallback emitted as one delta
+                text, model = await _complete_text(
+                    provider=body.provider, settings=settings, openai_client=openai_client,
+                    anthropic_client=anthropic_client, system=HLD_CHAT_SYSTEM_PROMPT, user=user,
+                    history=body.history, max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
+                    temperature=settings.HLD_COPILOT_TEMPERATURE,
+                )
+                yield _sse({"model": model})
+                yield _sse({"delta": text})
+        except Exception as exc:  # noqa: BLE001 — surface a clean error event to the client
+            logger.error("HLD chat stream error: %s", exc)
+            yield _sse({"error": "AI service error during streaming."})
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj)}\n\n"
+
+
 @app.post("/hld-merge", response_model=HldMergeResponse, tags=["copilot"])
 async def hld_merge(
     body: HldMergeRequest,

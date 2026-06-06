@@ -242,6 +242,71 @@ export class HldCopilotService {
     return { userMessage: userMsg, assistantMessage: assistantMsg };
   }
 
+  // ── HD-01 streaming — prepare → stream → finalize ────────────────────────────
+
+  /** Persist the user turn + build the ai request payload for a streaming chat. */
+  async prepareStream(
+    hldId: string,
+    sectionKey: string,
+    opts: { provider?: string; message: string; template?: string | null },
+  ): Promise<{ threadId: string; userMessage: { id: string }; payload: Record<string, unknown> }> {
+    const message = (opts.message ?? '').trim();
+    if (!message) throw new BadRequestException('Message is required.');
+    const hld = await this.prisma.baHld.findUnique({ where: { id: hldId } });
+    if (!hld) throw new NotFoundException(`HLD ${hldId} not found`);
+
+    const thread = await this.prisma.baHldThread.upsert({
+      where: { hldId_sectionKey: { hldId, sectionKey } },
+      create: { hldId, sectionKey },
+      update: {},
+    });
+    const history = await this.prisma.baHldMessage.findMany({
+      where: { threadId: thread.id },
+      orderBy: { createdAt: 'asc' },
+      select: { role: true, content: true },
+    });
+    const userMessage = await this.prisma.baHldMessage.create({
+      data: { threadId: thread.id, role: 'user', content: message, templateRef: opts.template ?? null },
+    });
+
+    const { prdContext, stack } = await this.buildContext(hld.projectId, hld.sections as Record<string, unknown>);
+    const sectionContent = this.sectionText((hld.sections as Record<string, unknown>)[sectionKey]);
+    const references = await this.buildReferencesContext(hldId, sectionKey, message);
+
+    return {
+      threadId: thread.id,
+      userMessage: { id: userMessage.id },
+      payload: {
+        provider: opts.provider ?? 'anthropic',
+        section_name: HLD_SECTION_NAMES[sectionKey] ?? sectionKey,
+        section_content: sectionContent,
+        prd_context: prdContext,
+        stack,
+        template: opts.template ?? null,
+        references,
+        history,
+        user_message: message,
+      },
+    };
+  }
+
+  /** Open the upstream SSE stream from the ai-service (Node Readable). */
+  async openChatStream(payload: Record<string, unknown>): Promise<NodeJS.ReadableStream> {
+    const resp = await axios.post(`${this.aiServiceUrl}/hld-chat-stream`, payload, {
+      responseType: 'stream',
+      timeout: 180_000,
+      headers: { Accept: 'text/event-stream' },
+    });
+    return resp.data as NodeJS.ReadableStream;
+  }
+
+  /** Persist the assistant turn once streaming completes. */
+  async finalizeStream(threadId: string, content: string, model: string | null) {
+    return this.prisma.baHldMessage.create({
+      data: { threadId, role: 'assistant', content, model: model ?? null },
+    });
+  }
+
   /** Synthesize current section + saved insights into a Markdown draft (no write). */
   async merge(hldId: string, sectionKey: string, provider?: string): Promise<{ draft: string; model: string }> {
     const hld = await this.prisma.baHld.findUnique({ where: { id: hldId } });

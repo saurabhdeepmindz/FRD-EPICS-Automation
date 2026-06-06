@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { HldCopilotService } from './hld-copilot.service';
 
 /**
@@ -69,6 +70,69 @@ export class HldCopilotController {
       template: body.template ?? null,
     });
     return { success: true, data };
+  }
+
+  /** POST .../hld/:hldId/copilot/chat-stream — HD-01: SSE streaming chat (token deltas). */
+  @Post(':hldId/copilot/chat-stream')
+  async chatStream(
+    @Param('hldId', ParseUUIDPipe) hldId: string,
+    @Body() body: { sectionKey: string; provider?: string; message: string; template?: string | null },
+    @Res() res: Response,
+  ) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    try {
+      const { userMessage, threadId, payload } = await this.copilot.prepareStream(hldId, body.sectionKey, {
+        provider: body.provider,
+        message: body.message,
+        template: body.template ?? null,
+      });
+      res.write(`data: ${JSON.stringify({ userMessageId: userMessage.id })}\n\n`);
+
+      const upstream = await this.copilot.openChatStream(payload);
+      let full = '';
+      let model: string | null = null;
+
+      upstream.on('data', (chunk: Buffer) => {
+        const block = chunk.toString('utf8');
+        for (const line of block.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const d = line.slice(6).trim();
+          if (d === '[DONE]') continue; // swallow upstream DONE; we send our own
+          res.write(`data: ${d}\n\n`); // forward delta/model/error to the browser
+          try {
+            const o = JSON.parse(d);
+            if (o.delta) full += o.delta;
+            if (o.model) model = o.model;
+          } catch {
+            /* ignore non-JSON keepalives */
+          }
+        }
+      });
+      upstream.on('end', async () => {
+        try {
+          const asst = await this.copilot.finalizeStream(threadId, full, model);
+          res.write(`data: ${JSON.stringify({ done: true, messageId: asst.id, model: asst.model })}\n\n`);
+        } catch {
+          res.write(`data: ${JSON.stringify({ error: 'Failed to persist the answer.' })}\n\n`);
+        }
+        res.write('data: [DONE]\n\n');
+        res.end();
+      });
+      upstream.on('error', () => {
+        res.write(`data: ${JSON.stringify({ error: 'Upstream stream error.' })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Streaming failed';
+      res.write(`data: ${JSON.stringify({ error: msg })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 
   /** POST .../hld/:hldId/copilot/save-insight — flag/unflag a message as saved. */

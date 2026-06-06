@@ -581,6 +581,51 @@ export async function hldCopilotChat(
   return data.data;
 }
 
+/** HD-01 — stream a copilot chat (SSE). Calls handlers as token deltas arrive. */
+export async function streamHldCopilotChat(
+  projectId: string,
+  hldId: string,
+  body: { sectionKey: string; provider: string; message: string; template?: string | null },
+  handlers: {
+    onDelta?: (text: string) => void;
+    onModel?: (model: string) => void;
+    onFinal?: (messageId: string, model: string | null) => void;
+    onError?: (message: string) => void;
+  },
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/ba/projects/${projectId}/hld/${hldId}/copilot/chat-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) throw new Error(`stream failed (${res.status})`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop() ?? '';
+    for (const part of parts) {
+      const line = part.split('\n').find((l) => l.startsWith('data: '));
+      if (!line) continue;
+      const d = line.slice(6).trim();
+      if (d === '[DONE]') return;
+      try {
+        const o = JSON.parse(d) as { delta?: string; model?: string; messageId?: string; error?: string };
+        if (o.delta) handlers.onDelta?.(o.delta);
+        if (o.model) handlers.onModel?.(o.model);
+        if (o.messageId) handlers.onFinal?.(o.messageId, o.model ?? null);
+        if (o.error) handlers.onError?.(o.error);
+      } catch {
+        /* ignore non-JSON keepalives */
+      }
+    }
+  }
+}
+
 /** Flag / unflag a message as a saved insight. */
 export async function saveHldInsight(
   projectId: string,
