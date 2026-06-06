@@ -4,6 +4,7 @@ import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HLD_SECTION_NAMES, HLD_SECTION_ORDER } from './project-hld.service';
 import { BUILTIN_ARCH_TEMPLATES, libraryTemplateToHld, type HldTemplate } from './hld-templates';
+import { HldReferencesService } from './hld-references.service';
 
 /**
  * HLD Architect Copilot (Sprint v10 / Track C). Per-section conversational AI:
@@ -19,6 +20,7 @@ export class HldCopilotService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly references: HldReferencesService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
   }
@@ -201,6 +203,7 @@ export class HldCopilotService {
 
     const { prdContext, stack } = await this.buildContext(hld.projectId, hld.sections as Record<string, unknown>);
     const sectionContent = this.sectionText((hld.sections as Record<string, unknown>)[sectionKey]);
+    const references = await this.buildReferencesContext(hldId, sectionKey);
 
     let markdown: string;
     let model: string;
@@ -214,6 +217,7 @@ export class HldCopilotService {
           prd_context: prdContext,
           stack,
           template: opts.template ?? null,
+          references,
           history,
           user_message: message,
         },
@@ -283,6 +287,19 @@ export class HldCopilotService {
     } catch {
       return String(value);
     }
+  }
+
+  /** RR-06 — included references (whole-HLD + section) as a budgeted context block. */
+  private async buildReferencesContext(hldId: string, sectionKey: string): Promise<string> {
+    const refs = await this.references.getIncludedForContext(hldId, sectionKey).catch(() => []);
+    if (!refs.length) return '';
+    return refs
+      .map((r, i) => {
+        const src = r.sourceUrl ? ` (${r.sourceUrl})` : '';
+        return `### Reference ${i + 1}: ${r.title}${src}\n${(r.summary ?? '').slice(0, 1500)}`;
+      })
+      .join('\n\n')
+      .slice(0, 6000);
   }
 
   /** Build a compact PRD/FRD context + tech stack string for grounding. */

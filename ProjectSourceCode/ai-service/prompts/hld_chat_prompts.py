@@ -34,6 +34,7 @@ def build_hld_chat_user_message(
     stack: str,
     template: str | None,
     user_message: str,
+    references: str = "",
 ) -> str:
     parts: list[str] = []
     parts.append(f"# HLD Section: {section_name}")
@@ -46,6 +47,11 @@ def build_hld_chat_user_message(
     if template and template.strip():
         parts.append(
             f"\n## Selected reference pattern (steer your answer to align with this)\n{template.strip()}"
+        )
+    if references.strip():
+        parts.append(
+            "\n## Reference sources the architect added (use these and cite them by name when relevant)\n"
+            + references.strip()[:6000]
         )
     parts.append(f"\n## The architect asks\n{user_message.strip()}")
     return "\n".join(parts)
