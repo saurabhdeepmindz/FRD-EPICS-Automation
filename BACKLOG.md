@@ -530,6 +530,18 @@ d:\SaurabhVerma\COE\New-FRD-EPICS-Automation\
 
 ---
 
+### Track MM — HLD diagrams: actually-pastel per-layer nodes + inline section diagrams — Sprint v9, ✅ COMPLETE (2026-06-05)
+
+> **Reported (2026-06-05):** "the colors are not pastel; the 50,000-ft view and layered architecture don't have any diagram." Root causes: uniform near-white node fill (no per-layer `classDef`) + architecture diagrams only shown in the aggregated panel, not inside each section. Frontend-only.
+
+| Status | # | Action Item | Existing Reuse | Notes |
+|--------|---|-------------|----------------|-------|
+| ✅ | MM-01 | `layerForNode` classifier + `applyDiagramPalette` (inject `classDef`/`class` per layer) → actually-pastel nodes | KK `diagramPalette`; HLD `Mermaid` | fills land via CSS classes |
+| ✅ | MM-02 | Inline per-section architecture diagrams (`DIAGRAM_FOR_SECTION`) | HLD section panels | §3/§4 now show their diagram |
+| ✅ | MM-03 | tsc + Playwright (inline §3/§4; 5 distinct pastel computed-fills) | — | earlier `0` = measurement flaw (classDef CSS, not inline attrs) |
+
+---
+
 ### Track LL — Design System Studio: diagram-palette editor — Sprint v9, ✅ COMPLETE (2026-06-05)
 
 > **Decision (2026-06-05):** surface the `diagramPalette` in the Studio so a UX resource can recolor the 7 diagram layers per project; edits flow to the HLD diagrams + project-structure grid. Frontend-only.

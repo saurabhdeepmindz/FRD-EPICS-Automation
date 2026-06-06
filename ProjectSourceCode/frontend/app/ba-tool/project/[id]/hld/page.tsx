@@ -39,6 +39,54 @@ const FALLBACK_PALETTE: Record<'frontend' | 'backend' | 'calcEngine' | 'shared' 
   node: { fill: '#F4F3FB', border: '#C9C3E6', text: '#3A3550' },
 };
 
+type LayerKey = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';
+
+/** Classify a Mermaid node (by id/label keywords) into a pastel layer. */
+function layerForNode(text: string): LayerKey {
+  const s = text.toLowerCase();
+  const has = (...w: string[]) => w.some((x) => s.includes(x));
+  if (has('postgres', 'postgre', 'redis', 's3', 'gcs', 'database', 'sql', 'mongo', 'bucket', 'cache', 'datastore', 'storage', 'warehouse', 'data layer', 'persistence', 'data')) return 'db';
+  if (has('calc', 'engine', 'python', 'fastapi', 'pandas', ' ai', 'ai ', 'ml ', 'worker', 'inference', 'model')) return 'calcEngine';
+  if (has('cdn', 'gateway', 'load balancer', 'web app', 'webapp', 'admin portal', 'frontend', 'browser', ' ui', 'next', 'portal', 'client', 'mobile', 'presentation', 'users', 'actor', 'access')) return 'frontend';
+  if (has('log', 'monitor', 'sentry', 'observability', 'metrics', 'config', 'terraform', 'docker', 'ci/cd', 'devops', 'grafana', 'prometheus', 'platform', 'infra')) return 'config';
+  if (has('shared', 'package', 'library', 'sdk', 'common')) return 'shared';
+  return 'backend'; // services / pods / APIs / auth / queues default to backend
+}
+
+/** Inject pastel `classDef` + per-node `class` assignments into a Mermaid graph. */
+function applyDiagramPalette(src: string, pal: typeof FALLBACK_PALETTE): string {
+  const ids = new Map<string, string>();
+  const re = /([A-Za-z0-9_]+)\s*(?:\[([^\]]*)\]|\(\(([^)]*)\)\)|\(([^)]*)\)|\{([^}]*)\})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    const id = m[1];
+    const label = m[2] ?? m[3] ?? m[4] ?? m[5] ?? id;
+    if (!ids.has(id)) ids.set(id, label || id);
+  }
+  if (!ids.size) return src;
+  const byLayer: Record<string, string[]> = {};
+  ids.forEach((label, id) => {
+    const L = layerForNode(`${label} ${id}`);
+    (byLayer[L] ??= []).push(id);
+  });
+  let out = `${src.trimEnd()}\n`;
+  for (const L of Object.keys(byLayer) as LayerKey[]) {
+    const c = pal[L];
+    out += `classDef ${L} fill:${c.fill},stroke:${c.border},color:${c.text},stroke-width:1px;\n`;
+    out += `class ${byLayer[L].join(',')} ${L};\n`;
+  }
+  return out;
+}
+
+/** HLD section key → its Mermaid diagram key (keys differ slightly). */
+const DIAGRAM_FOR_SECTION: Record<string, string> = {
+  systemView: 'systemView',
+  technicalLayersView: 'technicalLayers',
+  componentView: 'componentView',
+  architectureStyleView: 'architectureStyle',
+  deploymentView: 'deployment',
+};
+
 export default function HldPage() {
   const params = useParams();
   const projectId = params.id as string;
@@ -252,6 +300,17 @@ export default function HldPage() {
                         {sec.key === 'projectStructure' && structure && (
                           <ProjectStructureDiagram structure={structure} palette={palette} />
                         )}
+                        {/* v9 MM — render this section's architecture diagram inline (if any) */}
+                        {DIAGRAM_FOR_SECTION[sec.key] && hld.mermaidDiagrams?.[DIAGRAM_FOR_SECTION[sec.key]] && (
+                          <Card>
+                            <CardContent className="p-4">
+                              <p className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                                <Network className="h-4 w-4" /> {HLD_DIAGRAM_LABELS[DIAGRAM_FOR_SECTION[sec.key]] ?? 'Diagram'}
+                              </p>
+                              <Mermaid content={hld.mermaidDiagrams[DIAGRAM_FOR_SECTION[sec.key]]} palette={palette} />
+                            </CardContent>
+                          </Card>
+                        )}
                         <Card>
                           <CardContent className="p-4">
                             {!body ? (
@@ -346,7 +405,9 @@ function Mermaid({ content, palette }: { content: string; palette: Palette }) {
             edgeLabelBackground: '#FFFFFF',
           },
         });
-        const { svg } = await mermaid.render(`hld-${id}`, content);
+        // Inject per-layer pastel classes so nodes are colored (not uniform).
+        const themed = applyDiagramPalette(content, palette);
+        const { svg } = await mermaid.render(`hld-${id}`, themed);
         if (!cancelled) setSvg(svg);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Mermaid render failed');
