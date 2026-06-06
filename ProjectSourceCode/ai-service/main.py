@@ -37,6 +37,10 @@ from prompts.hld_chat_prompts import (
     build_hld_merge_user_message,
 )
 from prompts.e2e_flow_prompts import E2E_FLOW_SYSTEM_PROMPT, build_e2e_flow_user_message
+from prompts.reference_prompts import (
+    REFERENCE_SUMMARY_SYSTEM_PROMPT,
+    build_reference_summary_user_message,
+)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -2517,6 +2521,7 @@ class HldChatRequest(BaseModel):
     prd_context: str = ""
     stack: str = ""
     template: str | None = None
+    references: str = ""
     history: list[ChatTurn] = Field(default_factory=list)
     user_message: str
 
@@ -2613,6 +2618,7 @@ async def hld_chat(
         stack=body.stack,
         template=body.template,
         user_message=body.user_message,
+        references=body.references,
     )
     text, model = await _complete_text(
         provider=body.provider,
@@ -2655,3 +2661,44 @@ async def hld_merge(
     )
     logger.info("HLD merge (%s) %d chars for section=%s", body.provider, len(text), body.section_name)
     return HldMergeResponse(merged_markdown=text, model=model)
+
+
+# ─── Reference summarization (Sprint v11 / Track RR) ──────────────────────────
+
+class ReferenceSummaryRequest(BaseModel):
+    provider: str = "anthropic"
+    title: str
+    text: str
+    focus: str | None = None
+
+
+class ReferenceSummaryResponse(BaseModel):
+    summary: str
+    model: str
+
+
+@app.post("/summarize-reference", response_model=ReferenceSummaryResponse, tags=["copilot"])
+async def summarize_reference(
+    body: ReferenceSummaryRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> ReferenceSummaryResponse:
+    """Condense a fetched URL / uploaded document into grounding-ready Markdown."""
+    text = (body.text or "").strip()
+    if not text:
+        return ReferenceSummaryResponse(summary="_No extractable text found in this reference._", model="")
+    user = build_reference_summary_user_message(body.title, text, body.focus)
+    summary, model = await _complete_text(
+        provider=body.provider,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+        system=REFERENCE_SUMMARY_SYSTEM_PROMPT,
+        user=user,
+        history=[],
+        max_tokens=1024,
+        temperature=0.3,
+    )
+    logger.info("Reference summary (%s) %d chars for '%s'", body.provider, len(summary), body.title)
+    return ReferenceSummaryResponse(summary=summary, model=model)
