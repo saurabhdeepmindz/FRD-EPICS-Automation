@@ -217,16 +217,10 @@ export default function BaProjectWorkspacePage() {
               Wireframes
             </Link>
           </Button>
-          <Button size="sm" variant="outline" asChild title="New Pipeline — High Level Design">
+          <Button size="sm" variant="outline" asChild title="New Pipeline — High Level Design (edit · preview · export · Architect Copilot)">
             <Link href={`/ba-tool/project/${projectId}/hld`}>
               <Layers className="h-3.5 w-3.5 mr-1" />
               HLD
-            </Link>
-          </Button>
-          <Button size="sm" variant="outline" asChild title="New Pipeline — HLD Enhanced (edit · preview · export · Architect Copilot)">
-            <Link href={`/ba-tool/project/${projectId}/hld-v2`}>
-              <Layers className="h-3.5 w-3.5 mr-1" />
-              HLD — Enhanced
             </Link>
           </Button>
           <Button size="sm" variant="outline" asChild title="New Pipeline — Cross-Module E2E Flows">

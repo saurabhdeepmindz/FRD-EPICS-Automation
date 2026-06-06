@@ -2,6 +2,8 @@
 
 ## Status: ✅ COMPLETE (2026-06-07) — Tracks A–E shipped & merged (PRs #16 A/B, #17 C, #18 D, #19 E). HLD-V2 enhanced + Architect Copilot live on `/hld-v2`.
 
+> **Phase F cutover DONE (2026-06-07):** enhanced HLD promoted to the canonical `/hld` (content moved into `hld/page.tsx`, title now "High Level Design (HLD)"); legacy read-only page retired; `/hld-v2` permanently redirects to `/hld`; dashboard shows a single "HLD" entry. No data migration (shared `BaHld`). Verified: `/hld` = enhanced (Copilot/Edit/Preview/Export), `/hld-v2` → `/hld`, tsc clean, no console errors.
+>
 > **UX follow-ups (post-merge):** (1) Copilot markdown rendering + visible Save/Copy + scrollable full saved text (PR #20). (2) Preview made PRD-style — sticky left section menu with click-to-jump anchors, inline per-section architecture diagrams + §17 structure grid, and section text (incl. the merged `aiSynthesis`) rendered as markdown; shared `HldStructureDiagram` + `Markdown` components; browse view also renders markdown.
 >
 > **Track E done (integration + tests):** nav cross-link `/hld-v2` → PRD+FRD (FreshnessBanner + provider key-gating already in A/C); unit tests — `hld-html.spec.ts` (7) + `hld-templates.spec.ts` (4) → 10 new tests pass; full backend suite 105/107 (the 2 failures are pre-existing in the legacy `prd/prd.service.spec.ts`, untouched by v10). `tsc` clean both apps. Deferred items (HD-01..10 incl. save-as-template + HLD repository/RAG, Phase F cutover) remain in `backlog-hld-enhancement.md`.

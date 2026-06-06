@@ -84,16 +84,16 @@ New route **`/ba-tool/project/[id]/hld-v2`** ("HLD — Enhanced") rendering the 
 
 ---
 
-## 2b. Phase F — Cutover & retire legacy HLD (post-MVP, PLANNED)
+## 2b. Phase F — Cutover & retire legacy HLD — ✅ COMPLETE (2026-06-07)
 
-> **Decision (user, 2026-06-07):** once HLD-V2 is fully functional and validated, discard the existing HLD — no point maintaining two. Sequenced after the MVP (Track A–E) is stable.
+> **Decision (user, 2026-06-07):** once HLD-V2 is fully functional and validated, discard the existing HLD — no point maintaining two. **Done:** the enhanced page was promoted to the canonical `/hld`; the legacy read-only page was retired; `/hld-v2` now permanently redirects to `/hld`; the dashboard shows a single "HLD" entry. No data migration (both always shared the same `BaHld` record). Verified: `/hld` renders the enhanced page (Copilot/Edit/Preview/Export), `/hld-v2` → `/hld`, tsc clean, no console errors.
 
-| ID | Pri | Size | Task |
-|----|-----|------|------|
-| HF-01 | P1 | S | Validation gate — confirm parity (all 17 sections, diagrams, edit/preview/export, copilot) on `/hld-v2` across real projects. |
-| HF-02 | P1 | S | **Promote** `/hld-v2` → `/hld` (route swap) and update the project nav to a single "HLD" entry. |
-| HF-03 | P1 | S | **Retire** the legacy page/components (delete old `hld/page.tsx` render path) — no data migration needed (shared `BaHld` record). |
-| HF-04 | P2 | S | Redirect any bookmarks/links from `/hld-v2` → `/hld`; docs + BACKLOG cleanup. |
+| ID | Pri | Size | Task | Status |
+|----|-----|------|------|--------|
+| HF-01 | P1 | S | Validation gate — parity (17 sections, diagrams, edit/preview/export, copilot) on the enhanced page. | ✅ |
+| HF-02 | P1 | S | **Promote** enhanced → `/hld` (content moved into `hld/page.tsx`); single "HLD" nav entry. | ✅ |
+| HF-03 | P1 | S | **Retire** the legacy read-only page (overwritten by the enhanced implementation) — no data migration. | ✅ |
+| HF-04 | P2 | S | `/hld-v2` → `/hld` redirect for old bookmarks; docs cleanup. | ✅ |
 
 ---
 
