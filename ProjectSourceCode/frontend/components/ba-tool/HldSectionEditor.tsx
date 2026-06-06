@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Loader2, Plus, Save, X } from 'lucide-react';
+import { Loader2, Plus, Save, X, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { updateHldSection } from '@/lib/pipeline-api';
+import { MicButton } from '@/components/forms/MicButton';
+import { updateHldSection, suggestHldField } from '@/lib/pipeline-api';
 
 /**
  * HE-02 — guided editor for a single HLD section. String fields are textareas;
@@ -56,11 +57,38 @@ export function HldSectionEditor({
   const [newKey, setNewKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggesting, setSuggesting] = useState<string | null>(null);
 
   const setRaw = (idx: number, raw: string) =>
     setFields((f) => f.map((d, i) => (i === idx ? { ...d, raw } : d)));
 
+  const appendRaw = (idx: number, text: string) =>
+    setFields((f) => f.map((d, i) => (i === idx ? { ...d, raw: d.raw ? `${d.raw} ${text}` : text } : d)));
+
   const removeField = (idx: number) => setFields((f) => f.filter((_, i) => i !== idx));
+
+  /** Per-field AI Suggest — grounded in the section + PRD/FRD/stack. */
+  const suggest = async (idx: number) => {
+    const f = fields[idx];
+    if (!f) return;
+    setSuggesting(f.key);
+    setError(null);
+    try {
+      const { suggestion } = await suggestHldField(projectId, hldId, {
+        sectionKey,
+        fieldName: humanize(f.key),
+        currentValue: f.raw,
+      });
+      if (suggestion?.trim()) setRaw(idx, suggestion.trim());
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (err instanceof Error ? err.message : 'AI Suggest failed'),
+      );
+    } finally {
+      setSuggesting(null);
+    }
+  };
 
   const addField = () => {
     const key = newKey.trim();
@@ -129,14 +157,27 @@ export function HldSectionEditor({
               {f.structured && (
                 <span className="text-[9px] uppercase bg-gray-100 text-gray-500 rounded px-1 py-0.5">JSON</span>
               )}
-              <button
-                type="button"
-                onClick={() => removeField(idx)}
-                className="ml-auto text-gray-300 hover:text-red-500"
-                title="Remove field"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              <div className="ml-auto flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => suggest(idx)}
+                  disabled={suggesting === f.key}
+                  className="text-[11px] font-medium inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 text-amber-700 px-2 py-0.5 hover:bg-amber-100 disabled:opacity-50"
+                  title="AI Suggest — grounded in your PRD/FRD & stack"
+                >
+                  {suggesting === f.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  AI Suggest
+                </button>
+                <MicButton size="sm" onTranscribed={(t) => appendRaw(idx, t)} />
+                <button
+                  type="button"
+                  onClick={() => removeField(idx)}
+                  className="text-gray-300 hover:text-red-500"
+                  title="Remove field"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
             <textarea
               value={f.raw}

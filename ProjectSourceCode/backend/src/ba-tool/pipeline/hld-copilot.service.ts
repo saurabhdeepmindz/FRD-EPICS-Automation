@@ -307,6 +307,42 @@ export class HldCopilotService {
     });
   }
 
+  /** Per-field AI Suggest for the HLD section editor (grounded; returns the value text). */
+  async suggestField(
+    hldId: string,
+    sectionKey: string,
+    fieldName: string,
+    currentValue: string,
+    provider?: string,
+  ): Promise<{ suggestion: string; model: string }> {
+    const hld = await this.prisma.baHld.findUnique({ where: { id: hldId } });
+    if (!hld) throw new NotFoundException(`HLD ${hldId} not found`);
+    const { prdContext, stack } = await this.buildContext(hld.projectId, hld.sections as Record<string, unknown>);
+    try {
+      const { data } = await axios.post<{ suggestion: string; model: string }>(
+        `${this.aiServiceUrl}/hld-suggest-field`,
+        {
+          provider: provider ?? 'anthropic',
+          section_name: HLD_SECTION_NAMES[sectionKey] ?? sectionKey,
+          field_name: fieldName,
+          current_value: currentValue ?? '',
+          prd_context: prdContext,
+          stack,
+        },
+        { timeout: 120_000 },
+      );
+      return data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`HLD suggest-field failed: ${detail}`);
+      throw new BadRequestException(`AI Suggest failed: ${detail}`);
+    }
+  }
+
   /** Synthesize current section + saved insights into a Markdown draft (no write). */
   async merge(hldId: string, sectionKey: string, provider?: string): Promise<{ draft: string; model: string }> {
     const hld = await this.prisma.baHld.findUnique({ where: { id: hldId } });

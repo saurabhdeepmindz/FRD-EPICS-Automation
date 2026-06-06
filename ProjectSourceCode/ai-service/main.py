@@ -2657,6 +2657,58 @@ async def hld_chat(
     return HldChatResponse(markdown=text, model=model)
 
 
+class HldSuggestFieldRequest(BaseModel):
+    provider: str = "anthropic"
+    section_name: str
+    field_name: str
+    current_value: str = ""
+    prd_context: str = ""
+    stack: str = ""
+
+
+class HldSuggestFieldResponse(BaseModel):
+    suggestion: str
+    model: str
+
+
+_HLD_SUGGEST_FIELD_SYSTEM = (
+    "You are an expert software architect helping author one field of a High-Level Design (HLD) section. "
+    "Suggest a concise, high-quality value for the named field, grounded in the project's PRD/FRD and tech stack. "
+    "Return ONLY the field value text — no preamble, no section heading, no surrounding quotes. Short bullet lines "
+    "(prefixed with '- ') are fine when the field is naturally a list. If a current value is given, improve/refine it."
+)
+
+
+@app.post("/hld-suggest-field", response_model=HldSuggestFieldResponse, tags=["copilot"])
+async def hld_suggest_field(
+    body: HldSuggestFieldRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> HldSuggestFieldResponse:
+    """Per-field AI Suggest for the HLD section editor (grounded, concise)."""
+    parts = [f"HLD section: {body.section_name}", f"Field to fill: {body.field_name}"]
+    if body.stack.strip():
+        parts.append(f"\nTech stack:\n{body.stack.strip()[:1500]}")
+    if body.prd_context.strip():
+        parts.append(f"\nProject context (PRD/FRD):\n{body.prd_context.strip()[:4000]}")
+    if body.current_value.strip():
+        parts.append(f"\nCurrent value (refine this):\n{body.current_value.strip()[:1500]}")
+    parts.append("\nReturn only the suggested value for this field.")
+    text, model = await _complete_text(
+        provider=body.provider,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+        system=_HLD_SUGGEST_FIELD_SYSTEM,
+        user="\n".join(parts),
+        history=[],
+        max_tokens=700,
+        temperature=0.4,
+    )
+    return HldSuggestFieldResponse(suggestion=text.strip(), model=model)
+
+
 @app.post("/hld-chat-stream", tags=["copilot"])
 async def hld_chat_stream(
     body: HldChatRequest,
