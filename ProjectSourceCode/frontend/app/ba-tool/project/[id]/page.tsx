@@ -223,6 +223,12 @@ export default function BaProjectWorkspacePage() {
               HLD
             </Link>
           </Button>
+          <Button size="sm" variant="outline" asChild title="HLD Library — browse & search every indexed HLD (org-wide)">
+            <Link href={`/ba-tool/hld-library`}>
+              <Layers className="h-3.5 w-3.5 mr-1" />
+              HLD Library
+            </Link>
+          </Button>
           <Button size="sm" variant="outline" asChild title="New Pipeline — Cross-Module E2E Flows">
             <Link href={`/ba-tool/project/${projectId}/e2e-flows`}>
               <Workflow className="h-3.5 w-3.5 mr-1" />
