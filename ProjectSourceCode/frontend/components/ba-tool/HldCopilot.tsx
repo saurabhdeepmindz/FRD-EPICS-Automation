@@ -43,11 +43,16 @@ import {
   deleteHldReference,
   findSimilarHlds,
   indexHldToLibrary,
+  listHldLibrary,
+  getLibraryHldSections,
+  saveFromLibrary,
   type HldProvider,
   type HldTemplate,
   type HldChatMessage,
   type HldReference,
   type HldSimilarHit,
+  type HldLibraryEntry,
+  type HldLibrarySection,
 } from '@/lib/pipeline-api';
 
 const QUICK_PROMPTS = [
@@ -103,6 +108,13 @@ export function HldCopilot({
   const [findingSimilar, setFindingSimilar] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [indexMsg, setIndexMsg] = useState<string | null>(null);
+  // Borrow sections from another HLD
+  const [libList, setLibList] = useState<HldLibraryEntry[]>([]);
+  const [libOpenId, setLibOpenId] = useState<string | null>(null);
+  const [libSections, setLibSections] = useState<HldLibrarySection[] | null>(null);
+  const [libSelected, setLibSelected] = useState<Set<string>>(new Set());
+  const [libBusy, setLibBusy] = useState(false);
+  const [libMsg, setLibMsg] = useState<string | null>(null);
   const [messages, setMessages] = useState<HldChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -135,6 +147,11 @@ export function HldCopilot({
   useEffect(() => {
     void listHldReferences(projectId, hldId).then(setReferences).catch(() => setReferences([]));
   }, [projectId, hldId]);
+
+  // Load the HLD library list (for the "borrow sections" browser).
+  useEffect(() => {
+    void listHldLibrary().then(setLibList).catch(() => setLibList([]));
+  }, []);
 
   // Load this section's thread whenever the section changes.
   useEffect(() => {
@@ -340,6 +357,59 @@ export function HldCopilot({
     }
   };
 
+  // Open/close a library HLD and load its sections for the checkbox picker.
+  const toggleLibHld = async (id: string) => {
+    if (libOpenId === id) {
+      setLibOpenId(null);
+      setLibSections(null);
+      setLibSelected(new Set());
+      return;
+    }
+    setLibOpenId(id);
+    setLibSections(null);
+    setLibSelected(new Set());
+    setLibMsg(null);
+    try {
+      const detail = await getLibraryHldSections(id);
+      setLibSections(detail.sections);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load HLD sections');
+    }
+  };
+
+  const toggleLibSection = (key: string) =>
+    setLibSelected((s) => {
+      const n = new Set(s);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+
+  // Borrow the checked source sections into the current section's Saved insights.
+  const borrowSelected = async () => {
+    if (!libOpenId || !libSelected.size) return;
+    setLibBusy(true);
+    setLibMsg(null);
+    setError(null);
+    try {
+      const res = await saveFromLibrary(projectId, hldId, {
+        sourceHldId: libOpenId,
+        sectionKeys: [...libSelected],
+        targetSectionKey: sectionKey,
+      });
+      const msgs = await getHldThread(projectId, hldId, sectionKey);
+      setMessages(msgs);
+      setLibMsg(`Saved ${res.saved} section${res.saved === 1 ? '' : 's'} to “${sectionName}” insights.`);
+      setLibSelected(new Set());
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (err instanceof Error ? err.message : 'Save failed'),
+      );
+    } finally {
+      setLibBusy(false);
+    }
+  };
+
   const indexThisHld = async () => {
     setIndexing(true);
     setIndexMsg(null);
@@ -495,7 +565,7 @@ export function HldCopilot({
           <Paperclip className="h-4 w-4 mr-1" /> Refs{references.length ? ` (${references.length})` : ''}
         </TabBtn>
         <TabBtn active={tab === 'similar'} onClick={() => setTab('similar')}>
-          <Library className="h-4 w-4 mr-1" /> Similar
+          <Library className="h-4 w-4 mr-1" /> Library
         </TabBtn>
       </div>
 
@@ -923,6 +993,69 @@ export function HldCopilot({
               </div>
             ))
           )}
+
+          {/* Browse all HLDs → borrow sections into the current section's Saved */}
+          <div className="border-t pt-2 mt-1">
+            <p className="text-[11px] font-semibold text-gray-500 px-0.5 mb-1">Browse all HLDs — borrow sections into Saved</p>
+            {libMsg && <p className="text-[11px] text-emerald-700 mb-1.5">✓ {libMsg}</p>}
+            {libList.length === 0 ? (
+              <p className="text-center text-xs text-gray-400 pt-2">No HLDs indexed yet.</p>
+            ) : (
+              libList.map((e) => (
+                <div key={e.hldId} className="border rounded-lg bg-white mb-1.5">
+                  <button onClick={() => toggleLibHld(e.hldId)} className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
+                    {libOpenId === e.hldId ? (
+                      <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" />
+                    )}
+                    <FileText className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                    <span className="text-sm font-medium text-gray-800 truncate">{e.productName}</span>
+                    <span className="ml-auto text-[10px] text-gray-400 shrink-0">{e.sections} sec</span>
+                  </button>
+                  {libOpenId === e.hldId && (
+                    <div className="border-t px-2.5 py-2">
+                      {libSections === null ? (
+                        <div className="flex items-center gap-2 text-xs text-gray-400">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Loading sections…
+                        </div>
+                      ) : libSections.length === 0 ? (
+                        <p className="text-xs text-gray-400">No sections with content.</p>
+                      ) : (
+                        <>
+                          <div className="cp-scroll max-h-72 overflow-y-auto space-y-1.5 pr-1">
+                            {libSections.map((s) => (
+                              <label key={s.key} className="flex items-start gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={libSelected.has(s.key)}
+                                  onChange={() => toggleLibSection(s.key)}
+                                  className="mt-0.5 accent-indigo-600 shrink-0"
+                                />
+                                <span className="min-w-0">
+                                  <span className="text-xs font-medium text-gray-700">{s.name}</span>
+                                  <span className="block text-[11px] text-gray-500 line-clamp-2">{s.preview}</span>
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                          <Button
+                            size="sm"
+                            className="w-full mt-2"
+                            disabled={libBusy || libSelected.size === 0}
+                            onClick={borrowSelected}
+                          >
+                            {libBusy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Bookmark className="h-4 w-4 mr-1" />}
+                            Save{libSelected.size ? ` ${libSelected.size}` : ''} to “{sectionName}” insights
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 

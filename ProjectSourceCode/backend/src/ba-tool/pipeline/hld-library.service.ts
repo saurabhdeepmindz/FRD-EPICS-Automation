@@ -162,6 +162,30 @@ export class HldLibraryService {
       .slice(0, k);
   }
 
+  /** Source HLD's non-empty sections (rendered) — for the "borrow sections" browser. */
+  async getHldSections(hldId: string): Promise<{
+    hldId: string;
+    productName: string;
+    sections: { key: string; name: string; preview: string; text: string }[];
+  }> {
+    const hld = await this.prisma.baHld.findUnique({ where: { id: hldId } });
+    if (!hld) throw new NotFoundException(`HLD ${hldId} not found`);
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const productName = project?.productName ?? project?.name ?? 'Project';
+    const sections = (hld.sections ?? {}) as Record<string, unknown>;
+    const out: { key: string; name: string; preview: string; text: string }[] = [];
+    for (const key of Object.keys(HLD_SECTION_NAMES)) {
+      const text = sectionToText(sections[key]).trim();
+      if (!text) continue;
+      const name = HLD_SECTION_NAMES[key];
+      out.push({ key, name, preview: text.slice(0, 180), text: `${name}\n${text}` });
+    }
+    return { hldId, productName, sections: out };
+  }
+
   private async embed(texts: string[]): Promise<number[][]> {
     const { data } = await axios.post<{ embeddings: number[][] }>(
       `${this.aiServiceUrl}/embed`,
