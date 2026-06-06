@@ -21,6 +21,7 @@ import { Markdown } from '@/components/ba-tool/Markdown';
 import {
   listHldProviders,
   listHldTemplates,
+  saveHldAsTemplate,
   getHldThread,
   hldCopilotChat,
   saveHldInsight,
@@ -66,6 +67,13 @@ export function HldCopilot({
   const [provider, setProvider] = useState('anthropic');
   const [templates, setTemplates] = useState<HldTemplate[]>([]);
   const [activeTemplate, setActiveTemplate] = useState<HldTemplate | null>(null);
+  // HD-09 — save-as-template form
+  const [showSaveTpl, setShowSaveTpl] = useState(false);
+  const [tplName, setTplName] = useState('');
+  const [tplScope, setTplScope] = useState<'GLOBAL' | 'PROJECT'>('GLOBAL');
+  const [tplWhole, setTplWhole] = useState(true);
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [tplMsg, setTplMsg] = useState<string | null>(null);
   const [messages, setMessages] = useState<HldChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -177,6 +185,33 @@ export function HldCopilot({
       setError(err instanceof Error ? err.message : 'Apply failed');
     } finally {
       setApplying(false);
+    }
+  };
+
+  const reloadTemplates = () => listHldTemplates(projectId).then(setTemplates).catch(() => {});
+
+  // HD-09 — save the current HLD (whole doc or this section) as a reusable template.
+  const saveTemplate = async () => {
+    setSavingTpl(true);
+    setTplMsg(null);
+    setError(null);
+    try {
+      const res = await saveHldAsTemplate(projectId, hldId, {
+        name: tplName.trim() || undefined,
+        scope: tplScope,
+        sectionKey: tplWhole ? null : sectionKey,
+      });
+      await reloadTemplates();
+      setTplMsg(`Saved “${res.name}” · ${res.scope === 'GLOBAL' ? 'all projects' : 'this project'}`);
+      setShowSaveTpl(false);
+      setTplName('');
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (err instanceof Error ? err.message : 'Save failed'),
+      );
+    } finally {
+      setSavingTpl(false);
     }
   };
 
@@ -442,6 +477,63 @@ export function HldCopilot({
       ) : (
         // ─── Templates tab (Architecture console) ───
         <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          {/* HD-09 — save this HLD as a reusable template */}
+          <div className="border rounded-lg bg-indigo-50/40 border-indigo-200 p-2.5">
+            {!showSaveTpl ? (
+              <button
+                onClick={() => {
+                  setShowSaveTpl(true);
+                  setTplMsg(null);
+                }}
+                className="w-full flex items-center gap-2 text-sm font-medium text-indigo-700"
+              >
+                <Bookmark className="h-4 w-4" /> Save this HLD as a template
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-indigo-800">Save as template</p>
+                <input
+                  value={tplName}
+                  onChange={(e) => setTplName(e.target.value)}
+                  placeholder={tplWhole ? 'HLD template name…' : `${sectionName} (template)`}
+                  className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                />
+                <div className="flex items-center gap-2 text-xs">
+                  <label className="text-gray-500">Content</label>
+                  <select
+                    value={tplWhole ? 'whole' : 'section'}
+                    onChange={(e) => setTplWhole(e.target.value === 'whole')}
+                    className="border rounded-md px-2 py-1 bg-white"
+                  >
+                    <option value="whole">Whole HLD</option>
+                    <option value="section">This section ({sectionName})</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <label className="text-gray-500">Scope</label>
+                  <select
+                    value={tplScope}
+                    onChange={(e) => setTplScope(e.target.value as 'GLOBAL' | 'PROJECT')}
+                    className="border rounded-md px-2 py-1 bg-white"
+                  >
+                    <option value="GLOBAL">All projects (global)</option>
+                    <option value="PROJECT">This project only</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 pt-0.5">
+                  <Button size="sm" onClick={saveTemplate} disabled={savingTpl}>
+                    {savingTpl ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Bookmark className="h-4 w-4 mr-1" />}
+                    Save template
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setShowSaveTpl(false)} disabled={savingTpl}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+            {tplMsg && <p className="text-[11px] text-emerald-700 mt-1.5">✓ {tplMsg}</p>}
+          </div>
+
           <p className="text-[11px] text-gray-400 px-0.5">
             Pick a reference pattern to steer the copilot, or draft this section from it.
           </p>

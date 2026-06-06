@@ -520,6 +520,19 @@ export async function listHldTemplates(projectId: string): Promise<HldTemplate[]
   return data.data;
 }
 
+/** HD-09 — save this HLD (whole doc or one section) as a reusable ARCHITECTURE template. */
+export async function saveHldAsTemplate(
+  projectId: string,
+  hldId: string,
+  body: { name?: string; scope: 'GLOBAL' | 'PROJECT'; sectionKey?: string | null },
+): Promise<{ id: string; name: string; scope: string; createdAt: string }> {
+  const { data } = await api.post<ApiEnvelope<{ id: string; name: string; scope: string; createdAt: string }>>(
+    `/ba/projects/${projectId}/hld/${hldId}/save-as-template`,
+    body,
+  );
+  return data.data;
+}
+
 /** Which chat models are available (key-gated) — drives the model picker. */
 export async function listHldProviders(projectId: string): Promise<HldProvider[]> {
   const { data } = await api.get<ApiEnvelope<HldProvider[]>>(
