@@ -39,6 +39,8 @@ import { HldMermaid } from '@/components/ba-tool/HldMermaid';
 import { HldPreview } from '@/components/ba-tool/HldPreview';
 import { HldSectionEditor } from '@/components/ba-tool/HldSectionEditor';
 import { HldCopilot } from '@/components/ba-tool/HldCopilot';
+import { HldStructureDiagram } from '@/components/ba-tool/HldStructureDiagram';
+import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
 type View = 'diagrams' | 'edit' | 'preview';
@@ -97,6 +99,13 @@ export default function HldV2Page() {
   };
 
   const diagramKeys = hld ? Object.keys(hld.mermaidDiagrams ?? {}).filter((k) => hld.mermaidDiagrams[k]?.trim()) : [];
+  // Diagrams not tied to a section (those shown inline) — for the Preview nav entry.
+  const mappedDiagramSet = new Set(HLD_SECTIONS.map((s) => DIAGRAM_FOR_SECTION[s.key]).filter(Boolean));
+  const unmappedDiagramKeys = diagramKeys.filter((k) => !mappedDiagramSet.has(k));
+
+  const scrollToPreview = (key: string) => {
+    document.getElementById(`prev-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   useEffect(() => {
     if (loading || !hld || initedKey.current) return;
@@ -229,9 +238,36 @@ export default function HldV2Page() {
               </Card>
             )}
 
-            {/* ─── PREVIEW ─── */}
+            {/* ─── PREVIEW (PRD-style: left nav jumps to anchors) ─── */}
             {view === 'preview' ? (
-              <HldPreview hld={hld} palette={palette} />
+              <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6 items-start">
+                <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto space-y-1 pr-1">
+                  <div className="pt-1">
+                    {HLD_SECTIONS.map((s, i) => (
+                      <button
+                        key={s.key}
+                        onClick={() => scrollToPreview(s.key)}
+                        className="w-full text-left flex items-start gap-2 rounded-lg px-3 py-2 text-sm border border-transparent text-gray-600 hover:bg-white hover:border-gray-200"
+                      >
+                        <span className="text-xs font-mono text-gray-400 w-5 shrink-0 mt-0.5">{i + 1}</span>
+                        <span className="min-w-0">{s.name}</span>
+                        {!hld.sections[s.key] && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
+                      </button>
+                    ))}
+                    {unmappedDiagramKeys.length > 0 && (
+                      <button
+                        onClick={() => scrollToPreview('__diagrams')}
+                        className="w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 text-sm border border-transparent text-gray-600 hover:bg-white hover:border-gray-200"
+                      >
+                        <Network className="h-4 w-4 shrink-0" /> Architecture Diagrams
+                      </button>
+                    )}
+                  </div>
+                </aside>
+                <div className="min-w-0">
+                  <HldPreview hld={hld} palette={palette} structure={structure} />
+                </div>
+              </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6 items-start">
                 {/* Left section menu */}
@@ -307,7 +343,7 @@ export default function HldV2Page() {
                             <span className="text-sm font-mono text-gray-400">{idx + 1}</span> {sec.name}
                           </h2>
                           {sec.key === 'projectStructure' && structure && (
-                            <ProjectStructureDiagram structure={structure} palette={palette} />
+                            <HldStructureDiagram structure={structure} palette={palette} />
                           )}
                           {diagKey && hld.mermaidDiagrams?.[diagKey] && (
                             <Card>
@@ -462,75 +498,33 @@ function DownloadMenu({
 
 // ─── Read-only value renderer (browse view) ──────────────────────────────────
 
-function AiText({ value }: { value: string }) {
-  const isAi = value.startsWith('[AI] ');
-  const text = isAi ? value.slice(5) : value;
-  return (
-    <span>
-      {isAi && (
-        <span className="text-[9px] uppercase bg-purple-100 text-purple-600 rounded px-1 py-0.5 mr-1 align-middle">
-          AI
-        </span>
-      )}
-      <span className="whitespace-pre-wrap">{text}</span>
-    </span>
-  );
-}
-
 function renderValue(value: unknown): ReactNode {
-  if (value == null) return <span className="text-gray-400">—</span>;
-  if (typeof value === 'string') return <AiText value={value} />;
+  if (value == null || value === '') return <span className="text-gray-400">—</span>;
+  if (typeof value === 'string') {
+    const isAi = value.startsWith('[AI] ');
+    const text = isAi ? value.slice(5) : value;
+    return (
+      <div>
+        {isAi && (
+          <span className="text-[9px] uppercase bg-purple-100 text-purple-600 rounded px-1 py-0.5 mr-1 align-middle">
+            AI
+          </span>
+        )}
+        <Markdown className="inline-block w-full align-top">{text}</Markdown>
+      </div>
+    );
+  }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return (
+      <ul className="list-disc pl-5 space-y-1">
+        {value.map((v, i) => (
+          <li key={i}>{renderValue(v)}</li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <pre className="text-xs bg-gray-50 border rounded p-2 overflow-x-auto">{JSON.stringify(value, null, 2)}</pre>
-  );
-}
-
-// ─── Pastel project-structure diagram (mirrors legacy /hld) ───────────────────
-
-function ProjectStructureDiagram({ structure, palette }: { structure: ProjectStructure; palette: DiagramPalette }) {
-  const legend: [keyof DiagramPalette, string][] = [
-    ['frontend', 'Frontend'], ['backend', 'Backend'], ['calcEngine', 'Calc Engine'],
-    ['shared', 'Shared Pkgs'], ['db', 'DB Tables'], ['config', 'Config / Files'],
-  ];
-  return (
-    <Card>
-      <CardContent className="p-4 space-y-4">
-        <div className="text-center text-sm text-gray-500">
-          monorepo root — <span className="font-medium text-gray-700">{structure.productName}</span>
-        </div>
-        {structure.groups.map((g) => {
-          const c = palette[g.layer] ?? palette.node;
-          return (
-            <div key={g.key}>
-              <div className="text-sm font-semibold mb-2" style={{ color: c.text }}>{g.title}</div>
-              <div className="flex flex-wrap gap-2">
-                {g.items.map((it, i) => (
-                  <span
-                    key={i}
-                    className="text-xs rounded-md px-2.5 py-1.5 border"
-                    style={{ background: c.fill, borderColor: c.border, color: c.text }}
-                  >
-                    {it.name}
-                    {it.note ? <span className="opacity-60"> · {it.note}</span> : null}
-                  </span>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        <div className="flex flex-wrap gap-3 pt-3 border-t">
-          {legend.map(([k, label]) => {
-            const c = palette[k];
-            return (
-              <span key={k} className="inline-flex items-center gap-1.5 text-xs text-gray-600">
-                <span className="h-3 w-3 rounded-sm border" style={{ background: c.fill, borderColor: c.border }} />
-                {label}
-              </span>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
