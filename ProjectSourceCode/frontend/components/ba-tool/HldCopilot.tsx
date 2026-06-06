@@ -32,6 +32,7 @@ import {
   saveHldAsTemplate,
   getHldThread,
   hldCopilotChat,
+  streamHldCopilotChat,
   saveHldInsight,
   hldCopilotMerge,
   updateHldSection,
@@ -106,6 +107,9 @@ export function HldCopilot({
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // HD-01 — live streaming turn
+  const [streamQuestion, setStreamQuestion] = useState<string | null>(null);
+  const [streamText, setStreamText] = useState('');
   const [merging, setMerging] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -149,7 +153,7 @@ export function HldCopilot({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, sending]);
+  }, [messages, sending, streamText]);
 
   const send = useCallback(
     async (text: string) => {
@@ -158,21 +162,49 @@ export function HldCopilot({
       setSending(true);
       setError(null);
       setInput('');
+      const template = activeTemplate ? `${activeTemplate.name}\n${activeTemplate.body}` : null;
+      // HD-01 — stream tokens live; fall back to a single non-streaming call on failure.
+      setStreamQuestion(msg);
+      setStreamText('');
       try {
-        const { userMessage, assistantMessage } = await hldCopilotChat(projectId, hldId, {
-          sectionKey,
-          provider,
-          message: msg,
-          template: activeTemplate ? `${activeTemplate.name}\n${activeTemplate.body}` : null,
-        });
-        setMessages((m) => [...m, userMessage, assistantMessage]);
-        setExpanded((e) => new Set(e).add(assistantMessage.id)); // open the new answer
-      } catch (err) {
-        setError(
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-            (err instanceof Error ? err.message : 'Chat failed'),
+        let streamed = '';
+        await streamHldCopilotChat(
+          projectId,
+          hldId,
+          { sectionKey, provider, message: msg, template },
+          {
+            onDelta: (d) => {
+              streamed += d;
+              setStreamText((t) => t + d);
+            },
+            onError: (e) => setError(e),
+          },
         );
+        if (!streamed.trim()) throw new Error('empty stream'); // trigger fallback
+        const msgs = await getHldThread(projectId, hldId, sectionKey);
+        setMessages(msgs);
+        const lastA = [...msgs].reverse().find((m) => m.role === 'assistant');
+        if (lastA) setExpanded((e) => new Set(e).add(lastA.id));
+      } catch {
+        // Fallback: non-streaming request (keeps the Copilot working if SSE fails).
+        try {
+          const { userMessage, assistantMessage } = await hldCopilotChat(projectId, hldId, {
+            sectionKey,
+            provider,
+            message: msg,
+            template,
+          });
+          setMessages((m) => [...m, userMessage, assistantMessage]);
+          setExpanded((e) => new Set(e).add(assistantMessage.id));
+        } catch (err) {
+          setError(
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+              (err instanceof Error ? err.message : 'Chat failed'),
+          );
+        }
       } finally {
+        setStreamQuestion(null);
+        setStreamText('');
         setSending(false);
       }
     },
@@ -362,7 +394,7 @@ export function HldCopilot({
     if (m.role === 'user') {
       const a = messages[i + 1]?.role === 'assistant' ? messages[i + 1] : null;
       qaItems.push({
-        key: m.id,
+        key: a?.id ?? m.id, // key by the answer id so auto-expand (which targets the assistant id) matches
         question: m.content,
         answer: a?.content ?? '',
         model: a?.model ?? null,
@@ -524,7 +556,27 @@ export function HldCopilot({
                 onToggleSelect={() => it.assistantId && toggleSelect(it.assistantId)}
               />
             ))}
-            {sending && (
+            {/* HD-01 — live streaming turn */}
+            {streamQuestion && (
+              <div className="border rounded-lg bg-white border-purple-200">
+                <div className="flex items-start gap-2 px-2.5 py-2">
+                  <ChevronDown className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <span className="text-[10px] font-mono text-gray-400 mt-0.5 shrink-0">Q{qaItems.length + 1}</span>
+                  <span className="text-sm text-gray-800">{streamQuestion}</span>
+                </div>
+                <div className="border-t px-3 py-2">
+                  {streamText ? (
+                    <Markdown>{streamText}</Markdown>
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
+                    </div>
+                  )}
+                  {streamText && <span className="inline-block w-1.5 h-3.5 bg-purple-400 animate-pulse align-middle ml-0.5" />}
+                </div>
+              </div>
+            )}
+            {sending && !streamQuestion && (
               <div className="flex items-center gap-2 text-xs text-gray-400 px-1">
                 <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
               </div>
