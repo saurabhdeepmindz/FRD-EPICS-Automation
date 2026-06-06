@@ -1377,9 +1377,28 @@ model BaHldReference {
   error            String?
   includeInContext Boolean  @default(true)
   createdAt        DateTime @default(now())
+  chunks           BaHldReferenceChunk[]
 
   @@index([hldId])
   @@map("ba_hld_references")
+}
+
+// RAG chunks for a reference (Sprint v11 / HD-13). Embeddings stored as a JSON
+// float array; retrieval is app-side cosine top-k (no pgvector needed at this scale).
+model BaHldReferenceChunk {
+  id          String         @id @default(uuid())
+  referenceId String
+  reference   BaHldReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  hldId       String // denormalized for fast scope queries
+  sectionKey  String? // denormalized from the reference (null = whole-HLD)
+  idx         Int
+  text        String         @db.Text
+  embedding   Json // number[]
+  createdAt   DateTime       @default(now())
+
+  @@index([hldId])
+  @@index([referenceId])
+  @@map("ba_hld_reference_chunks")
 }
 
 // ─── Screen ↔ Feature Mapping (Stage 3a — Wireframes, Sprint v8 / Track Y) ──────

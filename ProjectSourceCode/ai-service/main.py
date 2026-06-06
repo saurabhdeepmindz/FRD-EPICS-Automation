@@ -2724,3 +2724,32 @@ async def summarize_reference(
     )
     logger.info("Reference summary (%s) %d chars for '%s'", body.provider, len(summary), body.title)
     return ReferenceSummaryResponse(summary=summary, model=model)
+
+
+# ─── Embeddings (Sprint v11 — RAG, HD-13/HD-10) ───────────────────────────────
+
+class EmbedRequest(BaseModel):
+    texts: list[str]
+
+
+class EmbedResponse(BaseModel):
+    embeddings: list[list[float]]
+    model: str
+
+
+@app.post("/embed", response_model=EmbedResponse, tags=["copilot"])
+async def embed(
+    body: EmbedRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+) -> EmbedResponse:
+    """Embed texts for retrieval (OpenAI embeddings). Used by reference + HLD RAG."""
+    texts = [t if t.strip() else " " for t in (body.texts or [])]
+    if not texts:
+        return EmbedResponse(embeddings=[], model=settings.OPENAI_EMBED_MODEL)
+    try:
+        resp = await openai_client.embeddings.create(model=settings.OPENAI_EMBED_MODEL, input=texts)
+    except openai.OpenAIError as exc:
+        logger.error("Embedding error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI embedding service unavailable") from exc
+    return EmbedResponse(embeddings=[d.embedding for d in resp.data], model=settings.OPENAI_EMBED_MODEL)
