@@ -485,6 +485,102 @@ export function hldDocxUrl(projectId: string, hldId: string): string {
   return `${API_BASE}/api/ba/projects/${projectId}/hld/${hldId}/export/docx`;
 }
 
+// ─── HLD Architect Copilot (Sprint v10 / Track C) ─────────────────────────────
+
+export interface HldProvider {
+  id: string;
+  label: string;
+  available: boolean;
+}
+
+export interface HldChatMessage {
+  id: string;
+  threadId?: string;
+  role: 'user' | 'assistant';
+  model: string | null;
+  content: string;
+  savedToSection: boolean;
+  templateRef?: string | null;
+  createdAt: string;
+}
+
+/** Which chat models are available (key-gated) — drives the model picker. */
+export async function listHldProviders(projectId: string): Promise<HldProvider[]> {
+  const { data } = await api.get<ApiEnvelope<HldProvider[]>>(
+    `/ba/projects/${projectId}/hld/copilot/providers`,
+  );
+  return data.data;
+}
+
+/** Full conversation for one section. */
+export async function getHldThread(
+  projectId: string,
+  hldId: string,
+  section: string,
+): Promise<HldChatMessage[]> {
+  const { data } = await api.get<ApiEnvelope<HldChatMessage[]>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/thread`,
+    { params: { section } },
+  );
+  return data.data;
+}
+
+/** Saved insights for one section. */
+export async function getHldInsights(
+  projectId: string,
+  hldId: string,
+  section: string,
+): Promise<HldChatMessage[]> {
+  const { data } = await api.get<ApiEnvelope<HldChatMessage[]>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/insights`,
+    { params: { section } },
+  );
+  return data.data;
+}
+
+/** Ask the copilot a question (persists both turns); returns the new turns. */
+export async function hldCopilotChat(
+  projectId: string,
+  hldId: string,
+  body: { sectionKey: string; provider: string; message: string; template?: string | null },
+): Promise<{ userMessage: HldChatMessage; assistantMessage: HldChatMessage }> {
+  const { data } = await api.post<ApiEnvelope<{ userMessage: HldChatMessage; assistantMessage: HldChatMessage }>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/chat`,
+    body,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Flag / unflag a message as a saved insight. */
+export async function saveHldInsight(
+  projectId: string,
+  hldId: string,
+  messageId: string,
+  saved: boolean,
+): Promise<HldChatMessage> {
+  const { data } = await api.post<ApiEnvelope<HldChatMessage>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/save-insight`,
+    { messageId, saved },
+  );
+  return data.data;
+}
+
+/** Synthesize current section + saved insights into a Markdown draft (no write). */
+export async function hldCopilotMerge(
+  projectId: string,
+  hldId: string,
+  sectionKey: string,
+  provider: string,
+): Promise<{ draft: string; model: string }> {
+  const { data } = await api.post<ApiEnvelope<{ draft: string; model: string }>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/section/${sectionKey}/merge`,
+    { provider },
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
 // ─── Project structure diagram (v9 Track KK) ─────────────────────────────────
 
 export type StructureLayer = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';

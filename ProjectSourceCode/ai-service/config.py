@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
     HIFI_PROVIDER: str = "anthropic"
 
+    # Google Gemini — optional; powers the Gemini option in the HLD Copilot's
+    # per-message model picker. Absent by default → the option is reported
+    # unavailable and hidden in the UI (no rework when a key is added).
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.0-flash"
+
+    # HLD Architect Copilot (Track C) — conversational research per HLD section.
+    HLD_COPILOT_PROVIDER: str = "anthropic"   # default model for chat/merge
+    HLD_COPILOT_MAX_TOKENS: int = 2048
+    HLD_COPILOT_TEMPERATURE: float = 0.5
+
     # Speech-to-Text (STT) — pluggable provider
     # Supported: "whisper" (OpenAI), "deepgram", "assemblyai", "elevenlabs", "cartesia"
     STT_PROVIDER: str = "whisper"

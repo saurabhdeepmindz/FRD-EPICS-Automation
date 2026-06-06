@@ -30,6 +30,12 @@ from prompts.brand_extraction_prompts import BRAND_EXTRACTION_SYSTEM_PROMPT
 from prompts.wireframe_prompts import WIREFRAME_SYSTEM_PROMPT, build_wireframe_user_message
 from prompts.hifi_prompts import HIFI_SYSTEM_PROMPT, LOFI_SYSTEM_PROMPT, build_hifi_user_message
 from prompts.hld_prompts import HLD_SYSTEM_PROMPT, build_hld_user_message
+from prompts.hld_chat_prompts import (
+    HLD_CHAT_SYSTEM_PROMPT,
+    build_hld_chat_user_message,
+    HLD_MERGE_SYSTEM_PROMPT,
+    build_hld_merge_user_message,
+)
 from prompts.e2e_flow_prompts import E2E_FLOW_SYSTEM_PROMPT, build_e2e_flow_user_message
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -2475,3 +2481,177 @@ async def e2e_flow_generate(
     integrations = parsed.get("integrations", [])
     gaps = [E2eFlowGapItem(question=g.get("question", "")) for g in parsed.get("gaps", [])]
     return E2eFlowResponse(flows=flows, integrations=integrations, gaps=gaps)
+
+
+# ─── HLD Architect Copilot (Sprint v10 / Track C) ─────────────────────────────
+
+class ProviderInfo(BaseModel):
+    id: str
+    label: str
+    available: bool
+
+
+class ProvidersResponse(BaseModel):
+    providers: list[ProviderInfo]
+
+
+@app.get("/providers", response_model=ProvidersResponse, tags=["copilot"])
+async def providers(settings: Annotated[Settings, Depends(get_settings)]) -> ProvidersResponse:
+    """Which chat providers have a key configured (drives the model picker)."""
+    return ProvidersResponse(providers=[
+        ProviderInfo(id="anthropic", label="Claude Sonnet 4.6", available=bool(settings.ANTHROPIC_API_KEY)),
+        ProviderInfo(id="openai", label="OpenAI GPT", available=bool(settings.OPENAI_API_KEY)),
+        ProviderInfo(id="gemini", label="Google Gemini", available=bool(settings.GEMINI_API_KEY)),
+    ])
+
+
+class ChatTurn(BaseModel):
+    role: str   # "user" | "assistant"
+    content: str
+
+
+class HldChatRequest(BaseModel):
+    provider: str = "anthropic"
+    section_name: str
+    section_content: str = ""
+    prd_context: str = ""
+    stack: str = ""
+    template: str | None = None
+    history: list[ChatTurn] = Field(default_factory=list)
+    user_message: str
+
+
+class HldChatResponse(BaseModel):
+    markdown: str
+    model: str
+
+
+class HldMergeRequest(BaseModel):
+    provider: str = "anthropic"
+    section_name: str
+    section_content: str = ""
+    insights: list[str] = Field(default_factory=list)
+
+
+class HldMergeResponse(BaseModel):
+    merged_markdown: str
+    model: str
+
+
+async def _complete_text(
+    *,
+    provider: str,
+    settings: Settings,
+    openai_client: openai.AsyncOpenAI,
+    anthropic_client: anthropic.AsyncAnthropic,
+    system: str,
+    user: str,
+    history: list[ChatTurn],
+    max_tokens: int,
+    temperature: float,
+) -> tuple[str, str]:
+    """Provider-routed plain-text (Markdown) completion. Returns (text, model)."""
+    turns = [{"role": t.role, "content": t.content} for t in history if t.content.strip()]
+
+    if provider == "anthropic":
+        if not settings.ANTHROPIC_API_KEY:
+            raise HTTPException(status_code=400, detail="Claude (anthropic) is not configured — set ANTHROPIC_API_KEY.")
+        try:
+            response = await anthropic_client.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+                messages=[*turns, {"role": "user", "content": user}],
+            )
+        except anthropic.AuthenticationError as exc:
+            raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+        except anthropic.RateLimitError as exc:
+            raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+        except anthropic.APIError as exc:
+            logger.error("Anthropic error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
+        return text.strip(), settings.ANTHROPIC_MODEL
+
+    if provider == "openai":
+        try:
+            response = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[{"role": "system", "content": system}, *turns, {"role": "user", "content": user}],
+                max_tokens=max(max_tokens, 1024),
+                temperature=temperature,
+            )
+        except openai.AuthenticationError as exc:
+            raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+        except openai.RateLimitError as exc:
+            raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+        except openai.OpenAIError as exc:
+            logger.error("OpenAI error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        return (response.choices[0].message.content or "").strip(), settings.OPENAI_MODEL
+
+    if provider == "gemini":
+        # SDK/key not wired yet (deferred HD-03). The UI gates this off; guard anyway.
+        raise HTTPException(status_code=400, detail="Gemini is not configured yet. Choose Claude or OpenAI.")
+
+    raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'.")
+
+
+@app.post("/hld-chat", response_model=HldChatResponse, tags=["copilot"])
+async def hld_chat(
+    body: HldChatRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> HldChatResponse:
+    """Context-aware architecture chat for one HLD section."""
+    user = build_hld_chat_user_message(
+        section_name=body.section_name,
+        section_content=body.section_content,
+        prd_context=body.prd_context,
+        stack=body.stack,
+        template=body.template,
+        user_message=body.user_message,
+    )
+    text, model = await _complete_text(
+        provider=body.provider,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+        system=HLD_CHAT_SYSTEM_PROMPT,
+        user=user,
+        history=body.history,
+        max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
+        temperature=settings.HLD_COPILOT_TEMPERATURE,
+    )
+    logger.info("HLD chat (%s) %d chars for section=%s", body.provider, len(text), body.section_name)
+    return HldChatResponse(markdown=text, model=model)
+
+
+@app.post("/hld-merge", response_model=HldMergeResponse, tags=["copilot"])
+async def hld_merge(
+    body: HldMergeRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> HldMergeResponse:
+    """Synthesize the current section + saved insights into one Markdown draft."""
+    user = build_hld_merge_user_message(
+        section_name=body.section_name,
+        section_content=body.section_content,
+        insights=body.insights,
+    )
+    text, model = await _complete_text(
+        provider=body.provider,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+        system=HLD_MERGE_SYSTEM_PROMPT,
+        user=user,
+        history=[],
+        max_tokens=max(settings.HLD_COPILOT_MAX_TOKENS, 3000),
+        temperature=0.4,
+    )
+    logger.info("HLD merge (%s) %d chars for section=%s", body.provider, len(text), body.section_name)
+    return HldMergeResponse(merged_markdown=text, model=model)

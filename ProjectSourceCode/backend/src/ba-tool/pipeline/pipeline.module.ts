@@ -5,6 +5,8 @@ import { PipelineController } from './pipeline.controller';
 import { PipelineAdminController } from './pipeline-admin.controller';
 import { E2eFlowController } from './e2e-flow.controller';
 import { HldExportController } from './hld-export.controller';
+import { HldCopilotController } from './hld-copilot.controller';
+import { HldCopilotService } from './hld-copilot.service';
 import { PdfService } from '../../export/pdf.service';
 import { PipelineService } from './pipeline.service';
 import { ProjectFolderService } from './project-folder.service';
@@ -53,10 +55,11 @@ import { TextExtractionService } from '../text-extraction.service';
  */
 @Module({
   imports: [AiModule, forwardRef(() => DiscoveryModule)],
-  controllers: [PipelineController, PipelineAdminController, E2eFlowController, HldExportController],
+  controllers: [PipelineController, PipelineAdminController, E2eFlowController, HldExportController, HldCopilotController],
   providers: [
     PipelineService,
     PdfService,
+    HldCopilotService,
     ProjectFolderService,
     ContextEngineeringService,
     CustomerInputService,

@@ -38,6 +38,7 @@ import { FreshnessBanner } from '@/components/ba-tool/FreshnessBanner';
 import { HldMermaid } from '@/components/ba-tool/HldMermaid';
 import { HldPreview } from '@/components/ba-tool/HldPreview';
 import { HldSectionEditor } from '@/components/ba-tool/HldSectionEditor';
+import { HldCopilot } from '@/components/ba-tool/HldCopilot';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
 type View = 'diagrams' | 'edit' | 'preview';
@@ -53,6 +54,7 @@ export default function HldV2Page() {
   const [error, setError] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string>('__diagrams');
   const [view, setView] = useState<View>('diagrams');
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const initedKey = useRef(false);
   const [palette, setPalette] = useState<DiagramPalette>(FALLBACK_PALETTE);
   const [structure, setStructure] = useState<ProjectStructure | null>(null);
@@ -148,6 +150,14 @@ export default function HldV2Page() {
                 hldId={hld.id}
                 onError={setError}
               />
+              <Button
+                variant={copilotOpen ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setCopilotOpen((o) => !o)}
+                title="Architect Copilot — per-section AI research"
+              >
+                <Sparkles className="h-4 w-4 mr-1" /> Copilot
+              </Button>
               <Button size="sm" onClick={onGenerate} disabled={generating}>
                 {generating ? (
                   <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Regenerating…</>
@@ -339,6 +349,23 @@ export default function HldV2Page() {
           </>
         )}
       </div>
+
+      {/* Architect Copilot drawer (Track C) */}
+      {copilotOpen && hld && (() => {
+        const ck = activeKey === '__diagrams' ? HLD_SECTIONS[0]?.key ?? 'documentControl' : activeKey;
+        const cs = HLD_SECTIONS.find((s) => s.key === ck);
+        return (
+          <HldCopilot
+            projectId={projectId}
+            hldId={hld.id}
+            sectionKey={ck}
+            sectionName={cs?.name ?? ck}
+            currentBody={hld.sections[ck] as Record<string, unknown> | undefined}
+            onApplied={load}
+            onClose={() => setCopilotOpen(false)}
+          />
+        );
+      })()}
     </div>
   );
 }
