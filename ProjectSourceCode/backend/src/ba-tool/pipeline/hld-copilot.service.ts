@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from '@nes
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
-import { HLD_SECTION_NAMES } from './project-hld.service';
+import { HLD_SECTION_NAMES, HLD_SECTION_ORDER } from './project-hld.service';
 import { BUILTIN_ARCH_TEMPLATES, libraryTemplateToHld, type HldTemplate } from './hld-templates';
 
 /**
@@ -45,7 +45,8 @@ export class HldCopilotService {
     let library: HldTemplate[] = [];
     try {
       const rows = await this.prisma.baTemplate.findMany({
-        where: { OR: [{ scope: 'GLOBAL' }, { projectId }] },
+        // Architecture-category templates only (built-ins + saved HLDs, HD-09).
+        where: { category: 'ARCHITECTURE', OR: [{ scope: 'GLOBAL' }, { projectId }] },
         orderBy: { updatedAt: 'desc' },
         take: 30,
         select: { id: true, name: true, content: true },
@@ -55,6 +56,92 @@ export class HldCopilotService {
       this.logger.warn(`listTemplates: library source unavailable: ${err instanceof Error ? err.message : err}`);
     }
     return [...BUILTIN_ARCH_TEMPLATES, ...library];
+  }
+
+  /**
+   * HD-09 — save an existing HLD (whole document or one section) as a reusable
+   * ARCHITECTURE template. It then appears in the Architecture console (Templates
+   * tab) for this project (scope=PROJECT) or all projects (scope=GLOBAL).
+   */
+  async saveAsTemplate(
+    hldId: string,
+    opts: { name?: string; scope?: 'GLOBAL' | 'PROJECT'; sectionKey?: string | null },
+  ) {
+    const hld = await this.prisma.baHld.findUnique({ where: { id: hldId } });
+    if (!hld) throw new NotFoundException(`HLD ${hldId} not found`);
+    const sections = (hld.sections ?? {}) as Record<string, unknown>;
+    const diagrams = (hld.mermaidDiagrams ?? {}) as Record<string, string>;
+
+    let content: string;
+    let defaultName: string;
+    if (opts.sectionKey) {
+      const label = HLD_SECTION_NAMES[opts.sectionKey] ?? opts.sectionKey;
+      content = `## ${label}\n\n${this.bodyToMarkdown(sections[opts.sectionKey])}`;
+      defaultName = `${label} (template)`;
+    } else {
+      content = this.hldToMarkdown(sections, diagrams);
+      defaultName = 'HLD template';
+    }
+
+    const name = (opts.name ?? '').trim() || defaultName;
+    const scope = opts.scope === 'PROJECT' ? 'PROJECT' : 'GLOBAL';
+
+    const created = await this.prisma.baTemplate.create({
+      data: {
+        category: 'ARCHITECTURE',
+        name,
+        scope,
+        projectId: scope === 'PROJECT' ? hld.projectId : null,
+        content,
+        lastModifiedBy: 'HUMAN',
+      },
+      select: { id: true, name: true, scope: true, createdAt: true },
+    });
+    this.logger.log(`Saved HLD ${hldId} as ${scope} template "${name}" (${created.id})`);
+    return created;
+  }
+
+  /** Render one section value as readable Markdown for a template body. */
+  private bodyToMarkdown(body: unknown): string {
+    if (body == null) return '_empty_';
+    if (typeof body === 'string') return body;
+    if (Array.isArray(body)) return body.map((v) => `- ${this.scalar(v)}`).join('\n');
+    if (typeof body === 'object') {
+      return Object.entries(body as Record<string, unknown>)
+        .map(([k, v]) => `- **${this.humanize(k)}:** ${this.scalar(v)}`)
+        .join('\n');
+    }
+    return String(body);
+  }
+
+  private scalar(v: unknown): string {
+    if (v == null) return '';
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) return v.map((x) => this.scalar(x)).join('; ');
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+
+  private humanize(key: string): string {
+    return key.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+  }
+
+  /** Render the whole 17-section HLD (+ diagrams) as a Markdown template body. */
+  private hldToMarkdown(sections: Record<string, unknown>, diagrams: Record<string, string>): string {
+    const lines: string[] = ['# High-Level Design (template)', ''];
+    HLD_SECTION_ORDER.forEach((key, i) => {
+      lines.push(`## ${i + 1}. ${HLD_SECTION_NAMES[key]}`, '');
+      lines.push(sections[key] == null ? '_Not generated._' : this.bodyToMarkdown(sections[key]), '');
+    });
+    const diag = Object.entries(diagrams).filter(([, v]) => v?.trim());
+    if (diag.length) {
+      lines.push('## Architecture Diagrams (Mermaid)', '');
+      for (const [k, v] of diag) lines.push(`### ${k}`, '', '```mermaid', v, '```', '');
+    }
+    return lines.join('\n');
   }
 
   async listThread(hldId: string, sectionKey: string) {

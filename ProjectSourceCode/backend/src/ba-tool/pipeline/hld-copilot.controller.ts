@@ -23,6 +23,20 @@ export class HldCopilotController {
     return { success: true, data };
   }
 
+  /** POST .../hld/:hldId/save-as-template — HD-09: save this HLD (whole/section) as a reusable template. */
+  @Post(':hldId/save-as-template')
+  async saveAsTemplate(
+    @Param('hldId', ParseUUIDPipe) hldId: string,
+    @Body() body: { name?: string; scope?: 'GLOBAL' | 'PROJECT'; sectionKey?: string | null },
+  ) {
+    const data = await this.copilot.saveAsTemplate(hldId, {
+      name: body.name,
+      scope: body.scope,
+      sectionKey: body.sectionKey ?? null,
+    });
+    return { success: true, data };
+  }
+
   /** GET .../hld/:hldId/copilot/thread?section=KEY — full conversation for a section. */
   @Get(':hldId/copilot/thread')
   async thread(

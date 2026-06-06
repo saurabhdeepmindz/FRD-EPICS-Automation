@@ -79,7 +79,7 @@ New route **`/ba-tool/project/[id]/hld-v2`** ("HLD — Enhanced") rendering the 
 | HD-06 | P2 | M | **Diagram-edit from chat** — ask AI to modify a section's Mermaid → preview → apply. | Builds on chat + edit being stable. |
 | HD-07 | P2 | M | **Grounded research with citations** — optional web grounding (Exa/search) so answers cite sources. | Needs a research tool + cost review. |
 | HD-08 | P3 | S | **Voice output (TTS)** — read answers back aloud. | Nice-to-have accessibility add-on. |
-| HD-09 | P1 | M | **Save HLD as template** — convert an existing/finished HLD into a reusable template (whole-doc or per-section) registered via the same `TemplateSource` interface (HE-13), so it shows up in the Architecture console for future projects. | Captures proven designs for reuse; depends on the template plumbing from HE-13. |
+| ✅ HD-09 | P1 | M | **Save HLD as template** — DONE (2026-06-07). Save the current HLD (whole doc or one section) as an `ARCHITECTURE` `BaTemplate` (scope GLOBAL/PROJECT) → appears in the Architecture console (Templates tab) for future projects, via the same `TemplateSource`/`HldTemplate` shape. `POST .../hld/:hldId/save-as-template`; "Save this HLD as a template" form in the Templates tab. | Captures proven designs for reuse. |
 | HD-10 | P1 | L | **HLD repository + RAG similarity + browse** — every finalized HLD is indexed into a central repository; embed sections/diagrams into a vector store; "Find similar HLDs" (RAG) surfaces related past designs inside the Copilot, plus a standard **browse/search** UI to explore other HLDs (filter by domain/stack/pattern). | High-value knowledge reuse; needs an embeddings provider + vector store — scope after MVP. Feeds the Copilot's research with *your own* prior HLDs. |
 
 ---
