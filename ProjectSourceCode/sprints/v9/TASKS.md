@@ -87,6 +87,22 @@
 
 ---
 
+## Track MM — HLD diagrams: actually-pastel per-layer nodes + inline section diagrams (follow-on, added 2026-06-05)
+
+> **Status:** ✅ COMPLETE (2026-06-05) — shipped on `feat/v9-hld-pastel-fix`. **Problem (user):** "the colors are not pastel; the 50,000-ft view and layered architecture don't have any diagram." **Root causes:** ① Mermaid nodes rendered a uniform near-white fill (no per-layer `classDef`), so they read as monochrome; ② architecture diagrams only appeared in the aggregated "Architecture Diagrams" panel, not inside each individual section panel. **Verified (Playwright + screenshot):** §3 "50,000-ft System View" and §4 "Layered Technical View" now render their diagram inline; nodes show **5 distinct pastel fills** matching the Design-System `diagramPalette` (frontend `#ECEBFB`, backend `#E3F5EC`, db `#E8F1FB`, config `#F1F0EC`, node `#F4F3FB`). Frontend-only.
+
+- [x] **MM-01 (FE):** `layerForNode(label)` keyword classifier (db / calcEngine / frontend / config / shared, else backend) tuned for common layer labels (Presentation·Users→frontend, Data→db, Platform/DevOps→config) + `applyDiagramPalette(src, palette)` — parses Mermaid node ids/labels, groups by layer, injects `classDef <layer> fill/stroke/color` + `class <ids> <layer>` so fills land via CSS classes; wired into the `Mermaid` render path.
+- [x] **MM-02 (FE):** `DIAGRAM_FOR_SECTION` map renders each section's matching Mermaid diagram **inline in its section panel** (systemView/technicalLayers/componentView/architectureStyle/deployment).
+- [x] **MM-03:** `tsc` clean; Playwright verified — inline §3/§4 diagrams present; 5 distinct pastel computed-fills (earlier `0` was a measurement flaw: Mermaid applies `classDef` fills via CSS classes, not inline attrs).
+
+| # | Track | ID | Pri | Size | Summary |
+|---|-------|----|----|------|---------|
+| 35 | Diagrams | MM-01 | P1 | M | Per-layer `classDef` injection → actually-pastel Mermaid nodes |
+| 36 | Diagrams | MM-02 | P1 | S | Inline per-section architecture diagrams |
+| 37 | Wire-up | MM-03 | P1 | S | tsc + Playwright |
+
+---
+
 ## Track LL — Design System Studio: diagram-palette editor (follow-on, added 2026-06-05)
 
 > **Status:** ✅ COMPLETE (2026-06-05) — shipped on `feat/v9-studio-diagram-palette`. Adds a **"Diagram palette"** group to the Studio so a UX resource can recolor the 7 diagram layers (fill/border/text) per project; edits persist and flow to the HLD architecture diagrams + project-structure grid. Frontend-only.
