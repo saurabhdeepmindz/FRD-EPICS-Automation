@@ -462,12 +462,11 @@ export function HldCopilot({
 
   return (
     <>
-      {/* Dimmed glass backdrop — click to close */}
-      <div
-        className="fixed inset-0 z-20 bg-gray-900/30 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
-        aria-hidden
-      />
+      {/* Subtle dim so the HLD reads as "behind" the Copilot, but stays fully
+          readable. pointer-events-none keeps the page interactive — you can keep
+          clicking sections in the left menu and the Copilot follows them. Close
+          via the header ✕. */}
+      <div className="fixed inset-0 z-20 bg-gray-900/10 pointer-events-none" aria-hidden />
       <div className="fixed top-0 right-0 z-30 h-screen w-[560px] max-w-[95vw] bg-white border-l shadow-2xl flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b">
