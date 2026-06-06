@@ -3,6 +3,8 @@
 ## Status: 🟢 IN PROGRESS (2026-06-07) — Track A + B shipped (`feat/v10-hld-v2-edit-preview-export`). Tracks C/D/E pending.
 
 > **Track A + B done:** `/hld-v2` page (same `BaHld`, view toggle Diagrams/Edit/Preview, nav entry), section Edit (existing PATCH), Preview (`HldPreview`), shared `generateHldHtml()`, export routes PDF (Puppeteer)+DOCX (html-to-docx)+MD, download menu. Verified: PDF `%PDF-1.4` 261KB, DOCX `PK` OOXML 109KB, MD 200; Playwright smoke green (toggle/preview/edit/download), `tsc` clean both apps. Note: section edits save in place + mark reviewed (consistent with PRD edit — no per-edit version clone).
+>
+> **Track C done (Architect Copilot):** `BaHldThread`/`BaHldMessage` (+ migration applied as `prd_user`); ai-service `/providers` + `/hld-chat` + `/hld-merge` (provider-selectable openai/anthropic/gemini, key-gated; `GEMINI_API_KEY` config) with PRD/FRD/stack context injection; NestJS `HldCopilotController`/`Service`; FE `HldCopilot` drawer (Chat + Saved tabs, per-message model dropdown, voice via `MicButton`, quick-prompts, Save-to-section, Synthesize→diff→Apply as non-destructive `aiSynthesis` field). Verified end-to-end with Claude: chat grounded in "Luggage Room" project, save-insight, merge draft; Playwright drawer smoke green (providers key-gated, thread loads, no console errors); `tsc` clean both apps.
 
 > **Backlog traceability:** full backlog (must-have + deferred + Phase F cutover) in `backlog-hld-enhancement.md` (repo root). Wireframes: `sprints/v10/wireframes/hld-enhanced-wireframes.html` (approved 2026-06-07). PRD: `sprints/v10/PRD.md`.
 >

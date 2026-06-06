@@ -1325,6 +1325,38 @@ model BaHld {
   @@map("ba_hlds")
 }
 
+// ─── HLD Architect Copilot (Sprint v10 / Track C) ───────────────────────────────
+// Per-section conversational AI threads + messages. Saved "insights" are messages
+// flagged savedToSection. One thread per (HLD, sectionKey).
+
+model BaHldThread {
+  id         String         @id @default(uuid())
+  hldId      String
+  sectionKey String
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  messages   BaHldMessage[]
+
+  @@unique([hldId, sectionKey])
+  @@index([hldId])
+  @@map("ba_hld_threads")
+}
+
+model BaHldMessage {
+  id             String      @id @default(uuid())
+  threadId       String
+  thread         BaHldThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role           String // "user" | "assistant"
+  model          String? // provider/model that produced an assistant message
+  content        String      @db.Text
+  savedToSection Boolean     @default(false) // true = a saved "insight"
+  templateRef    String? // template id steering this turn, if any
+  createdAt      DateTime    @default(now())
+
+  @@index([threadId])
+  @@map("ba_hld_messages")
+}
+
 // ─── Screen ↔ Feature Mapping (Stage 3a — Wireframes, Sprint v8 / Track Y) ──────
 // PRD-sourced screen map: each row maps a screen to §6 FR-IDs + PRD sections +
 // business rules + numbered annotations, all referencing the PRD (not BRD/AN).
