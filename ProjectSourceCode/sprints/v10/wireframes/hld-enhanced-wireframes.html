@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HLD — Enhanced · Wireframes (proposal)</title>
+<style>
+  :root{
+    --frontend:#ECEBFB; --frontend-b:#B9B0EC; --frontend-t:#4F46B5;
+    --backend:#E3F5EC;  --backend-b:#A6DCC4;  --backend-t:#2F8A60;
+    --db:#E8F1FB;       --db-b:#ABCAE9;       --db-t:#2F62A6;
+    --config:#F1F0EC;   --config-b:#D2CFC8;   --config-t:#5C574F;
+    --calc:#FBEEDC;     --calc-b:#EAC893;     --calc-t:#B97A2B;
+    --ink:#1f2430; --muted:#6b7280; --line:#e6e8ee; --bg:#f6f7fb; --card:#fff;
+    --brand:#0F2A52; --cta:#F26B1D;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header.top{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--line);padding:14px 22px;display:flex;align-items:center;gap:14px}
+  header.top h1{font-size:16px;margin:0}
+  header.top .sub{color:var(--muted);font-size:12px}
+  .badge{background:#eef;color:#445;border:1px solid #dde;border-radius:999px;padding:2px 10px;font-size:11px}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px}
+  .note{background:#fffaf0;border:1px solid #f0e2c0;border-radius:10px;padding:12px 16px;color:#7a5b13;margin:16px 0}
+  .screen{background:var(--card);border:1px solid var(--line);border-radius:14px;margin:26px 0;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .screen > .cap{background:#0f2a52;color:#fff;padding:10px 16px;font-weight:600;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+  .screen > .cap small{font-weight:400;opacity:.8}
+  .frame{padding:0}
+  .toolbar{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .toolbar .title{font-weight:600;margin-right:auto}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;cursor:default;display:inline-flex;gap:6px;align-items:center}
+  .btn.cta{background:var(--cta);color:#fff;border-color:var(--cta)}
+  .btn.ghost{background:#f3f4f7}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg span{padding:6px 12px;font-size:13px;border-right:1px solid var(--line)}
+  .seg span:last-child{border-right:0}
+  .seg span.active{background:#0f2a52;color:#fff}
+  .body{display:grid;grid-template-columns:200px 1fr 320px;min-height:440px}
+  .body.norail{grid-template-columns:200px 1fr}
+  .menu{border-right:1px solid var(--line);padding:12px 8px;background:#fafbfd;font-size:13px}
+  .menu .it{padding:7px 10px;border-radius:8px;color:#444;display:flex;gap:8px}
+  .menu .it .n{color:#aab;width:16px;text-align:right}
+  .menu .it.active{background:#eef1ff;color:#27326b;font-weight:600}
+  .main{padding:18px 22px;border-right:1px solid var(--line)}
+  .main h2{font-size:16px;margin:0 0 12px}
+  .diagram{display:flex;flex-direction:column;align-items:center;gap:14px;margin:10px 0 6px}
+  .node{width:200px;text-align:center;padding:12px;border-radius:10px;font-weight:600;border:1.5px solid}
+  .n-fe{background:var(--frontend);border-color:var(--frontend-b);color:var(--frontend-t)}
+  .n-be{background:var(--backend);border-color:var(--backend-b);color:var(--backend-t)}
+  .n-db{background:var(--db);border-color:var(--db-b);color:var(--db-t)}
+  .n-cfg{background:var(--config);border-color:var(--config-b);color:var(--config-t)}
+  .n-calc{background:var(--calc);border-color:var(--calc-b);color:var(--calc-t)}
+  .arrow{color:#bbb}
+  dl.kv{margin:14px 0 0}
+  dl.kv dt{font-weight:600;color:#333;margin-top:10px}
+  dl.kv dd{margin:2px 0 0;color:#555}
+  .ai-prefix{color:var(--frontend-t);font-size:11px;font-weight:700;margin-right:6px}
+  /* copilot rail */
+  .rail{background:#fbfcff;padding:0;display:flex;flex-direction:column}
+  .rail .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .rail .tabs span{flex:1;text-align:center;padding:10px 6px;font-size:12px;color:#667;border-right:1px solid var(--line)}
+  .rail .tabs span:last-child{border-right:0}
+  .rail .tabs span.active{color:#27326b;font-weight:700;box-shadow:inset 0 -2px 0 var(--cta)}
+  .rail .content{padding:12px;overflow:auto;flex:1}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .chip{background:#eef1ff;color:#3a4690;border-radius:999px;padding:4px 10px;font-size:11px}
+  .msg{margin:10px 0;font-size:13px}
+  .msg .who{font-size:11px;color:#889;margin-bottom:3px}
+  .msg.user .bubble{background:#eef1ff;border-radius:10px;padding:8px 10px}
+  .msg.ai .bubble{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .msg .acts{margin-top:6px;display:flex;gap:6px}
+  .mini{font-size:11px;border:1px solid var(--line);border-radius:7px;padding:3px 8px;background:#fff;color:#445}
+  .mini.cta{background:var(--cta);color:#fff;border-color:var(--cta)}
+  .composer{border-top:1px solid var(--line);padding:10px}
+  .composer .box{border:1px solid var(--line);border-radius:10px;padding:8px;color:#99a}
+  .composer .row{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+  .sel{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:12px;background:#fff}
+  .insight{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;font-size:12px;background:#fff}
+  .tplgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .tpl{border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;background:#fff}
+  .tpl .star{color:var(--cta);font-size:11px}
+  /* preview */
+  .preview{padding:26px 34px;background:#fff;max-width:820px;margin:0 auto}
+  .preview h1{font-size:22px;margin:0 0 2px;color:var(--brand)}
+  .preview .meta{color:var(--muted);font-size:12px;margin-bottom:18px}
+  .preview h3{font-size:15px;border-bottom:2px solid var(--line);padding-bottom:4px;margin:22px 0 8px;color:#23304f}
+  /* edit */
+  .field{margin:12px 0}
+  .field label{display:block;font-size:12px;color:#556;margin-bottom:4px;font-weight:600}
+  .field .inp{border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:#333;background:#fff}
+  .field .inp.area{min-height:64px}
+  /* download menu */
+  .menu-pop{position:relative;display:inline-block}
+  .pop{position:absolute;right:0;top:38px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);width:180px;overflow:hidden}
+  .pop .opt{padding:9px 12px;font-size:13px;display:flex;gap:8px;border-bottom:1px solid var(--line)}
+  .pop .opt:last-child{border-bottom:0}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#667;margin-top:12px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid #0002}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>HLD — Enhanced</h1>
+  <span class="sub">Wireframe proposal · Architect Copilot + Edit / Preview / Export</span>
+  <span class="badge">PROPOSAL — not built</span>
+</header>
+
+<div class="wrap">
+  <div class="note">
+    <b>Isolation:</b> these screens live at a new route <code>/hld-v2</code> ("HLD — Enhanced") that reads the <b>same BaHld record</b> as the current <code>/hld</code>.
+    The existing HLD page is left untouched. New backend (copilot tables, export routes) is purely additive.
+  </div>
+
+  <!-- SCREEN 1: MAIN -->
+  <section class="screen">
+    <div class="cap">Screen 1 — HLD Enhanced · main (Diagrams view + Copilot rail) <small>view toggle · download menu · per-section copilot</small></div>
+    <div class="frame">
+      <div class="toolbar">
+        <span class="title">High Level Design (HLD) — Enhanced &nbsp;<small style="color:#889">Stage 5 · 17 sections · v3 · DRAFT</small></span>
+        <span class="seg"><span class="active">Diagrams</span><span>Edit</span><span>Preview</span></span>
+        <span class="btn">↻ Regenerate</span>
+        <span class="btn cta">⬇ Download ▾</span>
+        <span class="btn">⟨ Copilot</span>
+      </div>
+      <div class="body">
+        <div class="menu">
+          <div class="it"><span class="n">3</span> 50,000-ft View</div>
+          <div class="it active"><span class="n">4</span> Layered Technical</div>
+          <div class="it"><span class="n">5</span> Component View</div>
+          <div class="it"><span class="n">11</span> Auth &amp; Security</div>
+          <div class="it"><span class="n">14</span> Multi-Tenancy</div>
+          <div class="it"><span class="n">15</span> NFR</div>
+          <div class="it"><span class="n">17</span> Project Structure</div>
+        </div>
+        <div class="main">
+          <h2>4 · Layered Technical View</h2>
+          <div class="diagram">
+            <div class="node n-fe">Presentation</div><div class="arrow">↓</div>
+            <div class="node n-fe">Edge / Gateway</div><div class="arrow">↓</div>
+            <div class="node n-be">App Services</div><div class="arrow">↓</div>
+            <div class="node n-db">Data (Postgres)</div><div class="arrow">↓</div>
+            <div class="node n-cfg">Platform / DevOps</div>
+          </div>
+          <div class="legend">
+            <span><i style="background:var(--frontend)"></i>Frontend</span>
+            <span><i style="background:var(--backend)"></i>Backend</span>
+            <span><i style="background:var(--db)"></i>Data</span>
+            <span><i style="background:var(--config)"></i>Platform</span>
+            <span><i style="background:var(--calc)"></i>Calc/AI</span>
+          </div>
+        </div>
+        <div class="rail">
+          <div class="tabs"><span class="active">💬 Chat</span><span>📌 Saved (3)</span><span>📐 Templates</span></div>
+          <div class="content">
+            <div class="chips"><span class="chip">Best practices</span><span class="chip">Trade-offs</span><span class="chip">Security</span><span class="chip">Ref architecture</span><span class="chip">Pitfalls</span></div>
+            <div class="msg user"><div class="who">You</div><div class="bubble">Best layering for a fintech multi-tenant SaaS on our stack?</div></div>
+            <div class="msg ai"><div class="who">Architect Copilot · Claude Sonnet 4.6 · knows PRD+stack</div><div class="bubble">Keep a thin Edge/Gateway for authn + rate-limit, stateless App Services, and push tenant isolation to the data layer (RLS). Avoid business logic in the gateway…<div class="acts"><span class="mini cta">📌 Save</span><span class="mini">⧉ Copy</span><span class="mini">↻ Regen</span></div></div></div>
+          </div>
+          <div class="composer">
+            <div class="box">Ask for best practices, trade-offs, references… 🎤</div>
+            <div class="row"><select class="sel"><option>Claude Sonnet 4.6</option><option>OpenAI GPT</option><option>Gemini (add key)</option></select><span class="btn cta">Send ▶</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 2: EDIT -->
+  <section class="screen">
+    <div class="cap">Screen 2 — Edit mode <small>guided section editor (mirrors PRD) → Save = new version</small></div>
+    <div class="frame">
+      <div class="toolbar">
+        <span class="title">Edit · §14 Multi-Tenancy &amp; Data Isolation</span>
+        <span class="seg"><span>Diagrams</span><span class="active">Edit</span><span>Preview</span></span>
+        <span class="btn ghost">Cancel</span>
+        <span class="btn cta">Save (new version)</span>
+      </div>
+      <div class="body norail">
+        <div class="menu">
+          <div class="it"><span class="n">13</span> Integrations</div>
+          <div class="it active"><span class="n">14</span> Multi-Tenancy</div>
+          <div class="it"><span class="n">15</span> NFR</div>
+        </div>
+        <div class="main">
+          <div class="field"><label>Isolation strategy</label><div class="inp">Row-level security (RLS), single database</div></div>
+          <div class="field"><label>Tenant key</label><div class="inp">org_id on every table; composite index (org_id, id)</div></div>
+          <div class="field"><label>Encryption</label><div class="inp">AES-256 at rest · TLS 1.3 in transit</div></div>
+          <div class="field"><label>Notes</label><div class="inp area">Fintech compliance baseline; escalate to schema-per-tenant for regulated enterprise tenants…</div></div>
+          <span class="btn ghost">+ Add field</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 3: PREVIEW + DOWNLOAD MENU -->
+  <section class="screen">
+    <div class="cap">Screen 3 — Preview mode + Download menu <small>print-like canonical view · same HTML used for PDF/DOCX</small></div>
+    <div class="frame">
+      <div class="toolbar">
+        <span class="title">Preview · full document</span>
+        <span class="seg"><span>Diagrams</span><span>Edit</span><span class="active">Preview</span></span>
+        <span class="menu-pop">
+          <span class="btn cta">⬇ Download ▾</span>
+          <span class="pop">
+            <span class="opt">📄 PDF &nbsp;<small style="color:#99a">(Puppeteer)</small></span>
+            <span class="opt">📝 DOCX &nbsp;<small style="color:#99a">(html-to-docx)</small></span>
+            <span class="opt">⬇ Markdown (.md)</span>
+          </span>
+        </span>
+      </div>
+      <div class="preview">
+        <h1>High Level Design</h1>
+        <div class="meta">Luggage Room · HLD-LR · v3 · DRAFT · generated 2026-06-07</div>
+        <h3>3 · 50,000-ft System View</h3>
+        <p>Web + mobile clients reach a gateway fronting stateless services backed by Postgres…</p>
+        <h3>4 · Layered Technical View</h3>
+        <p>Presentation → Edge/Gateway → App Services → Data → Platform/DevOps. (Diagram rendered inline in PDF/DOCX.)</p>
+        <h3>14 · Multi-Tenancy &amp; Data Isolation</h3>
+        <p><span class="ai-prefix">AI</span>Row-level security with org_id on every table; AES-256 at rest…</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 4: SAVED + MERGE -->
+  <section class="screen">
+    <div class="cap">Screen 4 — Saved insights → Synthesize (AI Suggest merge) <small>non-destructive diff → Apply as new version</small></div>
+    <div class="frame">
+      <div class="body" style="grid-template-columns:340px 1fr">
+        <div class="rail" style="border-right:1px solid var(--line)">
+          <div class="tabs"><span>💬 Chat</span><span class="active">📌 Saved (3)</span><span>📐 Templates</span></div>
+          <div class="content">
+            <div class="insight"><input type="checkbox" checked /> RLS baseline + encryption-at-rest (compliance)</div>
+            <div class="insight"><input type="checkbox" checked /> org_id on every table; composite indexes</div>
+            <div class="insight"><input type="checkbox" checked /> Per-tenant connection-pool guard vs N+1</div>
+            <span class="btn cta" style="width:100%;justify-content:center">🧩 Synthesize merged section</span>
+          </div>
+        </div>
+        <div class="main">
+          <h2>Review merged draft · §14 → v4</h2>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div><div style="font-size:11px;color:#889;margin-bottom:6px">CURRENT (v3)</div><div class="inp" style="border:1px solid var(--line);border-radius:8px;padding:10px;color:#555">Isolation: RLS. Tenant key: org_id.</div></div>
+            <div><div style="font-size:11px;color:var(--backend-t);margin-bottom:6px">AI-MERGED DRAFT (v4)</div><div class="inp" style="border:1px solid var(--backend-b);background:var(--backend);border-radius:8px;padding:10px;color:#234">Isolation: RLS, single DB. Tenant key: org_id (+composite index). <b>+ Encryption-at-rest.</b> <b>+ Per-tenant pool guard.</b> <b>+ Fintech compliance note.</b></div></div>
+          </div>
+          <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end"><span class="btn ghost">Discard</span><span class="btn cta">✓ Apply as new version</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 5: TEMPLATES -->
+  <section class="screen">
+    <div class="cap">Screen 5 — Templates (Architecture console) <small>reuse existing presets now; curated catalog later (no rework)</small></div>
+    <div class="frame">
+      <div class="body" style="grid-template-columns:1fr 320px">
+        <div class="main">
+          <h2>Pick a reference pattern for §14</h2>
+          <div class="tplgrid">
+            <div class="tpl"><b>Multi-tenant SaaS (RLS)</b> <span class="star">★ recommended</span><br/><small style="color:#889">Single DB, org_id, RLS</small><br/><span class="btn" style="margin-top:8px">Use</span></div>
+            <div class="tpl"><b>Schema-per-tenant</b><br/><small style="color:#889">One schema per tenant</small><br/><span class="btn" style="margin-top:8px">Use</span></div>
+            <div class="tpl"><b>DB-per-tenant</b><br/><small style="color:#889">Strongest isolation</small><br/><span class="btn" style="margin-top:8px">Use</span></div>
+            <div class="tpl"><b>Event-driven backbone</b><br/><small style="color:#889">Queue + outbox</small><br/><span class="btn" style="margin-top:8px">Use</span></div>
+          </div>
+          <p style="color:#889;font-size:12px;margin-top:14px">"Use" seeds the section structure <i>and</i> steers the chat so answers stay aligned to the chosen pattern.</p>
+        </div>
+        <div class="rail"><div class="tabs"><span>💬 Chat</span><span>📌 Saved</span><span class="active">📐 Templates</span></div>
+          <div class="content"><div class="tpl"><b>Source</b><br/><small style="color:#889">Existing design presets / template library (BaTemplate, BaDesignPreset).<br/><br/>Curated architecture-pattern catalog = deferred (HD-02), plugs into the same TemplateSource interface.</small></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="note" style="background:#eef7ff;border-color:#cfe2f5;color:#234e7a">
+    <b>Must-have parity with PRD:</b> Edit (guided editor) · Preview (canonical read-only) · Download <b>PDF + DOCX + MD</b> — all mirror the existing PRD implementation (Puppeteer / html-to-docx / shared HTML template).
+  </div>
+</div>
+</body>
+</html>
