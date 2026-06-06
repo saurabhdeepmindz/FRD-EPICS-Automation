@@ -388,7 +388,14 @@ export function HldCopilot({
   };
 
   return (
-    <div className="fixed top-0 right-0 z-30 h-screen w-[400px] bg-white border-l shadow-xl flex flex-col">
+    <>
+      {/* Dimmed glass backdrop — click to close */}
+      <div
+        className="fixed inset-0 z-20 bg-gray-900/30 backdrop-blur-sm transition-opacity"
+        onClick={onClose}
+        aria-hidden
+      />
+      <div className="fixed top-0 right-0 z-30 h-screen w-[560px] max-w-[95vw] bg-white border-l shadow-2xl flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b">
         <Sparkles className="h-4 w-4 text-purple-500" />
@@ -806,7 +813,8 @@ export function HldCopilot({
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 

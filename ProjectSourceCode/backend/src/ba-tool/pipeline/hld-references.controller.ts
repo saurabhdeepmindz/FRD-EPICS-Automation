@@ -59,8 +59,8 @@ export class HldReferencesController {
     return { success: true, data };
   }
 
-  /** PATCH .../hld/references/:refId/include — toggle include-in-context. */
-  @Patch('references/:refId/include')
+  /** PATCH .../hld/:hldId/references/:refId/include — toggle include-in-context. */
+  @Patch(':hldId/references/:refId/include')
   async setInclude(
     @Param('refId', ParseUUIDPipe) refId: string,
     @Body() body: { include: boolean },
@@ -69,8 +69,8 @@ export class HldReferencesController {
     return { success: true, data };
   }
 
-  /** DELETE .../hld/references/:refId — remove a reference. */
-  @Delete('references/:refId')
+  /** DELETE .../hld/:hldId/references/:refId — remove a reference. */
+  @Delete(':hldId/references/:refId')
   async remove(@Param('refId', ParseUUIDPipe) refId: string) {
     const data = await this.refs.remove(refId);
     return { success: true, data };
