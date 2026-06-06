@@ -683,6 +683,63 @@ export async function deleteHldReference(projectId: string, hldId: string, refId
   await api.delete(`/ba/projects/${projectId}/hld/${hldId}/references/${refId}`);
 }
 
+// ─── HLD Repository / RAG (Sprint v11 / HD-10) ────────────────────────────────
+
+export interface HldSimilarHit {
+  hldId: string;
+  projectId: string;
+  productName: string;
+  sectionKey: string;
+  sectionName: string;
+  snippet: string;
+  score: number;
+}
+
+export interface HldLibraryEntry {
+  hldId: string;
+  projectId: string;
+  productName: string;
+  sections: number;
+  chunks: number;
+  indexedAt: string | null;
+}
+
+/** Index (or re-index) this HLD into the org-wide repository. */
+export async function indexHldToLibrary(projectId: string, hldId: string): Promise<{ hldId: string; chunks: number }> {
+  const { data } = await api.post<ApiEnvelope<{ hldId: string; chunks: number }>>(
+    `/ba/projects/${projectId}/hld/${hldId}/library/index`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Find similar HLD sections org-wide (excludes the current HLD). */
+export async function findSimilarHlds(
+  projectId: string,
+  hldId: string,
+  query: string,
+): Promise<HldSimilarHit[]> {
+  const { data } = await api.post<ApiEnvelope<HldSimilarHit[]>>(
+    `/ba/projects/${projectId}/hld/${hldId}/library/similar`,
+    { query },
+    { timeout: 120_000 },
+  );
+  return data.data;
+}
+
+/** List all indexed HLDs (browse page). */
+export async function listHldLibrary(): Promise<HldLibraryEntry[]> {
+  const { data } = await api.get<ApiEnvelope<HldLibraryEntry[]>>(`/ba/hld-library`);
+  return data.data;
+}
+
+/** Org-wide semantic search across indexed HLD sections. */
+export async function searchHldLibrary(q: string): Promise<HldSimilarHit[]> {
+  const { data } = await api.get<ApiEnvelope<HldSimilarHit[]>>(`/ba/hld-library/search`, { params: { q } });
+  return data.data;
+}
+
 // ─── Project structure diagram (v9 Track KK) ─────────────────────────────────
 
 export type StructureLayer = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';

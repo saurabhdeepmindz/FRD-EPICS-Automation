@@ -1401,6 +1401,25 @@ model BaHldReferenceChunk {
   @@map("ba_hld_reference_chunks")
 }
 
+// ─── HLD Repository / RAG (Sprint v11 / HD-10) ───────────────────────────────────
+// Org-wide index of HLD sections for "find similar HLDs" + a browse page.
+// Embeddings are JSON float arrays; retrieval is app-side cosine (no pgvector).
+model BaHldIndexChunk {
+  id          String   @id @default(uuid())
+  hldId       String
+  projectId   String
+  productName String
+  sectionKey  String
+  idx         Int
+  text        String   @db.Text
+  embedding   Json // number[]
+  createdAt   DateTime @default(now())
+
+  @@index([hldId])
+  @@index([projectId])
+  @@map("ba_hld_index_chunks")
+}
+
 // ─── Screen ↔ Feature Mapping (Stage 3a — Wireframes, Sprint v8 / Track Y) ──────
 // PRD-sourced screen map: each row maps a screen to §6 FR-IDs + PRD sections +
 // business rules + numbered annotations, all referencing the PRD (not BRD/AN).

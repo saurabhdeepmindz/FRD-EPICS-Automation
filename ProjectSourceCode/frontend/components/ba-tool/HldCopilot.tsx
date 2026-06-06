@@ -20,6 +20,8 @@ import {
   ExternalLink,
   FileText,
   Paperclip,
+  Library,
+  Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MicButton } from '@/components/forms/MicButton';
@@ -38,10 +40,13 @@ import {
   uploadHldReferenceDocument,
   setHldReferenceInclude,
   deleteHldReference,
+  findSimilarHlds,
+  indexHldToLibrary,
   type HldProvider,
   type HldTemplate,
   type HldChatMessage,
   type HldReference,
+  type HldSimilarHit,
 } from '@/lib/pipeline-api';
 
 const QUICK_PROMPTS = [
@@ -74,7 +79,7 @@ export function HldCopilot({
   onApplied: () => void | Promise<void>;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'chat' | 'saved' | 'templates' | 'references'>('chat');
+  const [tab, setTab] = useState<'chat' | 'saved' | 'templates' | 'references' | 'similar'>('chat');
   const [providers, setProviders] = useState<HldProvider[]>([]);
   const [provider, setProvider] = useState('anthropic');
   const [templates, setTemplates] = useState<HldTemplate[]>([]);
@@ -92,6 +97,11 @@ export function HldCopilot({
   const [refTagSection, setRefTagSection] = useState(false); // tag to current section vs whole-HLD
   const [addingRef, setAddingRef] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // HD-10 — similar HLDs
+  const [similarHits, setSimilarHits] = useState<HldSimilarHit[] | null>(null);
+  const [findingSimilar, setFindingSimilar] = useState(false);
+  const [indexing, setIndexing] = useState(false);
+  const [indexMsg, setIndexMsg] = useState<string | null>(null);
   const [messages, setMessages] = useState<HldChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -281,6 +291,37 @@ export function HldCopilot({
     (r) => r.includeInContext && r.status === 'READY' && (r.sectionKey == null || r.sectionKey === sectionKey),
   ).length;
 
+  // HD-10 — find similar HLD sections org-wide, using this section as the query.
+  const findSimilar = async () => {
+    setFindingSimilar(true);
+    setError(null);
+    try {
+      const query = `${sectionName}\n${currentText(currentBody)}`.slice(0, 4000);
+      setSimilarHits(await findSimilarHlds(projectId, hldId, query));
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (err instanceof Error ? err.message : 'Find similar failed'),
+      );
+    } finally {
+      setFindingSimilar(false);
+    }
+  };
+
+  const indexThisHld = async () => {
+    setIndexing(true);
+    setIndexMsg(null);
+    setError(null);
+    try {
+      const res = await indexHldToLibrary(projectId, hldId);
+      setIndexMsg(`Indexed ${res.chunks} chunk${res.chunks === 1 ? '' : 's'} into the HLD Library.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Index failed');
+    } finally {
+      setIndexing(false);
+    }
+  };
+
   // HD-09 — save the current HLD (whole doc or this section) as a reusable template.
   const saveTemplate = async () => {
     setSavingTpl(true);
@@ -421,6 +462,9 @@ export function HldCopilot({
         </TabBtn>
         <TabBtn active={tab === 'references'} onClick={() => setTab('references')}>
           <Paperclip className="h-4 w-4 mr-1" /> Refs{references.length ? ` (${references.length})` : ''}
+        </TabBtn>
+        <TabBtn active={tab === 'similar'} onClick={() => setTab('similar')}>
+          <Library className="h-4 w-4 mr-1" /> Similar
         </TabBtn>
       </div>
 
@@ -690,7 +734,7 @@ export function HldCopilot({
             ))
           )}
         </div>
-      ) : (
+      ) : tab === 'references' ? (
         // ─── References tab (RR-08) ───
         <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-2">
           <div className="border rounded-lg bg-amber-50/40 border-amber-200 p-2.5 space-y-2">
@@ -776,6 +820,55 @@ export function HldCopilot({
                     </div>
                   </details>
                 )}
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
+        // ─── Similar HLDs tab (HD-10) ───
+        <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          <div className="border rounded-lg bg-indigo-50/40 border-indigo-200 p-2.5 space-y-2">
+            <p className="text-xs font-semibold text-indigo-800 flex items-center gap-1.5">
+              <Library className="h-4 w-4" /> HLD Library (org-wide)
+            </p>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={findSimilar} disabled={findingSimilar}>
+                {findingSimilar ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
+                Find similar to “{sectionName}”
+              </Button>
+              <Button size="sm" variant="outline" onClick={indexThisHld} disabled={indexing}>
+                {indexing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Index this HLD
+              </Button>
+            </div>
+            {indexMsg && <p className="text-[11px] text-emerald-700">✓ {indexMsg}</p>}
+            <p className="text-[10px] text-gray-400">
+              Searches every indexed HLD across projects. Browse all in the{' '}
+              <a href="/ba-tool/hld-library" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">HLD Library</a>.
+            </p>
+          </div>
+
+          {similarHits === null ? (
+            <div className="text-center text-xs text-gray-400 pt-6">Find HLD sections similar to the current one.</div>
+          ) : similarHits.length === 0 ? (
+            <div className="text-center text-xs text-gray-400 pt-6">No similar HLDs found yet (index more HLDs first).</div>
+          ) : (
+            similarHits.map((h, i) => (
+              <div key={i} className="border rounded-lg p-2.5 bg-white">
+                <div className="flex items-center gap-2 mb-1">
+                  <FileText className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                  <span className="text-sm font-medium text-gray-800 truncate">{h.productName}</span>
+                  <span className="text-[9px] uppercase tracking-wide bg-indigo-50 text-indigo-700 rounded px-1 py-0.5 shrink-0">{h.sectionName}</span>
+                  <span className="ml-auto text-[10px] text-gray-400 shrink-0">{(h.score * 100).toFixed(0)}%</span>
+                </div>
+                <p className="text-xs text-gray-600 line-clamp-3">{h.snippet}</p>
+                <a
+                  href={`/ba-tool/project/${h.projectId}/hld`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-indigo-600 hover:underline mt-1.5 inline-block"
+                >
+                  Open HLD →
+                </a>
               </div>
             ))
           )}

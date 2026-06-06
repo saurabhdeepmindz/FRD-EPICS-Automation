@@ -26,6 +26,7 @@ import {
 } from './customer-input.service';
 import { ProjectPrdService, PRD_SECTION_NAMES, type GapAnswerInput } from './project-prd.service';
 import { HldService } from './project-hld.service';
+import { HldLibraryService } from './hld-library.service';
 import { RequirementChangeService } from './requirement-change.service';
 import { ArtifactFreshnessService } from './artifact-freshness.service';
 import { ScreenMapService, type ScreenAnnotation } from './screen-map.service';
@@ -68,6 +69,7 @@ export class PipelineController {
     private readonly customerInputs: CustomerInputService,
     private readonly projectPrd: ProjectPrdService,
     private readonly hld: HldService,
+    private readonly hldLibrary: HldLibraryService,
     private readonly requirementChange: RequirementChangeService,
     private readonly freshness: ArtifactFreshnessService,
     private readonly screenMap: ScreenMapService,
@@ -551,6 +553,8 @@ export class PipelineController {
   @Post('hld/generate')
   async generateHld(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.hld.generate(id);
+    // HD-10 — best-effort: index the new HLD into the org-wide repository.
+    void this.hldLibrary.indexHld(data.id).catch(() => undefined);
     return { success: true, data };
   }
 
