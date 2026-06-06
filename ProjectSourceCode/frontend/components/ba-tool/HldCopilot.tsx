@@ -13,17 +13,20 @@ import {
   Wand2,
   Bot,
   User,
+  LayoutTemplate,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MicButton } from '@/components/forms/MicButton';
 import {
   listHldProviders,
+  listHldTemplates,
   getHldThread,
   hldCopilotChat,
   saveHldInsight,
   hldCopilotMerge,
   updateHldSection,
   type HldProvider,
+  type HldTemplate,
   type HldChatMessage,
 } from '@/lib/pipeline-api';
 
@@ -57,9 +60,11 @@ export function HldCopilot({
   onApplied: () => void | Promise<void>;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'chat' | 'saved'>('chat');
+  const [tab, setTab] = useState<'chat' | 'saved' | 'templates'>('chat');
   const [providers, setProviders] = useState<HldProvider[]>([]);
   const [provider, setProvider] = useState('anthropic');
+  const [templates, setTemplates] = useState<HldTemplate[]>([]);
+  const [activeTemplate, setActiveTemplate] = useState<HldTemplate | null>(null);
   const [messages, setMessages] = useState<HldChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -78,6 +83,7 @@ export function HldCopilot({
         if (firstAvail) setProvider((cur) => (p.find((x) => x.id === cur)?.available ? cur : firstAvail.id));
       })
       .catch(() => setProviders([]));
+    void listHldTemplates(projectId).then(setTemplates).catch(() => setTemplates([]));
   }, [projectId]);
 
   // Load this section's thread whenever the section changes.
@@ -105,6 +111,7 @@ export function HldCopilot({
           sectionKey,
           provider,
           message: msg,
+          template: activeTemplate ? `${activeTemplate.name}\n${activeTemplate.body}` : null,
         });
         setMessages((m) => [...m, userMessage, assistantMessage]);
       } catch (err) {
@@ -116,7 +123,7 @@ export function HldCopilot({
         setSending(false);
       }
     },
-    [projectId, hldId, sectionKey, provider, sending],
+    [projectId, hldId, sectionKey, provider, sending, activeTemplate],
   );
 
   const toggleSave = async (m: HldChatMessage) => {
@@ -183,6 +190,9 @@ export function HldCopilot({
         <TabBtn active={tab === 'saved'} onClick={() => setTab('saved')}>
           <Bookmark className="h-4 w-4 mr-1" /> Saved ({saved.length})
         </TabBtn>
+        <TabBtn active={tab === 'templates'} onClick={() => setTab('templates')}>
+          <LayoutTemplate className="h-4 w-4 mr-1" /> Templates
+        </TabBtn>
       </div>
 
       {error && (
@@ -222,6 +232,15 @@ export function HldCopilot({
 
           {/* Composer */}
           <div className="border-t p-3 space-y-2">
+            {activeTemplate && (
+              <div className="flex items-center gap-1.5 text-[11px] bg-amber-50 border border-amber-200 text-amber-800 rounded-md px-2 py-1">
+                <LayoutTemplate className="h-3 w-3 shrink-0" />
+                <span className="truncate">Pattern: {activeTemplate.name}</span>
+                <button onClick={() => setActiveTemplate(null)} className="ml-auto text-amber-500 hover:text-amber-700">
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -255,7 +274,7 @@ export function HldCopilot({
             </div>
           </div>
         </>
-      ) : (
+      ) : tab === 'saved' ? (
         // ─── Saved tab ───
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
           {saved.length === 0 ? (
@@ -282,6 +301,54 @@ export function HldCopilot({
                 Synthesize merged section
               </Button>
             </>
+          )}
+        </div>
+      ) : (
+        // ─── Templates tab (Architecture console) ───
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          <p className="text-[11px] text-gray-400 px-0.5">
+            Pick a reference pattern to steer the copilot, or draft this section from it.
+          </p>
+          {templates.length === 0 ? (
+            <div className="text-center text-xs text-gray-400 pt-6">No templates available.</div>
+          ) : (
+            templates.map((t) => (
+              <div key={t.id} className="border rounded-lg p-2.5 bg-white">
+                <div className="flex items-center gap-2">
+                  <LayoutTemplate className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                  <span className="text-sm font-medium text-gray-800">{t.name}</span>
+                  <span className="ml-auto text-[9px] uppercase rounded px-1 py-0.5 bg-gray-100 text-gray-500">{t.source}</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">{t.summary}</p>
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs h-7"
+                    onClick={() => {
+                      setActiveTemplate(t);
+                      setTab('chat');
+                    }}
+                  >
+                    Use as context
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="text-xs h-7"
+                    disabled={sending}
+                    onClick={() => {
+                      setActiveTemplate(t);
+                      setTab('chat');
+                      void send(
+                        `Draft this section following the "${t.name}" reference pattern. Give a complete first draft tailored to our project.`,
+                      );
+                    }}
+                  >
+                    <Wand2 className="h-3.5 w-3.5 mr-1" /> Draft section
+                  </Button>
+                </div>
+              </div>
+            ))
           )}
         </div>
       )}

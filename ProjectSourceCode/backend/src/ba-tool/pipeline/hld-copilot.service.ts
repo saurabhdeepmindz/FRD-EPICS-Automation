@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HLD_SECTION_NAMES } from './project-hld.service';
+import { BUILTIN_ARCH_TEMPLATES, libraryTemplateToHld, type HldTemplate } from './hld-templates';
 
 /**
  * HLD Architect Copilot (Sprint v10 / Track C). Per-section conversational AI:
@@ -34,6 +35,26 @@ export class HldCopilotService {
       // If the ai-service is down, report nothing available rather than 500.
       return [];
     }
+  }
+
+  /**
+   * Track D — the Architecture console. Built-in starter patterns + existing
+   * BaTemplate rows (GLOBAL or this project), behind one HldTemplate shape.
+   */
+  async listTemplates(projectId: string): Promise<HldTemplate[]> {
+    let library: HldTemplate[] = [];
+    try {
+      const rows = await this.prisma.baTemplate.findMany({
+        where: { OR: [{ scope: 'GLOBAL' }, { projectId }] },
+        orderBy: { updatedAt: 'desc' },
+        take: 30,
+        select: { id: true, name: true, content: true },
+      });
+      library = rows.filter((r) => (r.content ?? '').trim()).map(libraryTemplateToHld);
+    } catch (err) {
+      this.logger.warn(`listTemplates: library source unavailable: ${err instanceof Error ? err.message : err}`);
+    }
+    return [...BUILTIN_ARCH_TEMPLATES, ...library];
   }
 
   async listThread(hldId: string, sectionKey: string) {
