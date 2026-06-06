@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4.5-preview"
     OPENAI_MAX_TOKENS: int = 1024
     OPENAI_TEMPERATURE: float = 0.4   # lower = more deterministic PRD suggestions
+    OPENAI_EMBED_MODEL: str = "text-embedding-3-small"  # RAG embeddings (HD-13/HD-10)
 
     # Anthropic (Claude) — used for wireframe hi-fi generation.
     # HIFI_PROVIDER selects the engine for /hifi-generate: "anthropic" | "openai".

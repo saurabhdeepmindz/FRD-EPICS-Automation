@@ -203,7 +203,7 @@ export class HldCopilotService {
 
     const { prdContext, stack } = await this.buildContext(hld.projectId, hld.sections as Record<string, unknown>);
     const sectionContent = this.sectionText((hld.sections as Record<string, unknown>)[sectionKey]);
-    const references = await this.buildReferencesContext(hldId, sectionKey);
+    const references = await this.buildReferencesContext(hldId, sectionKey, message);
 
     let markdown: string;
     let model: string;
@@ -289,8 +289,20 @@ export class HldCopilotService {
     }
   }
 
-  /** RR-06 — included references (whole-HLD + section) as a budgeted context block. */
-  private async buildReferencesContext(hldId: string, sectionKey: string): Promise<string> {
+  /**
+   * RR-06 + HD-13 — references context. Prefers RAG retrieval (top-k most relevant
+   * chunks for the query); falls back to whole-summary injection for references that
+   * weren't chunk-indexed (e.g. ingested before HD-13).
+   */
+  private async buildReferencesContext(hldId: string, sectionKey: string, query: string): Promise<string> {
+    const hits = await this.references.retrieve(hldId, sectionKey, query).catch(() => []);
+    if (hits.length) {
+      return hits
+        .map((h, i) => `### From "${h.title}" — relevant excerpt ${i + 1}\n${h.text.slice(0, 1200)}`)
+        .join('\n\n')
+        .slice(0, 7000);
+    }
+    // Fallback: summaries of included references (no chunks indexed).
     const refs = await this.references.getIncludedForContext(hldId, sectionKey).catch(() => []);
     if (!refs.length) return '';
     return refs
