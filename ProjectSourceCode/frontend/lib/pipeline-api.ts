@@ -451,6 +451,40 @@ export async function getHld(projectId: string): Promise<Hld | null> {
   return data.data;
 }
 
+// ─── HLD-V2 (Sprint v10) — edit / preview / export (PRD parity) ───────────────
+
+/** HE-02 — persist an edited HLD section → new version (existing PATCH route). */
+export async function updateHldSection(
+  projectId: string,
+  hldId: string,
+  sectionKey: string,
+  content: unknown,
+): Promise<Hld> {
+  const { data } = await api.patch<ApiEnvelope<Hld>>(
+    `/ba/projects/${projectId}/hld/${hldId}/section/${sectionKey}`,
+    { content },
+  );
+  return data.data;
+}
+
+/** HE-06 — canonical HLD markdown for the latest version (preview/download). */
+export async function getHldMarkdown(
+  projectId: string,
+): Promise<{ version: number; markdown: string } | null> {
+  const { data } = await api.get<ApiEnvelope<{ version: number; markdown: string } | null>>(
+    `/ba/projects/${projectId}/hld/markdown`,
+  );
+  return data.data;
+}
+
+/** HE-06 — direct download URLs for the HLD PDF / DOCX export streams. */
+export function hldPdfUrl(projectId: string, hldId: string): string {
+  return `${API_BASE}/api/ba/projects/${projectId}/hld/${hldId}/export/pdf`;
+}
+export function hldDocxUrl(projectId: string, hldId: string): string {
+  return `${API_BASE}/api/ba/projects/${projectId}/hld/${hldId}/export/docx`;
+}
+
 // ─── Project structure diagram (v9 Track KK) ─────────────────────────────────
 
 export type StructureLayer = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';

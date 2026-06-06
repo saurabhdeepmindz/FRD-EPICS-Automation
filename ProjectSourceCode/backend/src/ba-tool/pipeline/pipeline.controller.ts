@@ -541,6 +541,13 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  // HE-05 — canonical HLD markdown (for in-browser preview/download, mirrors PRD)
+  @Get('hld/markdown')
+  async getHldMarkdown(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.hld.getMarkdown(id);
+    return { success: true, data };
+  }
+
   @Post('hld/generate')
   async generateHld(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.hld.generate(id);

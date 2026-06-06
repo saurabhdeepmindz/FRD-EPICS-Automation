@@ -139,6 +139,37 @@ export class HldService {
     return hld;
   }
 
+  /** HE-05 — gather the data needed to render an HLD export (PDF/DOCX/Preview). */
+  async getExport(hldId: string) {
+    const hld = await this.get(hldId);
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    return {
+      productName: project?.productName ?? project?.name ?? 'Project',
+      version: hld.version,
+      status: hld.status,
+      createdAt: hld.createdAt,
+      sections: (hld.sections ?? {}) as Record<string, unknown>,
+      mermaidDiagrams: (hld.mermaidDiagrams ?? {}) as Record<string, string>,
+    };
+  }
+
+  /** HE-05 — canonical Markdown for the latest HLD (in-browser download, mirrors PRD). */
+  async getMarkdown(projectId: string): Promise<{ version: number; markdown: string } | null> {
+    const latest = await this.getLatest(projectId);
+    if (!latest) return null;
+    return {
+      version: latest.version,
+      markdown: this.renderMarkdown(
+        latest.version,
+        (latest.sections ?? {}) as Record<string, unknown>,
+        (latest.mermaidDiagrams ?? {}) as Record<string, string>,
+      ),
+    };
+  }
+
   /** Generate a new HLD version from the project's latest PRD+FRD. */
   async generate(projectId: string): Promise<{ id: string; gaps: AiHldResponse['gaps'] }> {
     const project = await this.prisma.baProject.findUnique({
@@ -243,13 +274,12 @@ export class HldService {
       .join('\n');
   }
 
-  /** Render the 17-section HLD + Mermaid diagrams to Markdown and write to 05-HLD/. */
-  private async exportMarkdown(
-    projectName: string,
+  /** Render the 17-section HLD + Mermaid diagrams to canonical Markdown. */
+  private renderMarkdown(
     version: number,
     sections: Record<string, unknown>,
     diagrams: Record<string, string>,
-  ): Promise<void> {
+  ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
       lines.push(`## ${i + 1}. ${HLD_SECTION_NAMES[key]}`, ``);
@@ -266,11 +296,21 @@ export class HldService {
         lines.push(`### ${name}`, ``, '```mermaid', src, '```', '');
       }
     }
+    return lines.join('\n');
+  }
+
+  /** Render the 17-section HLD + Mermaid diagrams to Markdown and write to 05-HLD/. */
+  private async exportMarkdown(
+    projectName: string,
+    version: number,
+    sections: Record<string, unknown>,
+    diagrams: Record<string, string>,
+  ): Promise<void> {
     await this.projectFolders.writeArtifactFile(
       projectName,
       '05-HLD',
       `HLD-v${version}.md`,
-      lines.join('\n'),
+      this.renderMarkdown(version, sections, diagrams),
     );
     await this.projectFolders.appendChangelog(projectName, {
       summary: `Generated HLD v${version}`,
