@@ -2,6 +2,8 @@
 
 ## Status: ✅ COMPLETE (2026-06-07) — Tracks A–E shipped & merged (PRs #16 A/B, #17 C, #18 D, #19 E). HLD-V2 enhanced + Architect Copilot live on `/hld-v2`.
 
+> **UX follow-ups (post-merge):** (1) Copilot markdown rendering + visible Save/Copy + scrollable full saved text (PR #20). (2) Preview made PRD-style — sticky left section menu with click-to-jump anchors, inline per-section architecture diagrams + §17 structure grid, and section text (incl. the merged `aiSynthesis`) rendered as markdown; shared `HldStructureDiagram` + `Markdown` components; browse view also renders markdown.
+>
 > **Track E done (integration + tests):** nav cross-link `/hld-v2` → PRD+FRD (FreshnessBanner + provider key-gating already in A/C); unit tests — `hld-html.spec.ts` (7) + `hld-templates.spec.ts` (4) → 10 new tests pass; full backend suite 105/107 (the 2 failures are pre-existing in the legacy `prd/prd.service.spec.ts`, untouched by v10). `tsc` clean both apps. Deferred items (HD-01..10 incl. save-as-template + HLD repository/RAG, Phase F cutover) remain in `backlog-hld-enhancement.md`.
 
 > **Track A + B done:** `/hld-v2` page (same `BaHld`, view toggle Diagrams/Edit/Preview, nav entry), section Edit (existing PATCH), Preview (`HldPreview`), shared `generateHldHtml()`, export routes PDF (Puppeteer)+DOCX (html-to-docx)+MD, download menu. Verified: PDF `%PDF-1.4` 261KB, DOCX `PK` OOXML 109KB, MD 200; Playwright smoke green (toggle/preview/edit/download), `tsc` clean both apps. Note: section edits save in place + mark reviewed (consistent with PRD edit — no per-edit version clone).
