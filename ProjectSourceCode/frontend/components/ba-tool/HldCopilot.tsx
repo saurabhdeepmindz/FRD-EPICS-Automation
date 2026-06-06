@@ -14,6 +14,12 @@ import {
   LayoutTemplate,
   ChevronRight,
   ChevronDown,
+  Globe,
+  Upload,
+  Trash2,
+  ExternalLink,
+  FileText,
+  Paperclip,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MicButton } from '@/components/forms/MicButton';
@@ -27,9 +33,15 @@ import {
   saveHldInsight,
   hldCopilotMerge,
   updateHldSection,
+  listHldReferences,
+  addHldReferenceUrl,
+  uploadHldReferenceDocument,
+  setHldReferenceInclude,
+  deleteHldReference,
   type HldProvider,
   type HldTemplate,
   type HldChatMessage,
+  type HldReference,
 } from '@/lib/pipeline-api';
 
 const QUICK_PROMPTS = [
@@ -62,7 +74,7 @@ export function HldCopilot({
   onApplied: () => void | Promise<void>;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'chat' | 'saved' | 'templates'>('chat');
+  const [tab, setTab] = useState<'chat' | 'saved' | 'templates' | 'references'>('chat');
   const [providers, setProviders] = useState<HldProvider[]>([]);
   const [provider, setProvider] = useState('anthropic');
   const [templates, setTemplates] = useState<HldTemplate[]>([]);
@@ -74,6 +86,12 @@ export function HldCopilot({
   const [tplWhole, setTplWhole] = useState(true);
   const [savingTpl, setSavingTpl] = useState(false);
   const [tplMsg, setTplMsg] = useState<string | null>(null);
+  // RR-08 — references
+  const [references, setReferences] = useState<HldReference[]>([]);
+  const [refUrl, setRefUrl] = useState('');
+  const [refTagSection, setRefTagSection] = useState(false); // tag to current section vs whole-HLD
+  const [addingRef, setAddingRef] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<HldChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -98,6 +116,11 @@ export function HldCopilot({
       .catch(() => setProviders([]));
     void listHldTemplates(projectId).then(setTemplates).catch(() => setTemplates([]));
   }, [projectId]);
+
+  // Load references for this HLD (whole-HLD + section scope shown together).
+  useEffect(() => {
+    void listHldReferences(projectId, hldId).then(setReferences).catch(() => setReferences([]));
+  }, [projectId, hldId]);
 
   // Load this section's thread whenever the section changes.
   useEffect(() => {
@@ -189,6 +212,74 @@ export function HldCopilot({
   };
 
   const reloadTemplates = () => listHldTemplates(projectId).then(setTemplates).catch(() => {});
+  const reloadReferences = () => listHldReferences(projectId, hldId).then(setReferences).catch(() => {});
+
+  // RR-08 — add a reference URL (server fetches + summarizes).
+  const addUrl = async () => {
+    const url = refUrl.trim();
+    if (!url) return;
+    setAddingRef(true);
+    setError(null);
+    try {
+      await addHldReferenceUrl(projectId, hldId, {
+        url,
+        sectionKey: refTagSection ? sectionKey : null,
+        provider,
+      });
+      setRefUrl('');
+      await reloadReferences();
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (err instanceof Error ? err.message : 'Add URL failed'),
+      );
+    } finally {
+      setAddingRef(false);
+    }
+  };
+
+  // RR-08 — upload a reference document (server extracts + summarizes).
+  const uploadDoc = async (file: File) => {
+    setAddingRef(true);
+    setError(null);
+    try {
+      await uploadHldReferenceDocument(projectId, hldId, file, {
+        sectionKey: refTagSection ? sectionKey : null,
+        provider,
+      });
+      await reloadReferences();
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (err instanceof Error ? err.message : 'Upload failed'),
+      );
+    } finally {
+      setAddingRef(false);
+    }
+  };
+
+  const toggleRefInclude = async (r: HldReference) => {
+    try {
+      const updated = await setHldReferenceInclude(projectId, hldId, r.id, !r.includeInContext);
+      setReferences((list) => list.map((x) => (x.id === r.id ? { ...x, includeInContext: updated.includeInContext } : x)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Update failed');
+    }
+  };
+
+  const removeRef = async (r: HldReference) => {
+    try {
+      await deleteHldReference(projectId, hldId, r.id);
+      setReferences((list) => list.filter((x) => x.id !== r.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+    }
+  };
+
+  // Included READY references in scope for the current section (whole-HLD + this section).
+  const activeRefCount = references.filter(
+    (r) => r.includeInContext && r.status === 'READY' && (r.sectionKey == null || r.sectionKey === sectionKey),
+  ).length;
 
   // HD-09 — save the current HLD (whole doc or this section) as a reusable template.
   const saveTemplate = async () => {
@@ -321,6 +412,9 @@ export function HldCopilot({
         <TabBtn active={tab === 'templates'} onClick={() => setTab('templates')}>
           <LayoutTemplate className="h-4 w-4 mr-1" /> Templates
         </TabBtn>
+        <TabBtn active={tab === 'references'} onClick={() => setTab('references')}>
+          <Paperclip className="h-4 w-4 mr-1" /> Refs{references.length ? ` (${references.length})` : ''}
+        </TabBtn>
       </div>
 
       {error && (
@@ -410,6 +504,16 @@ export function HldCopilot({
                 </button>
               </div>
             )}
+            {activeRefCount > 0 && (
+              <button
+                onClick={() => setTab('references')}
+                className="flex items-center gap-1.5 text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-md px-2 py-1 w-full"
+                title="Included references are added to the chat context"
+              >
+                <Paperclip className="h-3 w-3 shrink-0" />
+                <span>{activeRefCount} reference{activeRefCount > 1 ? 's' : ''} in context</span>
+              </button>
+            )}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -474,7 +578,7 @@ export function HldCopilot({
             </>
           )}
         </div>
-      ) : (
+      ) : tab === 'templates' ? (
         // ─── Templates tab (Architecture console) ───
         <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-2">
           {/* HD-09 — save this HLD as a reusable template */}
@@ -579,6 +683,96 @@ export function HldCopilot({
             ))
           )}
         </div>
+      ) : (
+        // ─── References tab (RR-08) ───
+        <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          <div className="border rounded-lg bg-amber-50/40 border-amber-200 p-2.5 space-y-2">
+            <p className="text-xs font-semibold text-amber-800">Add a reference for grounding</p>
+            <div className="flex items-center gap-1.5">
+              <Globe className="h-4 w-4 text-amber-600 shrink-0" />
+              <input
+                value={refUrl}
+                onChange={(e) => setRefUrl(e.target.value)}
+                placeholder="https://… (latest trends / best practices)"
+                className="flex-1 text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400/40"
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addUrl())}
+                disabled={addingRef}
+              />
+              <Button size="sm" onClick={addUrl} disabled={addingRef || !refUrl.trim()}>
+                {addingRef ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add'}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadDoc(f);
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+              />
+              <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={addingRef}>
+                <Upload className="h-4 w-4 mr-1" /> Upload document
+              </Button>
+              <label className="ml-auto inline-flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer select-none">
+                <input type="checkbox" checked={refTagSection} onChange={(e) => setRefTagSection(e.target.checked)} className="accent-amber-600" />
+                tag to “{sectionName}”
+              </label>
+            </div>
+            <p className="text-[10px] text-gray-400">
+              Checked (✓) references are added to the chat context. Untagged = whole HLD.
+            </p>
+          </div>
+
+          {references.length === 0 ? (
+            <div className="text-center text-xs text-gray-400 pt-6">No references yet.</div>
+          ) : (
+            references.map((r) => (
+              <div key={r.id} className="border rounded-lg p-2.5 bg-white">
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={r.includeInContext}
+                    disabled={r.status !== 'READY'}
+                    onChange={() => toggleRefInclude(r)}
+                    className="mt-1 accent-amber-600 shrink-0 disabled:opacity-40"
+                    title={r.status === 'READY' ? 'Include in chat context' : 'Not ready'}
+                  />
+                  {r.type === 'URL' ? <Globe className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-1" /> : <FileText className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-1" />}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-gray-800 truncate">{r.title}</span>
+                      {r.sourceUrl && (
+                        <a href={r.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-gray-600 shrink-0">
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <StatusBadge status={r.status} />
+                      {r.sectionKey && <span className="text-[9px] bg-amber-100 text-amber-700 rounded px-1 py-0.5">§ tagged</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => removeRef(r)} className="text-gray-300 hover:text-red-500 shrink-0 mt-0.5" title="Remove">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {r.status === 'FAILED' && r.error && <p className="text-[11px] text-red-600 mt-1 ml-6">{r.error}</p>}
+                {r.status === 'READY' && r.summary && (
+                  <details className="mt-1.5 ml-6">
+                    <summary className="text-[11px] text-indigo-600 cursor-pointer">View summary</summary>
+                    <div className="cp-scroll max-h-60 overflow-y-auto border-t mt-1 pt-1.5">
+                      <Markdown>{r.summary}</Markdown>
+                    </div>
+                  </details>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       )}
 
       {/* Merge review modal */}
@@ -614,6 +808,16 @@ export function HldCopilot({
       )}
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: 'PENDING' | 'READY' | 'FAILED' }) {
+  const map = {
+    READY: 'bg-emerald-100 text-emerald-700',
+    PENDING: 'bg-amber-100 text-amber-700',
+    FAILED: 'bg-red-100 text-red-700',
+  } as const;
+  const label = status === 'READY' ? '✓ ready' : status === 'PENDING' ? '⏳ pending' : '✕ failed';
+  return <span className={`text-[9px] uppercase rounded px-1 py-0.5 ${map[status]}`}>{label}</span>;
 }
 
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

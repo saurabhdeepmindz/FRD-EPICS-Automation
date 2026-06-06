@@ -610,6 +610,79 @@ export async function hldCopilotMerge(
   return data.data;
 }
 
+// ─── HLD Copilot References (Sprint v11 / Track RR) ───────────────────────────
+
+export interface HldReference {
+  id: string;
+  hldId: string;
+  sectionKey: string | null;
+  type: 'URL' | 'DOCUMENT';
+  title: string;
+  sourceUrl: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  summary: string | null;
+  status: 'PENDING' | 'READY' | 'FAILED';
+  error: string | null;
+  includeInContext: boolean;
+  createdAt: string;
+}
+
+export async function listHldReferences(projectId: string, hldId: string): Promise<HldReference[]> {
+  const { data } = await api.get<ApiEnvelope<HldReference[]>>(
+    `/ba/projects/${projectId}/hld/${hldId}/references`,
+  );
+  return data.data;
+}
+
+export async function addHldReferenceUrl(
+  projectId: string,
+  hldId: string,
+  body: { url: string; sectionKey?: string | null; provider?: string },
+): Promise<HldReference> {
+  const { data } = await api.post<ApiEnvelope<HldReference>>(
+    `/ba/projects/${projectId}/hld/${hldId}/references/url`,
+    body,
+    { timeout: 120_000 },
+  );
+  return data.data;
+}
+
+export async function uploadHldReferenceDocument(
+  projectId: string,
+  hldId: string,
+  file: File,
+  opts: { sectionKey?: string | null; provider?: string } = {},
+): Promise<HldReference> {
+  const form = new FormData();
+  form.append('file', file);
+  if (opts.sectionKey) form.append('sectionKey', opts.sectionKey);
+  if (opts.provider) form.append('provider', opts.provider);
+  const { data } = await api.post<ApiEnvelope<HldReference>>(
+    `/ba/projects/${projectId}/hld/${hldId}/references/document`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+  );
+  return data.data;
+}
+
+export async function setHldReferenceInclude(
+  projectId: string,
+  hldId: string,
+  refId: string,
+  include: boolean,
+): Promise<HldReference> {
+  const { data } = await api.patch<ApiEnvelope<HldReference>>(
+    `/ba/projects/${projectId}/hld/${hldId}/references/${refId}/include`,
+    { include },
+  );
+  return data.data;
+}
+
+export async function deleteHldReference(projectId: string, hldId: string, refId: string): Promise<void> {
+  await api.delete(`/ba/projects/${projectId}/hld/${hldId}/references/${refId}`);
+}
+
 // ─── Project structure diagram (v9 Track KK) ─────────────────────────────────
 
 export type StructureLayer = 'frontend' | 'backend' | 'calcEngine' | 'shared' | 'db' | 'config';

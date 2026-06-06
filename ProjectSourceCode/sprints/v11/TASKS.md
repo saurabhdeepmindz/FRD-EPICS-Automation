@@ -1,6 +1,8 @@
 # Sprint v11 — Tasks: HLD Copilot References (URLs + Documents) — Track RR
 
-## Status: 🟡 PLANNED (2026-06-07) — approved; not started.
+## Status: ✅ COMPLETE (2026-06-07) — shipped (PR #25 backend, PR #26 frontend). RR-01..11 done.
+
+> **Done:** `BaHldReference` + migration; ai `/summarize-reference`; SSRF-guarded URL fetch + HTML→text (`url-fetch.util`, 8 unit tests); document ingest via `TextExtractionService`; `HldReferencesService`/controller (url/doc/list/include/delete); references injected into `/hld-chat`; FE References tab (add URL / upload / status / include / View summary / remove) + "N references in context" chip; `pipeline-api` helpers. Verified e2e: example.com→READY+summary, metadata IP→FAILED (SSRF), chat 201 with refs, tab + chip render; tsc clean both apps; no console errors. Deep retrieval remains HD-13.
 
 > **PRD:** `sprints/v11/PRD.md`. **Decisions:** ① whole-HLD + optional per-section tag ② summarize-and-inject (no vector store; HD-10 is the RAG upgrade) ③ References tab in the Copilot ④ save-as-template always creates a new template (HD-09, reconfirmed).
 >
