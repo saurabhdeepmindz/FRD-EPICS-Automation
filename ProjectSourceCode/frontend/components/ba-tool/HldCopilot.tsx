@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MicButton } from '@/components/forms/MicButton';
+import { Markdown } from '@/components/ba-tool/Markdown';
 import {
   listHldProviders,
   listHldTemplates,
@@ -202,7 +203,7 @@ export function HldCopilot({
       {/* Body */}
       {tab === 'chat' ? (
         <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+          <div ref={scrollRef} className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-3">
             {messages.length === 0 && !sending && (
               <div className="text-center text-xs text-gray-400 pt-6">
                 Ask the copilot about <span className="font-medium">{sectionName}</span> — it knows your PRD, FRD & stack.
@@ -276,7 +277,7 @@ export function HldCopilot({
         </>
       ) : tab === 'saved' ? (
         // ─── Saved tab ───
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+        <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-3">
           {saved.length === 0 ? (
             <div className="text-center text-xs text-gray-400 pt-6">
               No saved insights yet. In Chat, click <BookmarkCheck className="inline h-3 w-3" /> on an answer to save it,
@@ -285,15 +286,17 @@ export function HldCopilot({
           ) : (
             <>
               {saved.map((m) => (
-                <div key={m.id} className="border rounded-lg p-2.5 text-xs bg-white">
-                  <div className="flex items-center gap-2 mb-1">
-                    <BookmarkCheck className="h-3.5 w-3.5 text-emerald-600" />
+                <div key={m.id} className="border rounded-lg p-2.5 bg-white">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <BookmarkCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                     <span className="text-[10px] text-gray-400">{m.model ?? 'AI'}</span>
-                    <button onClick={() => toggleSave(m)} className="ml-auto text-gray-300 hover:text-red-500" title="Remove">
+                    <button onClick={() => toggleSave(m)} className="ml-auto text-gray-300 hover:text-red-500" title="Remove from saved">
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <p className="text-gray-700 whitespace-pre-wrap line-clamp-4">{stripMd(m.content)}</p>
+                  <div className="cp-scroll max-h-72 overflow-y-auto pr-1 border-t pt-1.5">
+                    <Markdown>{m.content}</Markdown>
+                  </div>
                 </div>
               ))}
               <Button className="w-full" size="sm" onClick={synthesize} disabled={merging}>
@@ -305,7 +308,7 @@ export function HldCopilot({
         </div>
       ) : (
         // ─── Templates tab (Architecture console) ───
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        <div className="cp-scroll flex-1 overflow-y-auto px-3 py-3 space-y-2">
           <p className="text-[11px] text-gray-400 px-0.5">
             Pick a reference pattern to steer the copilot, or draft this section from it.
           </p>
@@ -365,13 +368,13 @@ export function HldCopilot({
               </button>
             </div>
             <div className="grid grid-cols-2 gap-0 overflow-hidden flex-1">
-              <div className="overflow-y-auto p-4 border-r">
+              <div className="cp-scroll overflow-y-auto p-4 border-r">
                 <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-2">Current section</p>
                 <pre className="text-xs text-gray-600 whitespace-pre-wrap font-sans">{currentText(currentBody)}</pre>
               </div>
-              <div className="overflow-y-auto p-4 bg-emerald-50/40">
+              <div className="cp-scroll overflow-y-auto p-4 bg-emerald-50/40">
                 <p className="text-[10px] uppercase tracking-wide text-emerald-600 mb-2">AI-merged draft (new "aiSynthesis" field)</p>
-                <pre className="text-xs text-gray-800 whitespace-pre-wrap font-sans">{draft}</pre>
+                <Markdown>{draft}</Markdown>
               </div>
             </div>
             <div className="px-5 py-3 border-t flex items-center gap-2">
@@ -401,40 +404,52 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
 
 function MessageBubble({ m, onToggleSave }: { m: HldChatMessage; onToggleSave: () => void }) {
   const isUser = m.role === 'user';
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(m.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
   return (
     <div className={`flex gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`shrink-0 h-6 w-6 rounded-full flex items-center justify-center ${isUser ? 'bg-indigo-100' : 'bg-purple-100'}`}>
         {isUser ? <User className="h-3.5 w-3.5 text-indigo-600" /> : <Bot className="h-3.5 w-3.5 text-purple-600" />}
       </div>
-      <div className={`min-w-0 max-w-[85%] ${isUser ? 'text-right' : ''}`}>
-        <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap text-left ${isUser ? 'bg-indigo-50 text-gray-800' : 'bg-gray-50 border text-gray-700'}`}>
-          {m.content}
-        </div>
+      <div className={`min-w-0 max-w-[88%] ${isUser ? 'items-end' : ''} flex flex-col`}>
+        {isUser ? (
+          <div className="rounded-lg px-3 py-2 text-sm whitespace-pre-wrap text-left bg-indigo-50 text-gray-800">
+            {m.content}
+          </div>
+        ) : (
+          <div className="rounded-lg px-3 py-2 bg-white border text-left">
+            <Markdown>{m.content}</Markdown>
+          </div>
+        )}
         {!isUser && (
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-[10px] text-gray-400">{m.model ?? 'AI'}</span>
+          <div className="flex items-center gap-1.5 mt-1.5">
             <button
               onClick={onToggleSave}
-              className={`text-[11px] inline-flex items-center gap-1 ${m.savedToSection ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-700'}`}
+              className={`text-[11px] font-medium inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors ${
+                m.savedToSection
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                  : 'bg-white border-gray-300 text-gray-600 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700'
+              }`}
             >
               {m.savedToSection ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
-              {m.savedToSection ? 'Saved' : 'Save to section'}
+              {m.savedToSection ? 'Saved to section' : 'Save to section'}
             </button>
             <button
-              onClick={() => navigator.clipboard?.writeText(m.content)}
-              className="text-[11px] inline-flex items-center gap-1 text-gray-400 hover:text-gray-700"
+              onClick={copy}
+              className="text-[11px] font-medium inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50"
             >
-              <Copy className="h-3.5 w-3.5" /> Copy
+              <Copy className="h-3.5 w-3.5" /> {copied ? 'Copied!' : 'Copy'}
             </button>
+            <span className="text-[10px] text-gray-400 ml-0.5">{m.model ?? 'AI'}</span>
           </div>
         )}
       </div>
     </div>
   );
-}
-
-function stripMd(s: string): string {
-  return s.replace(/^#+\s/gm, '').replace(/\*\*/g, '').trim();
 }
 
 function currentText(body: Record<string, unknown> | undefined): string {
