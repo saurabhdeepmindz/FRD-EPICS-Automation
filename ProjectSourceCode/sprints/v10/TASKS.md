@@ -1,6 +1,8 @@
 # Sprint v10 — Tasks: HLD-V2 "Architect Copilot" + Edit / Preview / Export (Track HE)
 
-## Status: 🟡 PLANNED (2026-06-07) — wireframes approved; PRD written. Implementation not started.
+## Status: 🟢 IN PROGRESS (2026-06-07) — Track A + B shipped (`feat/v10-hld-v2-edit-preview-export`). Tracks C/D/E pending.
+
+> **Track A + B done:** `/hld-v2` page (same `BaHld`, view toggle Diagrams/Edit/Preview, nav entry), section Edit (existing PATCH), Preview (`HldPreview`), shared `generateHldHtml()`, export routes PDF (Puppeteer)+DOCX (html-to-docx)+MD, download menu. Verified: PDF `%PDF-1.4` 261KB, DOCX `PK` OOXML 109KB, MD 200; Playwright smoke green (toggle/preview/edit/download), `tsc` clean both apps. Note: section edits save in place + mark reviewed (consistent with PRD edit — no per-edit version clone).
 
 > **Backlog traceability:** full backlog (must-have + deferred + Phase F cutover) in `backlog-hld-enhancement.md` (repo root). Wireframes: `sprints/v10/wireframes/hld-enhanced-wireframes.html` (approved 2026-06-07). PRD: `sprints/v10/PRD.md`.
 >
