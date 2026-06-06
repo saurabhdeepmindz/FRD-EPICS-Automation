@@ -467,6 +467,20 @@ export async function updateHldSection(
   return data.data;
 }
 
+/** Per-field AI Suggest for the HLD section editor (grounded in PRD/FRD/stack). */
+export async function suggestHldField(
+  projectId: string,
+  hldId: string,
+  body: { sectionKey: string; fieldName: string; currentValue?: string; provider?: string },
+): Promise<{ suggestion: string; model: string }> {
+  const { data } = await api.post<ApiEnvelope<{ suggestion: string; model: string }>>(
+    `/ba/projects/${projectId}/hld/${hldId}/copilot/suggest-field`,
+    body,
+    { timeout: 120_000 },
+  );
+  return data.data;
+}
+
 /** HE-06 — canonical HLD markdown for the latest version (preview/download). */
 export async function getHldMarkdown(
   projectId: string,

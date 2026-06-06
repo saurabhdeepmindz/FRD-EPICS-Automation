@@ -135,6 +135,22 @@ export class HldCopilotController {
     }
   }
 
+  /** POST .../hld/:hldId/copilot/suggest-field — per-field AI Suggest for the editor. */
+  @Post(':hldId/copilot/suggest-field')
+  async suggestField(
+    @Param('hldId', ParseUUIDPipe) hldId: string,
+    @Body() body: { sectionKey: string; fieldName: string; currentValue?: string; provider?: string },
+  ) {
+    const data = await this.copilot.suggestField(
+      hldId,
+      body.sectionKey,
+      body.fieldName,
+      body.currentValue ?? '',
+      body.provider,
+    );
+    return { success: true, data };
+  }
+
   /** POST .../hld/:hldId/copilot/save-insight — flag/unflag a message as saved. */
   @Post(':hldId/copilot/save-insight')
   async saveInsight(@Body() body: { messageId: string; saved: boolean }) {
