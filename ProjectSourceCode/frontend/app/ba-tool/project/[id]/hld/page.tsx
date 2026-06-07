@@ -133,9 +133,13 @@ export default function HldPage() {
   const editSection = HLD_SECTIONS[editIndex];
 
   // Sub-headings of a section = its body field keys (humanized in the menu).
+  // For §3 the band diagram is canonical, so legacy free-text layer fields are
+  // excluded — the menu matches what's actually rendered.
   const fieldsForSection = (key: string): string[] => {
     const body = hld?.sections?.[key] as Record<string, unknown> | undefined;
-    return body ? Object.keys(body) : [];
+    if (!body) return [];
+    const keys = Object.keys(body);
+    return key === 'systemView' ? keys.filter((k) => !SYSTEM_VIEW_LEGACY_FIELDS.includes(k)) : keys;
   };
 
   const selectSection = (key: string) => {
