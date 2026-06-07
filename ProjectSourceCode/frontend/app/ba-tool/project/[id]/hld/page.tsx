@@ -17,6 +17,7 @@ import {
   FileText,
   FileType,
   ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -56,6 +57,10 @@ export default function HldPage() {
   const [gaps, setGaps] = useState<PrdGap[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string>('__diagrams');
+  // Focused sub-heading (field) within the active section — drives the Copilot scope.
+  const [activeField, setActiveField] = useState<string | null>(null);
+  // Left-menu sections expanded to show their sub-headings (field keys).
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [view, setView] = useState<View>('diagrams');
   const [copilotOpen, setCopilotOpen] = useState(false);
   const initedKey = useRef(false);
@@ -125,6 +130,41 @@ export default function HldPage() {
 
   const editIndex = HLD_SECTIONS.findIndex((s) => s.key === activeKey);
   const editSection = HLD_SECTIONS[editIndex];
+
+  // Sub-headings of a section = its body field keys (humanized in the menu).
+  const fieldsForSection = (key: string): string[] => {
+    const body = hld?.sections?.[key] as Record<string, unknown> | undefined;
+    return body ? Object.keys(body) : [];
+  };
+
+  const selectSection = (key: string) => {
+    setActiveKey(key);
+    setActiveField(null);
+  };
+  const selectField = (sectionKey: string, fieldKey: string) => {
+    setActiveKey(sectionKey);
+    setActiveField(fieldKey);
+  };
+  const toggleExpand = (key: string) =>
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  // The focused sub-heading's content (string/JSON) for grounding the Copilot.
+  const activeFieldContent: string | null = (() => {
+    if (!activeField || activeKey === '__diagrams') return null;
+    const body = hld?.sections?.[activeKey] as Record<string, unknown> | undefined;
+    const v = body?.[activeField];
+    if (v == null) return '';
+    if (typeof v === 'string') return v.startsWith('[AI] ') ? v.slice(5) : v;
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      return String(v);
+    }
+  })();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -278,7 +318,7 @@ export default function HldPage() {
                 <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto space-y-1 pr-1">
                   {view === 'diagrams' && diagramKeys.length > 0 && (
                     <button
-                      onClick={() => setActiveKey('__diagrams')}
+                      onClick={() => selectSection('__diagrams')}
                       className={`w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 text-sm border ${activeKey === '__diagrams' ? 'border-gray-900 bg-white font-medium text-gray-900' : 'border-transparent text-gray-600 hover:bg-white hover:border-gray-200'}`}
                     >
                       <Network className="h-4 w-4 shrink-0" /> Architecture Diagrams
@@ -289,16 +329,49 @@ export default function HldPage() {
                     {HLD_SECTIONS.map((s, i) => {
                       const has = !!hld.sections[s.key];
                       const isActive = activeKey === s.key;
+                      const subFields = fieldsForSection(s.key);
+                      const isExpanded = expandedSections.has(s.key);
                       return (
-                        <button
-                          key={s.key}
-                          onClick={() => setActiveKey(s.key)}
-                          className={`w-full text-left flex items-start gap-2 rounded-lg px-3 py-2 text-sm border ${isActive ? 'border-gray-900 bg-white font-medium text-gray-900' : 'border-transparent text-gray-600 hover:bg-white hover:border-gray-200'}`}
-                        >
-                          <span className="text-xs font-mono text-gray-400 w-5 shrink-0 mt-0.5">{i + 1}</span>
-                          <span className="min-w-0">{s.name}</span>
-                          {!has && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
-                        </button>
+                        <div key={s.key}>
+                          <div
+                            className={`w-full flex items-stretch gap-1 rounded-lg border ${isActive ? 'border-gray-900 bg-white text-gray-900' : 'border-transparent text-gray-600 hover:bg-white hover:border-gray-200'}`}
+                          >
+                            <button
+                              onClick={() => selectSection(s.key)}
+                              className={`flex-1 min-w-0 text-left flex items-start gap-2 px-3 py-2 text-sm ${isActive && !activeField ? 'font-medium' : ''}`}
+                            >
+                              <span className="text-xs font-mono text-gray-400 w-5 shrink-0 mt-0.5">{i + 1}</span>
+                              <span className="min-w-0">{s.name}</span>
+                              {!has && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
+                            </button>
+                            {subFields.length > 0 && (
+                              <button
+                                onClick={() => toggleExpand(s.key)}
+                                className="px-1.5 text-gray-400 hover:text-gray-700 shrink-0"
+                                title={isExpanded ? 'Collapse sub-headings' : 'Expand sub-headings'}
+                                aria-label={isExpanded ? 'Collapse sub-headings' : 'Expand sub-headings'}
+                              >
+                                {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                            )}
+                          </div>
+                          {isExpanded && subFields.length > 0 && (
+                            <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
+                              {subFields.map((fk) => {
+                                const fieldActive = isActive && activeField === fk;
+                                return (
+                                  <button
+                                    key={fk}
+                                    onClick={() => selectField(s.key, fk)}
+                                    className={`w-full text-left rounded-md px-2.5 py-1.5 text-xs border ${fieldActive ? 'border-purple-300 bg-purple-50 text-purple-800 font-medium' : 'border-transparent text-gray-500 hover:bg-white hover:border-gray-200'}`}
+                                  >
+                                    {humanizeField(fk)}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -314,6 +387,8 @@ export default function HldPage() {
                       sectionKey={editSection.key}
                       sectionName={editSection.name}
                       body={hld.sections[editSection.key] as Record<string, unknown> | undefined}
+                      activeFieldKey={activeField}
+                      onFieldFocus={(fk) => setActiveField(fk)}
                       onSaved={async () => {
                         await load();
                         setView('diagrams');
@@ -398,6 +473,8 @@ export default function HldPage() {
       {copilotOpen && hld && (() => {
         const ck = activeKey === '__diagrams' ? HLD_SECTIONS[0]?.key ?? 'documentControl' : activeKey;
         const cs = HLD_SECTIONS.find((s) => s.key === ck);
+        // Only forward the focused sub-heading when it belongs to the active section.
+        const fk = activeKey === ck ? activeField : null;
         return (
           <HldCopilot
             projectId={projectId}
@@ -405,6 +482,9 @@ export default function HldPage() {
             sectionKey={ck}
             sectionName={cs?.name ?? ck}
             currentBody={hld.sections[ck] as Record<string, unknown> | undefined}
+            fieldKey={fk}
+            fieldName={fk ? humanizeField(fk) : null}
+            fieldContent={fk ? activeFieldContent : null}
             onApplied={load}
             onClose={() => setCopilotOpen(false)}
           />
@@ -412,6 +492,15 @@ export default function HldPage() {
       })()}
     </div>
   );
+}
+
+// Humanize a section field key into a readable sub-heading label.
+function humanizeField(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
 }
 
 // ─── Header toggle button ────────────────────────────────────────────────────

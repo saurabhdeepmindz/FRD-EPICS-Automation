@@ -35,9 +35,20 @@ def build_hld_chat_user_message(
     template: str | None,
     user_message: str,
     references: str = "",
+    field_name: str = "",
+    field_content: str = "",
 ) -> str:
     parts: list[str] = []
     parts.append(f"# HLD Section: {section_name}")
+    if field_name.strip():
+        parts.append(
+            f"\n## Focused sub-heading: {field_name.strip()}\n"
+            f"The architect is working on the **{field_name.strip()}** sub-heading of this section. "
+            f"Focus your answer on this sub-heading specifically — treat the rest of the section as supporting "
+            f"context, not the subject. Do not redesign the whole section unless explicitly asked."
+        )
+        if field_content.strip():
+            parts.append(f"\n### Current content of the “{field_name.strip()}” sub-heading\n{field_content.strip()[:3000]}")
     if stack.strip():
         parts.append(f"\n## Tech stack\n{stack.strip()}")
     if prd_context.strip():

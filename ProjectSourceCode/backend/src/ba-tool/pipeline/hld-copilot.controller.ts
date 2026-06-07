@@ -62,12 +62,22 @@ export class HldCopilotController {
   @Post(':hldId/copilot/chat')
   async chat(
     @Param('hldId', ParseUUIDPipe) hldId: string,
-    @Body() body: { sectionKey: string; provider?: string; message: string; template?: string | null },
+    @Body()
+    body: {
+      sectionKey: string;
+      provider?: string;
+      message: string;
+      template?: string | null;
+      fieldName?: string | null;
+      fieldContent?: string | null;
+    },
   ) {
     const data = await this.copilot.chat(hldId, body.sectionKey, {
       provider: body.provider,
       message: body.message,
       template: body.template ?? null,
+      fieldName: body.fieldName ?? null,
+      fieldContent: body.fieldContent ?? null,
     });
     return { success: true, data };
   }
@@ -76,7 +86,15 @@ export class HldCopilotController {
   @Post(':hldId/copilot/chat-stream')
   async chatStream(
     @Param('hldId', ParseUUIDPipe) hldId: string,
-    @Body() body: { sectionKey: string; provider?: string; message: string; template?: string | null },
+    @Body()
+    body: {
+      sectionKey: string;
+      provider?: string;
+      message: string;
+      template?: string | null;
+      fieldName?: string | null;
+      fieldContent?: string | null;
+    },
     @Res() res: Response,
   ) {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -89,6 +107,8 @@ export class HldCopilotController {
         provider: body.provider,
         message: body.message,
         template: body.template ?? null,
+        fieldName: body.fieldName ?? null,
+        fieldContent: body.fieldContent ?? null,
       });
       res.write(`data: ${JSON.stringify({ userMessageId: userMessage.id })}\n\n`);
 

@@ -214,7 +214,13 @@ export class HldCopilotService {
   async chat(
     hldId: string,
     sectionKey: string,
-    opts: { provider?: string; message: string; template?: string | null },
+    opts: {
+      provider?: string;
+      message: string;
+      template?: string | null;
+      fieldName?: string | null;
+      fieldContent?: string | null;
+    },
   ) {
     const message = (opts.message ?? '').trim();
     if (!message) throw new BadRequestException('Message is required.');
@@ -256,6 +262,8 @@ export class HldCopilotService {
           stack,
           template: opts.template ?? null,
           references,
+          field_name: opts.fieldName ?? '',
+          field_content: opts.fieldContent ?? '',
           history,
           user_message: message,
         },
@@ -286,7 +294,13 @@ export class HldCopilotService {
   async prepareStream(
     hldId: string,
     sectionKey: string,
-    opts: { provider?: string; message: string; template?: string | null },
+    opts: {
+      provider?: string;
+      message: string;
+      template?: string | null;
+      fieldName?: string | null;
+      fieldContent?: string | null;
+    },
   ): Promise<{ threadId: string; userMessage: { id: string }; payload: Record<string, unknown> }> {
     const message = (opts.message ?? '').trim();
     if (!message) throw new BadRequestException('Message is required.');
@@ -322,6 +336,8 @@ export class HldCopilotService {
         stack,
         template: opts.template ?? null,
         references,
+        field_name: opts.fieldName ?? '',
+        field_content: opts.fieldContent ?? '',
         history,
         user_message: message,
       },

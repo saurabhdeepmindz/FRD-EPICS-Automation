@@ -74,6 +74,9 @@ export function HldCopilot({
   sectionKey,
   sectionName,
   currentBody,
+  fieldKey,
+  fieldName,
+  fieldContent,
   onApplied,
   onClose,
 }: {
@@ -82,6 +85,10 @@ export function HldCopilot({
   sectionKey: string;
   sectionName: string;
   currentBody: Record<string, unknown> | undefined;
+  /** Optional focused sub-heading (field) within the section. */
+  fieldKey?: string | null;
+  fieldName?: string | null;
+  fieldContent?: string | null;
   onApplied: () => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -129,7 +136,16 @@ export function HldCopilot({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [savingSel, setSavingSel] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Sub-heading focus: when a field is selected, scope chat to it (toggleable).
+  const [focusField, setFocusField] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Default to focusing the sub-heading whenever a new one is selected.
+  useEffect(() => {
+    setFocusField(!!fieldKey);
+  }, [fieldKey]);
+  const focused = focusField && !!fieldKey;
+  const focusLabel = fieldName ?? fieldKey ?? '';
 
   // Load providers once.
   useEffect(() => {
@@ -180,6 +196,8 @@ export function HldCopilot({
       setError(null);
       setInput('');
       const template = activeTemplate ? `${activeTemplate.name}\n${activeTemplate.body}` : null;
+      const focusName = focused ? focusLabel : null;
+      const focusBody = focused ? fieldContent ?? null : null;
       // HD-01 — stream tokens live; fall back to a single non-streaming call on failure.
       setStreamQuestion(msg);
       setStreamText('');
@@ -188,7 +206,7 @@ export function HldCopilot({
         await streamHldCopilotChat(
           projectId,
           hldId,
-          { sectionKey, provider, message: msg, template },
+          { sectionKey, provider, message: msg, template, fieldName: focusName, fieldContent: focusBody },
           {
             onDelta: (d) => {
               streamed += d;
@@ -210,6 +228,8 @@ export function HldCopilot({
             provider,
             message: msg,
             template,
+            fieldName: focusName,
+            fieldContent: focusBody,
           });
           setMessages((m) => [...m, userMessage, assistantMessage]);
           setExpanded((e) => new Set(e).add(assistantMessage.id));
@@ -225,7 +245,7 @@ export function HldCopilot({
         setSending(false);
       }
     },
-    [projectId, hldId, sectionKey, provider, sending, activeTemplate],
+    [projectId, hldId, sectionKey, provider, sending, activeTemplate, focused, focusLabel, fieldContent],
   );
 
   const toggleSave = async (m: HldChatMessage) => {
@@ -543,7 +563,10 @@ export function HldCopilot({
         <Sparkles className="h-4 w-4 text-purple-500" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 leading-tight">Architect Copilot</p>
-          <p className="text-[11px] text-gray-500 truncate">§ {sectionName}</p>
+          <p className="text-[11px] text-gray-500 truncate">
+            § {sectionName}
+            {focused && <span className="text-purple-600"> › {focusLabel}</span>}
+          </p>
         </div>
         <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-700">
           <X className="h-4 w-4" />
@@ -595,11 +618,30 @@ export function HldCopilot({
             )}
           </div>
 
+          {/* Sub-heading focus bar — scope the chat to the selected field. */}
+          {fieldKey && (
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-purple-50/60 text-[11px]">
+              <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-purple-800">
+                <input
+                  type="checkbox"
+                  checked={focusField}
+                  onChange={(e) => setFocusField(e.target.checked)}
+                  className="accent-purple-600"
+                />
+                Focus on sub-heading: <span className="font-semibold">{focusLabel}</span>
+              </label>
+              <span className="ml-auto text-purple-400">
+                {focused ? 'Answers target this sub-heading' : 'Answering the whole section'}
+              </span>
+            </div>
+          )}
+
           {/* Conversation — accordion of Q&As (vertical + horizontal scroll) */}
           <div ref={scrollRef} className="cp-scroll flex-1 overflow-auto px-3 py-3 space-y-2">
             {qaItems.length === 0 && !sending && (
               <div className="text-center text-xs text-gray-400 pt-2 pb-1">
-                Ask the copilot about <span className="font-medium">{sectionName}</span> — it knows your PRD, FRD &amp; stack.
+                Ask the copilot about{' '}
+                <span className="font-medium">{focused ? focusLabel : sectionName}</span> — it knows your PRD, FRD &amp; stack.
               </div>
             )}
             <div className="flex flex-wrap gap-1.5">

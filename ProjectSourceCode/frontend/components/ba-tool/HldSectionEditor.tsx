@@ -41,6 +41,8 @@ export function HldSectionEditor({
   sectionKey,
   sectionName,
   body,
+  activeFieldKey,
+  onFieldFocus,
   onSaved,
   onCancel,
 }: {
@@ -49,6 +51,10 @@ export function HldSectionEditor({
   sectionKey: string;
   sectionName: string;
   body: Record<string, unknown> | undefined;
+  /** Currently focused sub-heading (drives highlight); set via onFieldFocus. */
+  activeFieldKey?: string | null;
+  /** Fired when the cursor enters a field — selects that sub-heading for the Copilot. */
+  onFieldFocus?: (fieldKey: string) => void;
   onSaved: () => void | Promise<void>;
   onCancel: () => void;
 }) {
@@ -149,7 +155,13 @@ export function HldSectionEditor({
       <div className="space-y-4 bg-white border rounded-lg p-4">
         {fields.length === 0 && <p className="text-sm text-gray-400">No fields yet — add one below.</p>}
         {fields.map((f, idx) => (
-          <div key={f.key}>
+          <div
+            key={f.key}
+            onFocusCapture={() => onFieldFocus?.(f.key)}
+            className={`rounded-md transition-colors ${
+              activeFieldKey === f.key ? 'ring-1 ring-purple-300 bg-purple-50/40 -mx-2 px-2 py-1.5' : ''
+            }`}
+          >
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
                 {humanize(f.key)}

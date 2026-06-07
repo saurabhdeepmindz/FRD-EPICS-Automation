@@ -2526,6 +2526,8 @@ class HldChatRequest(BaseModel):
     stack: str = ""
     template: str | None = None
     references: str = ""
+    field_name: str = ""
+    field_content: str = ""
     history: list[ChatTurn] = Field(default_factory=list)
     user_message: str
 
@@ -2645,6 +2647,8 @@ async def hld_chat(
         template=body.template,
         user_message=body.user_message,
         references=body.references,
+        field_name=body.field_name,
+        field_content=body.field_content,
     )
     text, model = await _complete_text(
         provider=body.provider,
@@ -2657,7 +2661,10 @@ async def hld_chat(
         max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
         temperature=settings.HLD_COPILOT_TEMPERATURE,
     )
-    logger.info("HLD chat (%s) %d chars for section=%s", body.provider, len(text), body.section_name)
+    logger.info(
+        "HLD chat (%s) %d chars for section=%s field=%s",
+        body.provider, len(text), body.section_name, body.field_name or "-",
+    )
     return HldChatResponse(markdown=text, model=model)
 
 
@@ -2729,6 +2736,8 @@ async def hld_chat_stream(
         template=body.template,
         user_message=body.user_message,
         references=body.references,
+        field_name=body.field_name,
+        field_content=body.field_content,
     )
     turns = [{"role": t.role, "content": t.content} for t in body.history if t.content.strip()]
 
