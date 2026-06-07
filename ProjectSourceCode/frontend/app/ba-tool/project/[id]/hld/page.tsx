@@ -33,6 +33,7 @@ import {
   HLD_DIAGRAM_LABELS,
   SYSTEM_VIEW_LEGACY_FIELDS,
   TECHNICAL_VIEW_LEGACY_FIELDS,
+  COMPONENT_VIEW_LEGACY_FIELDS,
   type Hld,
   type PrdGap,
   type ProjectStructure,
@@ -45,6 +46,7 @@ import { HldCopilot } from '@/components/ba-tool/HldCopilot';
 import { HldStructureDiagram } from '@/components/ba-tool/HldStructureDiagram';
 import { HldSystemViewPanel } from '@/components/ba-tool/HldSystemViewPanel';
 import { HldTechnicalViewPanel } from '@/components/ba-tool/HldTechnicalViewPanel';
+import { HldComponentViewPanel } from '@/components/ba-tool/HldComponentViewPanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -107,10 +109,11 @@ export default function HldPage() {
     }
   };
 
-  // §3 System View + §4 Layered Technical View now render as band diagrams (not Mermaid).
+  // §3/§4/§5 now render as band diagrams (not Mermaid).
   const diagramKeys = hld
     ? Object.keys(hld.mermaidDiagrams ?? {}).filter(
-        (k) => hld.mermaidDiagrams[k]?.trim() && k !== 'systemView' && k !== 'technicalLayers',
+        (k) =>
+          hld.mermaidDiagrams[k]?.trim() && k !== 'systemView' && k !== 'technicalLayers' && k !== 'componentView',
       )
     : [];
   // Diagrams not tied to a section (those shown inline) — for the Preview nav entry.
@@ -145,6 +148,7 @@ export default function HldPage() {
     const keys = Object.keys(body);
     if (key === 'systemView') return keys.filter((k) => !SYSTEM_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'technicalLayersView') return keys.filter((k) => !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k));
+    if (key === 'componentView') return keys.filter((k) => !COMPONENT_VIEW_LEGACY_FIELDS.includes(k));
     return keys;
   };
 
@@ -427,12 +431,14 @@ export default function HldPage() {
                       if (!sec) return null;
                       const body = hld.sections[sec.key] as Record<string, unknown> | undefined;
                       const diagKey = DIAGRAM_FOR_SECTION[sec.key];
-                      // §3/§4 render as band diagrams (canonical); hide legacy free-text fields + mermaid.
-                      const isBandSection = sec.key === 'systemView' || sec.key === 'technicalLayersView';
+                      // §3/§4/§5 render as band diagrams (canonical); hide legacy free-text fields + mermaid.
+                      const isBandSection =
+                        sec.key === 'systemView' || sec.key === 'technicalLayersView' || sec.key === 'componentView';
                       const bodyEntries = body
                         ? Object.entries(body).filter(([k]) => {
                             if (sec.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
+                            if (sec.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
                             return true;
                           })
                         : [];
@@ -449,6 +455,9 @@ export default function HldPage() {
                           )}
                           {sec.key === 'technicalLayersView' && (
                             <HldTechnicalViewPanel projectId={projectId} hldId={hld.id} />
+                          )}
+                          {sec.key === 'componentView' && (
+                            <HldComponentViewPanel projectId={projectId} hldId={hld.id} onNavigateSection={selectSection} />
                           )}
                           {diagKey && hld.mermaidDiagrams?.[diagKey] && !isBandSection && (
                             <Card>

@@ -450,6 +450,12 @@ export const SYSTEM_VIEW_LEGACY_FIELDS = ['layers', 'phasing', 'externalSystems'
  */
 export const TECHNICAL_VIEW_LEGACY_FIELDS = ['layers', 'description'];
 
+/**
+ * Legacy free-text §5 fields superseded by the Detailed Component View band model.
+ * Hidden in browse/preview so the component view is the single source.
+ */
+export const COMPONENT_VIEW_LEGACY_FIELDS = ['components', 'description'];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
@@ -570,6 +576,56 @@ export async function getHldTechnicalView(projectId: string, hldId: string): Pro
 export async function regenerateHldTechnicalView(projectId: string, hldId: string): Promise<TechnicalViewModel> {
   const { data } = await api.post<ApiEnvelope<TechnicalViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/technical-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── Detailed Component View (§5) — structured model ──────────────────────────
+
+export interface ComponentViewLayer {
+  key: string;
+  name: string;
+  applicable?: boolean;
+  outOfScope?: string;
+  /** Layer-wide pattern banner. */
+  pattern?: string;
+  /** Components shown as boxes, each with descriptive subtext. */
+  components?: { name: string; subtext?: string }[];
+}
+
+export interface ComponentViewService {
+  name: string;
+  /** §5.2 dominant-concern subtitle. */
+  dominantConcern?: string;
+  /** HLD section keys this service is unpacked in (rendered as links). */
+  whereKeys?: string[];
+}
+
+export interface ComponentViewModel {
+  intro?: string;
+  layers: ComponentViewLayer[];
+  /** §5.2 "How modules show up" table rows. */
+  services?: ComponentViewService[];
+  /** §5.1 "Reading the detailed view" conventions. */
+  reading?: string[];
+  gaps?: string[];
+}
+
+/** Build (cached) the Detailed Component View (§5) model for an HLD. */
+export async function getHldComponentView(projectId: string, hldId: string): Promise<ComponentViewModel> {
+  const { data } = await api.get<ApiEnvelope<ComponentViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/component-view`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Component View model (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldComponentView(projectId: string, hldId: string): Promise<ComponentViewModel> {
+  const { data } = await api.post<ApiEnvelope<ComponentViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/component-view/regenerate`,
     {},
     { timeout: 180_000 },
   );

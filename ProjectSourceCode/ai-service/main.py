@@ -47,6 +47,10 @@ from prompts.technical_view_prompts import (
     TECHNICAL_VIEW_SYSTEM_PROMPT,
     build_technical_view_user_message,
 )
+from prompts.component_view_prompts import (
+    COMPONENT_VIEW_SYSTEM_PROMPT,
+    build_component_view_user_message,
+)
 from prompts.system_view_prompts import (
     SYSTEM_VIEW_SYSTEM_PROMPT,
     build_system_view_user_message,
@@ -3008,4 +3012,57 @@ async def hld_technical_view(
         logger.error("Technical view JSON parse failed: %s", exc)
         raise HTTPException(status_code=502, detail="AI returned malformed technical-view JSON") from exc
     logger.info("Technical view generated for '%s' (%d layers)", body.product_name, len(model.get("layers", [])))
+    return model
+
+
+# ─── Detailed Component View — structured model (§5) ──────────────────────────
+
+class ComponentViewRequest(BaseModel):
+    provider: str = "anthropic"
+    product_name: str = ""
+    prd_context: str = ""
+    hld_context: str = ""
+
+
+@app.post("/hld-component-view", tags=["copilot"])
+async def hld_component_view(
+    body: ComponentViewRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """Return the detailed component view (§5) as a structured JSON model (grounded; lists gaps)."""
+    user = build_component_view_user_message(body.product_name, body.prd_context, body.hld_context)
+    provider = body.provider or "anthropic"
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": COMPONENT_VIEW_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=5000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except openai.OpenAIError as exc:
+            logger.error("Component view (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=COMPONENT_VIEW_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=5000,
+            temperature=0.3,
+        )
+    try:
+        model = _parse_ai_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Component view JSON parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI returned malformed component-view JSON") from exc
+    logger.info("Component view generated for '%s' (%d services)", body.product_name, len(model.get("services", [])))
     return model
