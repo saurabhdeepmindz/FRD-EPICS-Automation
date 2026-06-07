@@ -63,6 +63,18 @@ const QUICK_PROMPTS = [
   'Common pitfalls to avoid?',
 ];
 
+// Whole-document quick prompts (used when "Whole document" scope is checked).
+const DOC_QUICK_PROMPTS = [
+  'Review the whole HLD for consistency across sections.',
+  'Any gaps or contradictions between sections?',
+  'End-to-end security review of the architecture?',
+  'Biggest architectural risks in this design?',
+  'Does the design satisfy the PRD/FRD requirements?',
+];
+
+// Reserved thread key for the whole-HLD conversation (no section).
+const WHOLE_DOC_KEY = '__document';
+
 /**
  * HE-11 / HE-12 — HLD Architect Copilot drawer. Per-section conversational AI
  * (model picker + voice + quick prompts), save answers as insights, and
@@ -138,14 +150,19 @@ export function HldCopilot({
   const [copied, setCopied] = useState(false);
   // Sub-heading focus: when a field is selected, scope chat to it (toggleable).
   const [focusField, setFocusField] = useState(false);
+  // Whole-document conversation scope (its own persistent thread).
+  const [docScope, setDocScope] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Default to focusing the sub-heading whenever a new one is selected.
   useEffect(() => {
     setFocusField(!!fieldKey);
   }, [fieldKey]);
-  const focused = focusField && !!fieldKey;
+  // Sub-heading focus only applies in section scope.
+  const focused = !docScope && focusField && !!fieldKey;
   const focusLabel = fieldName ?? fieldKey ?? '';
+  // The active conversation key: whole-document thread or the section thread.
+  const convoKey = docScope ? WHOLE_DOC_KEY : sectionKey;
 
   // Load providers once.
   useEffect(() => {
@@ -169,20 +186,20 @@ export function HldCopilot({
     void listHldLibrary().then(setLibList).catch(() => setLibList([]));
   }, []);
 
-  // Load this section's thread whenever the section changes.
+  // Load the active thread whenever the section — or the whole-document scope — changes.
   useEffect(() => {
     setMessages([]);
     setDraft(null);
     setSelected(new Set());
     setExpanded(new Set());
-    void getHldThread(projectId, hldId, sectionKey)
+    void getHldThread(projectId, hldId, convoKey)
       .then((msgs) => {
         setMessages(msgs);
         const lastA = [...msgs].reverse().find((m) => m.role === 'assistant');
         if (lastA) setExpanded(new Set([lastA.id])); // newest answer open by default
       })
       .catch(() => setMessages([]));
-  }, [projectId, hldId, sectionKey]);
+  }, [projectId, hldId, convoKey]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -198,6 +215,7 @@ export function HldCopilot({
       const template = activeTemplate ? `${activeTemplate.name}\n${activeTemplate.body}` : null;
       const focusName = focused ? focusLabel : null;
       const focusBody = focused ? fieldContent ?? null : null;
+      const scope = docScope ? 'document' : 'section';
       // HD-01 — stream tokens live; fall back to a single non-streaming call on failure.
       setStreamQuestion(msg);
       setStreamText('');
@@ -206,7 +224,7 @@ export function HldCopilot({
         await streamHldCopilotChat(
           projectId,
           hldId,
-          { sectionKey, provider, message: msg, template, fieldName: focusName, fieldContent: focusBody },
+          { sectionKey: convoKey, provider, message: msg, template, fieldName: focusName, fieldContent: focusBody, scope },
           {
             onDelta: (d) => {
               streamed += d;
@@ -216,7 +234,7 @@ export function HldCopilot({
           },
         );
         if (!streamed.trim()) throw new Error('empty stream'); // trigger fallback
-        const msgs = await getHldThread(projectId, hldId, sectionKey);
+        const msgs = await getHldThread(projectId, hldId, convoKey);
         setMessages(msgs);
         const lastA = [...msgs].reverse().find((m) => m.role === 'assistant');
         if (lastA) setExpanded((e) => new Set(e).add(lastA.id));
@@ -224,12 +242,13 @@ export function HldCopilot({
         // Fallback: non-streaming request (keeps the Copilot working if SSE fails).
         try {
           const { userMessage, assistantMessage } = await hldCopilotChat(projectId, hldId, {
-            sectionKey,
+            sectionKey: convoKey,
             provider,
             message: msg,
             template,
             fieldName: focusName,
             fieldContent: focusBody,
+            scope,
           });
           setMessages((m) => [...m, userMessage, assistantMessage]);
           setExpanded((e) => new Set(e).add(assistantMessage.id));
@@ -245,7 +264,7 @@ export function HldCopilot({
         setSending(false);
       }
     },
-    [projectId, hldId, sectionKey, provider, sending, activeTemplate, focused, focusLabel, fieldContent],
+    [projectId, hldId, sectionKey, convoKey, docScope, provider, sending, activeTemplate, focused, focusLabel, fieldContent],
   );
 
   const toggleSave = async (m: HldChatMessage) => {
@@ -414,11 +433,13 @@ export function HldCopilot({
       const res = await saveFromLibrary(projectId, hldId, {
         sourceHldId: libOpenId,
         sectionKeys: [...libSelected],
-        targetSectionKey: sectionKey,
+        targetSectionKey: convoKey,
       });
-      const msgs = await getHldThread(projectId, hldId, sectionKey);
+      const msgs = await getHldThread(projectId, hldId, convoKey);
       setMessages(msgs);
-      setLibMsg(`Saved ${res.saved} section${res.saved === 1 ? '' : 's'} to “${sectionName}” insights.`);
+      setLibMsg(
+        `Saved ${res.saved} section${res.saved === 1 ? '' : 's'} to ${docScope ? 'the whole-document' : `“${sectionName}”`} insights.`,
+      );
       setLibSelected(new Set());
     } catch (err) {
       setError(
@@ -564,14 +585,35 @@ export function HldCopilot({
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 leading-tight">Architect Copilot</p>
           <p className="text-[11px] text-gray-500 truncate">
-            § {sectionName}
-            {focused && <span className="text-purple-600"> › {focusLabel}</span>}
+            {docScope ? (
+              <span className="text-indigo-600 font-medium">Whole HLD document</span>
+            ) : (
+              <>
+                § {sectionName}
+                {focused && <span className="text-purple-600"> › {focusLabel}</span>}
+              </>
+            )}
           </p>
         </div>
         <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-700">
           <X className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Conversation scope — whole document vs current section */}
+      <label className="flex items-center gap-2 px-4 py-2 border-b bg-gray-50/70 text-xs cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={docScope}
+          onChange={(e) => setDocScope(e.target.checked)}
+          className="accent-indigo-600"
+        />
+        <FileText className="h-3.5 w-3.5 text-indigo-500" />
+        <span className="font-medium text-gray-700">Whole document</span>
+        <span className="ml-auto text-[11px] text-gray-400">
+          {docScope ? 'Conversing about the entire HLD' : `Conversing about “${sectionName}”`}
+        </span>
+      </label>
 
       {/* Tabs */}
       <div className="flex border-b text-sm">
@@ -619,7 +661,7 @@ export function HldCopilot({
           </div>
 
           {/* Sub-heading focus bar — scope the chat to the selected field. */}
-          {fieldKey && (
+          {fieldKey && !docScope && (
             <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-purple-50/60 text-[11px]">
               <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-purple-800">
                 <input
@@ -641,11 +683,12 @@ export function HldCopilot({
             {qaItems.length === 0 && !sending && (
               <div className="text-center text-xs text-gray-400 pt-2 pb-1">
                 Ask the copilot about{' '}
-                <span className="font-medium">{focused ? focusLabel : sectionName}</span> — it knows your PRD, FRD &amp; stack.
+                <span className="font-medium">{docScope ? 'the whole HLD' : focused ? focusLabel : sectionName}</span> — it
+                knows your PRD, FRD &amp; stack.
               </div>
             )}
             <div className="flex flex-wrap gap-1.5">
-              {QUICK_PROMPTS.map((q) => (
+              {(docScope ? DOC_QUICK_PROMPTS : QUICK_PROMPTS).map((q) => (
                 <button
                   key={q}
                   onClick={() => send(q)}
@@ -785,10 +828,17 @@ export function HldCopilot({
                   </div>
                 </div>
               ))}
-              <Button className="w-full" size="sm" onClick={synthesize} disabled={merging}>
-                {merging ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
-                Synthesize merged section
-              </Button>
+              {docScope ? (
+                <p className="text-[11px] text-gray-400 text-center pt-1">
+                  Synthesize is available in section mode (it merges into a specific section). Uncheck
+                  <span className="font-medium"> Whole document</span> to synthesize.
+                </p>
+              ) : (
+                <Button className="w-full" size="sm" onClick={synthesize} disabled={merging}>
+                  {merging ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
+                  Synthesize merged section
+                </Button>
+              )}
             </>
           )}
         </div>

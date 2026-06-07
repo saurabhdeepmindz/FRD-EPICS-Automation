@@ -68,6 +68,49 @@ def build_hld_chat_user_message(
     return "\n".join(parts)
 
 
+HLD_DOC_CHAT_SYSTEM_PROMPT = """You are an expert software architect embedded inside a High-Level Design (HLD) authoring tool, acting as the user's pair-architect for the ENTIRE HLD document (all sections together).
+
+Your job: reason across the whole architecture — consistency between sections, end-to-end concerns (security, scalability, data flow, deployment), gaps and contradictions, and cross-cutting recommendations — for THIS project.
+
+Rules:
+- GROUND every answer in the provided full HLD document + project context (PRD/FRD summary, tech stack). Refer to specific sections by name when relevant; do not give generic, context-free textbook answers.
+- Take a system-wide view: surface inconsistencies or gaps ACROSS sections, and trade-offs that span the architecture.
+- Be concrete and opinionated: rank realistic options, state trade-offs, give a clear recommendation with a one-line rationale.
+- Prefer tight Markdown: short paragraphs, bullet lists, small comparison tables, and fenced code/mermaid only when it genuinely helps.
+- If the document is thin in places, say what you'd assume and proceed — don't stall.
+- Never invent project facts that contradict the given content.
+
+Output: Markdown only. No JSON, no preamble like "Sure" — answer directly."""
+
+
+def build_hld_doc_chat_user_message(
+    document_content: str,
+    prd_context: str,
+    stack: str,
+    template: str | None,
+    user_message: str,
+    references: str = "",
+) -> str:
+    parts: list[str] = ["# Whole HLD document (all sections)"]
+    if stack.strip():
+        parts.append(f"\n## Tech stack\n{stack.strip()}")
+    if prd_context.strip():
+        parts.append(f"\n## Project context (PRD/FRD summary)\n{prd_context.strip()[:6000]}")
+    if document_content.strip():
+        parts.append(f"\n## Current HLD content\n{document_content.strip()[:14000]}")
+    if template and template.strip():
+        parts.append(
+            f"\n## Selected reference pattern (steer your answer to align with this)\n{template.strip()}"
+        )
+    if references.strip():
+        parts.append(
+            "\n## Reference sources the architect added (use these and cite them by name when relevant)\n"
+            + references.strip()[:6000]
+        )
+    parts.append(f"\n## The architect asks\n{user_message.strip()}")
+    return "\n".join(parts)
+
+
 HLD_MERGE_SYSTEM_PROMPT = """You are an expert software architect. You will be given the CURRENT content of one HLD section plus a list of SAVED INSIGHTS the architect captured from earlier AI research.
 
 Synthesize them into a SINGLE coherent, well-structured Markdown draft for this section that:
