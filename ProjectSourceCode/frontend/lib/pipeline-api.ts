@@ -619,7 +619,14 @@ export async function getHldInsights(
 export async function hldCopilotChat(
   projectId: string,
   hldId: string,
-  body: { sectionKey: string; provider: string; message: string; template?: string | null },
+  body: {
+    sectionKey: string;
+    provider: string;
+    message: string;
+    template?: string | null;
+    fieldName?: string | null;
+    fieldContent?: string | null;
+  },
 ): Promise<{ userMessage: HldChatMessage; assistantMessage: HldChatMessage }> {
   const { data } = await api.post<ApiEnvelope<{ userMessage: HldChatMessage; assistantMessage: HldChatMessage }>>(
     `/ba/projects/${projectId}/hld/${hldId}/copilot/chat`,
@@ -633,7 +640,14 @@ export async function hldCopilotChat(
 export async function streamHldCopilotChat(
   projectId: string,
   hldId: string,
-  body: { sectionKey: string; provider: string; message: string; template?: string | null },
+  body: {
+    sectionKey: string;
+    provider: string;
+    message: string;
+    template?: string | null;
+    fieldName?: string | null;
+    fieldContent?: string | null;
+  },
   handlers: {
     onDelta?: (text: string) => void;
     onModel?: (model: string) => void;
