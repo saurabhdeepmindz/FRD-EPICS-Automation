@@ -481,6 +481,40 @@ export async function suggestHldField(
   return data.data;
 }
 
+// ─── 50,000-ft System View — structured band model (Sprint v11) ──────────────
+
+export interface SystemViewModel {
+  actors: string[];
+  channels: string[];
+  coreInfra: string[];
+  functionalModules: { name: string; subtitle?: string; phase?: number; thirdParty?: boolean }[];
+  rbac?: { title: string; subtitle?: string };
+  integrationModules: { name: string; subtitle?: string }[];
+  externalGroups: { title: string; items: string[] }[];
+  aiLayer?: { capabilities?: string[]; rag?: { title: string; subtitle?: string }; llmProviders?: string[] };
+  gatewayNote?: string;
+  gaps?: string[];
+}
+
+/** Build (cached) the 50,000-ft System View band model for an HLD. */
+export async function getHldSystemView(projectId: string, hldId: string): Promise<SystemViewModel> {
+  const { data } = await api.get<ApiEnvelope<SystemViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/system-view`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the System View band model (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldSystemView(projectId: string, hldId: string): Promise<SystemViewModel> {
+  const { data } = await api.post<ApiEnvelope<SystemViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/system-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
 /** HE-06 — canonical HLD markdown for the latest version (preview/download). */
 export async function getHldMarkdown(
   projectId: string,

@@ -40,6 +40,7 @@ import { HldPreview } from '@/components/ba-tool/HldPreview';
 import { HldSectionEditor } from '@/components/ba-tool/HldSectionEditor';
 import { HldCopilot } from '@/components/ba-tool/HldCopilot';
 import { HldStructureDiagram } from '@/components/ba-tool/HldStructureDiagram';
+import { HldSystemViewPanel } from '@/components/ba-tool/HldSystemViewPanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -98,7 +99,10 @@ export default function HldPage() {
     }
   };
 
-  const diagramKeys = hld ? Object.keys(hld.mermaidDiagrams ?? {}).filter((k) => hld.mermaidDiagrams[k]?.trim()) : [];
+  // 50k-ft System View now renders as the layered band diagram (not Mermaid).
+  const diagramKeys = hld
+    ? Object.keys(hld.mermaidDiagrams ?? {}).filter((k) => hld.mermaidDiagrams[k]?.trim() && k !== 'systemView')
+    : [];
   // Diagrams not tied to a section (those shown inline) — for the Preview nav entry.
   const mappedDiagramSet = new Set(HLD_SECTIONS.map((s) => DIAGRAM_FOR_SECTION[s.key]).filter(Boolean));
   const unmappedDiagramKeys = diagramKeys.filter((k) => !mappedDiagramSet.has(k));
@@ -345,7 +349,8 @@ export default function HldPage() {
                           {sec.key === 'projectStructure' && structure && (
                             <HldStructureDiagram structure={structure} palette={palette} />
                           )}
-                          {diagKey && hld.mermaidDiagrams?.[diagKey] && (
+                          {sec.key === 'systemView' && <HldSystemViewPanel projectId={projectId} hldId={hld.id} />}
+                          {diagKey && hld.mermaidDiagrams?.[diagKey] && sec.key !== 'systemView' && (
                             <Card>
                               <CardContent className="p-4">
                                 <p className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
