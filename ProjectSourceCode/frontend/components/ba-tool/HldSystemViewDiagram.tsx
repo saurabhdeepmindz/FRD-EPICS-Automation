@@ -51,6 +51,11 @@ function Box({ tone, title, sub, badge, wide }: { tone: Tone; title: string; sub
 function Caption({ children }: { children: React.ReactNode }) {
   return <p className="text-[12px] mb-1.5" style={{ color: T.caption }}>{children}</p>;
 }
+/** §3.1-style "what it represents" line shown under a band heading. */
+function LayerNote({ children }: { children?: React.ReactNode }) {
+  if (!children) return null;
+  return <p className="text-[11px] italic leading-snug mb-1.5 -mt-1" style={{ color: T.caption }}>{children}</p>;
+}
 function Connector() {
   return <div className="mx-auto my-1 h-4 w-px border-l border-dashed" style={{ borderColor: T.connector }} />;
 }
@@ -83,6 +88,7 @@ export function HldSystemViewDiagram({
 
         {/* 1 — Access layer (channels) + actors */}
         <Caption>Access layer</Caption>
+        <LayerNote>{m.layerNotes?.access}</LayerNote>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {(m.channels ?? []).map((c, i) => (
             <Box key={i} tone={T.access} title={c} />
@@ -103,6 +109,7 @@ export function HldSystemViewDiagram({
 
         {/* 2 — Core infrastructure */}
         <Caption>Core infrastructure</Caption>
+        <LayerNote>{m.layerNotes?.coreInfra}</LayerNote>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {(m.coreInfra ?? []).map((c, i) => (
             <Box key={i} tone={T.infra} title={c} />
@@ -113,8 +120,9 @@ export function HldSystemViewDiagram({
 
         {/* 3 — Core functional modules + RBAC */}
         <div className="rounded-xl border p-3" style={{ borderColor: T.connector }}>
-          <p className="text-[13px] font-medium mb-2" style={{ color: T.bandTitle }}>Core functional modules</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <p className="text-[13px] font-medium" style={{ color: T.bandTitle }}>Core functional modules</p>
+          <LayerNote>{m.layerNotes?.functionalModules}</LayerNote>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
             {(m.functionalModules ?? []).map((f, i) => (
               <Box
                 key={i}
@@ -136,6 +144,7 @@ export function HldSystemViewDiagram({
 
         {/* 4 — Integration layer */}
         <Caption>Integration layer — 3rd party module integrations</Caption>
+        <LayerNote>{m.layerNotes?.integration}</LayerNote>
         {(m.integrationModules ?? []).length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {m.integrationModules.map((f, i) => (
@@ -154,6 +163,7 @@ export function HldSystemViewDiagram({
             External / 3rd party systems{' '}
             {m.gatewayNote && <span className="text-[11px] font-normal" style={{ color: T.caption }}>— {m.gatewayNote}</span>}
           </p>
+          <LayerNote>{m.layerNotes?.external}</LayerNote>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
             {(m.externalGroups ?? []).map((g, i) => (
               <div key={i} className="rounded-md border px-2.5 py-2" style={{ background: T.ext.fill, borderColor: T.ext.border }}>
@@ -171,6 +181,7 @@ export function HldSystemViewDiagram({
           <p className="text-[13px] font-medium" style={{ color: T.bandTitle }}>
             AI layer <span className="text-[11px] font-normal" style={{ color: T.caption }}>— conversational, RAG, multi-LLM</span>
           </p>
+          <LayerNote>{m.layerNotes?.ai}</LayerNote>
           {hasAi(m) ? (
             <div className="mt-2 space-y-2">
               {(m.aiLayer?.capabilities ?? []).length > 0 && (
