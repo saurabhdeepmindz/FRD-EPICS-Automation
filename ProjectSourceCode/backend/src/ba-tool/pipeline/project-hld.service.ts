@@ -156,6 +156,87 @@ export class HldService {
     };
   }
 
+  /**
+   * 50,000-ft System View (Sprint v11) — structured 6-band model derived from the
+   * project's PRD/FRD/HLD via the AI service, cached on the HLD's metadata. Pass
+   * force=true to regenerate.
+   */
+  async getSystemView(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.systemView) return meta.systemView as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.systemViewHldContext(hld.sections);
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-system-view`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`System view generation failed: ${detail}`);
+      throw new BadRequestException(`System view generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, systemView: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
+  private systemViewPrdContext(sections?: unknown): string {
+    if (!sections) return '';
+    const s = sections as Record<string, unknown>;
+    const picks: [string, string][] = [
+      ['5', 'Actors / User Types'],
+      ['6', 'Functional Requirements (FRD)'],
+      ['7', 'Integration Requirements'],
+      ['13', 'UI/UX Requirements'],
+      ['11', 'Technology'],
+      ['3', 'Out of Scope'],
+      ['20', 'High-Level Timelines'],
+    ];
+    const parts: string[] = [];
+    for (const [k, label] of picks) {
+      if (s[k]) parts.push(`## ${label}\n${JSON.stringify(flattenValue(s[k]))}`);
+    }
+    return parts.join('\n\n').slice(0, 9000);
+  }
+
+  private systemViewHldContext(sections: unknown): string {
+    const s = (sections ?? {}) as Record<string, unknown>;
+    const picks = ['systemView', 'integrations', 'aiLayer', 'multiTenancy', 'technologyStack', 'componentView'];
+    const parts: string[] = [];
+    for (const k of picks) {
+      if (s[k]) parts.push(`## ${HLD_SECTION_NAMES[k]}\n${JSON.stringify(flattenValue(s[k]))}`);
+    }
+    return parts.join('\n\n').slice(0, 5000);
+  }
+
   /** HE-05 — canonical Markdown for the latest HLD (in-browser download, mirrors PRD). */
   async getMarkdown(projectId: string): Promise<{ version: number; markdown: string } | null> {
     const latest = await this.getLatest(projectId);

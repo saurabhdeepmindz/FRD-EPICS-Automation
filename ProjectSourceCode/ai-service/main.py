@@ -41,6 +41,10 @@ from prompts.reference_prompts import (
     REFERENCE_SUMMARY_SYSTEM_PROMPT,
     build_reference_summary_user_message,
 )
+from prompts.system_view_prompts import (
+    SYSTEM_VIEW_SYSTEM_PROMPT,
+    build_system_view_user_message,
+)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -2875,3 +2879,57 @@ async def embed(
         logger.error("Embedding error: %s", exc)
         raise HTTPException(status_code=502, detail="AI embedding service unavailable") from exc
     return EmbedResponse(embeddings=[d.embedding for d in resp.data], model=settings.OPENAI_EMBED_MODEL)
+
+
+# ─── 50,000-ft System View — structured band model (Sprint v11) ───────────────
+
+class SystemViewRequest(BaseModel):
+    provider: str = "anthropic"
+    product_name: str = ""
+    prd_context: str = ""
+    hld_context: str = ""
+
+
+@app.post("/hld-system-view", tags=["copilot"])
+async def hld_system_view(
+    body: SystemViewRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """Return the 6-band System View as a structured JSON model (grounded; lists gaps)."""
+    user = build_system_view_user_message(body.product_name, body.prd_context, body.hld_context)
+    provider = body.provider or "anthropic"
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_VIEW_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=3000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except openai.OpenAIError as exc:
+            logger.error("System view (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        # anthropic (default) — _claude_complete appends a JSON-only reminder
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=SYSTEM_VIEW_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=3000,
+            temperature=0.3,
+        )
+    try:
+        model = _parse_ai_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("System view JSON parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI returned malformed system-view JSON") from exc
+    logger.info("System view generated for '%s' (%d modules)", body.product_name, len(model.get("functionalModules", [])))
+    return model

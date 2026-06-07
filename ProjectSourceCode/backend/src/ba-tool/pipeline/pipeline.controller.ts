@@ -550,6 +550,19 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  // v11 — 50,000-ft System View structured band model (cached on the HLD)
+  @Get('hld/:hldId/system-view')
+  async getHldSystemView(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getSystemView(hldId);
+    return { success: true, data };
+  }
+
+  @Post('hld/:hldId/system-view/regenerate')
+  async regenerateHldSystemView(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getSystemView(hldId, true);
+    return { success: true, data };
+  }
+
   @Post('hld/generate')
   async generateHld(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.hld.generate(id);

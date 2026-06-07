@@ -6,6 +6,7 @@ import { Network } from 'lucide-react';
 import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
 import { HldMermaid } from './HldMermaid';
 import { HldStructureDiagram } from './HldStructureDiagram';
+import { HldSystemViewPanel } from './HldSystemViewPanel';
 import { Markdown } from './Markdown';
 import { DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -52,8 +53,15 @@ export function HldPreview({
                 {s.name}
               </h3>
 
+              {/* 50k-ft System View → layered band diagram (replaces Mermaid) */}
+              {s.key === 'systemView' && (
+                <div className="mb-3">
+                  <HldSystemViewPanel projectId={hld.projectId} hldId={hld.id} />
+                </div>
+              )}
+
               {/* Inline architecture diagram for this section (v9 MM parity) */}
-              {diagram && (
+              {diagram && s.key !== 'systemView' && (
                 <div className="mb-3 border rounded-lg p-3">
                   <p className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5">
                     <Network className="h-3.5 w-3.5" /> {HLD_DIAGRAM_LABELS[diagKey] ?? 'Diagram'}
