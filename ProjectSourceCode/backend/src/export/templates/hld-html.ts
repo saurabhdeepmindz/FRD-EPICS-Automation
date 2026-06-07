@@ -45,7 +45,12 @@ export interface HldHtmlData {
   createdAt: string | Date;
   sections: Record<string, unknown>;
   mermaidDiagrams: Record<string, string>;
+  /** 50k-ft band model — canonical §3 representation (replaces legacy layer text). */
+  systemView?: unknown;
 }
+
+/** Legacy free-text §3 fields superseded by the band model; hidden when it exists. */
+const SYSTEM_VIEW_LEGACY_FIELDS = new Set(['layers', 'phasing', 'externalSystems']);
 
 // ─── Pastel diagram palette (mirrors the Design System / frontend defaults) ───
 
@@ -135,14 +140,89 @@ function renderValue(value: unknown): string {
     .join('')}</dl>`;
 }
 
-function renderSectionBody(body: unknown): string {
+function renderSectionBody(body: unknown, omitKeys?: Set<string>): string {
   if (body == null) return '<p class="empty">Not generated.</p>';
   if (typeof body !== 'object') return `<p>${renderValue(body)}</p>`;
-  const entries = Object.entries(body as Record<string, unknown>);
-  if (!entries.length) return '<p class="empty">Empty.</p>';
+  const entries = Object.entries(body as Record<string, unknown>).filter(([k]) => !omitKeys?.has(k));
+  if (!entries.length) return '';
   return `<dl class="fields">${entries
     .map(([k, v]) => `<div class="field"><dt>${esc(humanizeKey(k))}</dt><dd>${renderValue(v)}</dd></div>`)
     .join('')}</dl>`;
+}
+
+// ─── 50k-ft System View band model → HTML (canonical §3 representation) ───────
+
+type SvBand = { name?: string; subtitle?: string; phase?: number; thirdParty?: boolean };
+
+function svList(items?: string[]): string {
+  return items?.length
+    ? `<ul class="vlist">${items.map((x) => `<li>${esc(String(x))}</li>`).join('')}</ul>`
+    : '<span class="empty">—</span>';
+}
+
+function svModules(mods?: SvBand[]): string {
+  if (!mods?.length) return '<span class="empty">—</span>';
+  return `<ul class="vlist">${mods
+    .map((m) => {
+      const tags = [
+        m.thirdParty ? '3rd-party' : '',
+        m.phase && m.phase > 1 ? `Phase ${m.phase}` : '',
+      ]
+        .filter(Boolean)
+        .map((t) => ` <em>[${esc(t)}]</em>`)
+        .join('');
+      const sub = m.subtitle ? ` — ${esc(m.subtitle)}` : '';
+      return `<li>${esc(m.name ?? '')}${sub}${tags}</li>`;
+    })
+    .join('')}</ul>`;
+}
+
+function renderSystemViewBands(model: Record<string, unknown>): string {
+  const m = model as {
+    actors?: string[]; channels?: string[]; coreInfra?: string[];
+    functionalModules?: SvBand[]; rbac?: { title?: string; subtitle?: string };
+    integrationModules?: SvBand[]; externalGroups?: { title?: string; items?: string[] }[];
+    aiLayer?: { capabilities?: string[]; rag?: { title?: string; subtitle?: string }; llmProviders?: string[] };
+    layerNotes?: Record<string, string>; gatewayNote?: string; gaps?: string[];
+  };
+  const ln = m.layerNotes ?? {};
+  const note = (t?: string) => (t ? `<p class="sv-note"><em>${esc(t)}</em></p>` : '');
+  const band = (title: string, noteText: string | undefined, inner: string) =>
+    `<div class="sv-band"><h3 class="sv-band-title">${esc(title)}</h3>${note(noteText)}${inner}</div>`;
+
+  const actorsLine = m.actors?.length
+    ? `<p class="sv-sub"><strong>Actors:</strong> ${m.actors.map((a) => esc(a)).join(' · ')}</p>`
+    : '';
+  const rbac = m.rbac?.title
+    ? `<p class="sv-sub"><strong>${esc(m.rbac.title)}</strong>${m.rbac.subtitle ? ` — ${esc(m.rbac.subtitle)}` : ''}</p>`
+    : '';
+  const external = m.externalGroups?.length
+    ? `<dl class="vobj">${m.externalGroups
+        .map((g) => `<dt>${esc(g.title ?? '')}</dt><dd>${esc((g.items ?? []).join(' · '))}</dd>`)
+        .join('')}</dl>`
+    : '<span class="empty">—</span>';
+  const hasAi =
+    !!m.aiLayer &&
+    ((m.aiLayer.capabilities?.length ?? 0) > 0 || !!m.aiLayer.rag?.title || (m.aiLayer.llmProviders?.length ?? 0) > 0);
+  const ai = hasAi
+    ? `${m.aiLayer?.capabilities?.length ? `<p class="sv-sub"><strong>Capabilities:</strong> ${m.aiLayer.capabilities.map((c) => esc(c)).join(' · ')}</p>` : ''}
+       ${m.aiLayer?.rag?.title ? `<p class="sv-sub"><strong>RAG:</strong> ${esc(m.aiLayer.rag.title)}${m.aiLayer.rag.subtitle ? ` — ${esc(m.aiLayer.rag.subtitle)}` : ''}</p>` : ''}
+       ${m.aiLayer?.llmProviders?.length ? `<p class="sv-sub"><strong>LLM providers:</strong> ${m.aiLayer.llmProviders.map((p) => esc(p)).join(' · ')}</p>` : ''}`
+    : '<span class="empty">No AI layer in scope.</span>';
+
+  const gaps = m.gaps?.length
+    ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
+    : '';
+
+  return `<div class="sv-bands">
+    ${band('1. Access layer', ln.access, `${svList(m.channels)}${actorsLine}`)}
+    ${band('2. Core infrastructure', ln.coreInfra, svList(m.coreInfra))}
+    ${band('3. Core functional modules', ln.functionalModules, `${svModules(m.functionalModules)}${rbac}`)}
+    ${band('4. Integration layer — 3rd party module integrations', ln.integration, svModules(m.integrationModules))}
+    ${band(`5. External / 3rd party systems${m.gatewayNote ? ` (${esc(m.gatewayNote)})` : ''}`, ln.external, external)}
+    ${band('6. AI layer — conversational, RAG, multi-LLM', ln.ai, ai)}
+    ${gaps}
+  </div>`;
 }
 
 // ─── Main export ───────────────────────────────────────────────────────────
@@ -159,9 +239,17 @@ export function generateHldHtml(data: HldHtmlData): string {
 
   const sectionBlocks = HLD_SECTION_ORDER.map((key, i) => {
     const body = data.sections?.[key];
+    let inner: string;
+    if (key === 'systemView' && data.systemView && typeof data.systemView === 'object') {
+      // Band model is the canonical §3 view; legacy free-text layer fields are dropped.
+      const rest = body && typeof body === 'object' ? renderSectionBody(body, SYSTEM_VIEW_LEGACY_FIELDS) : '';
+      inner = renderSystemViewBands(data.systemView as Record<string, unknown>) + rest;
+    } else {
+      inner = renderSectionBody(body);
+    }
     return `<div class="section" id="section-${key}">
       <h2 class="section-heading">${i + 1}. ${esc(HLD_SECTION_NAMES[key])}</h2>
-      ${renderSectionBody(body)}
+      ${inner}
     </div>`;
   }).join('\n');
 
@@ -226,6 +314,12 @@ export function generateHldHtml(data: HldHtmlData): string {
     .vlist { margin:2px 0; padding-left:20px; }
     .vlist > li { font-size:12px; margin:2px 0; }
     .empty { color:#94a3b8; font-style:italic; font-size:12px; }
+    .sv-bands { margin:0; }
+    .sv-band { margin:0 0 12px 0; padding:10px 12px; border:1px solid #e2e8f0; border-radius:6px; background:#f8fafc; }
+    .sv-band-title { font-size:13px; font-weight:700; color:#1e293b; margin:0 0 4px 0; }
+    .sv-note { margin:0 0 6px 0; font-size:12px; color:#475569; }
+    .sv-sub { margin:4px 0 0 0; font-size:12px; color:#334155; }
+    .sv-gaps { margin:8px 0 0 0; padding:10px 12px; border:1px solid #fde68a; border-radius:6px; background:#fffbeb; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }
