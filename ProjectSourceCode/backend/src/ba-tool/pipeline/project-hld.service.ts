@@ -153,6 +153,8 @@ export class HldService {
       createdAt: hld.createdAt,
       sections: (hld.sections ?? {}) as Record<string, unknown>,
       mermaidDiagrams: (hld.mermaidDiagrams ?? {}) as Record<string, string>,
+      // 50k-ft band model (canonical §3 representation) for export rendering.
+      systemView: ((hld.metadata ?? {}) as Record<string, unknown>).systemView ?? null,
     };
   }
 
@@ -247,6 +249,7 @@ export class HldService {
         latest.version,
         (latest.sections ?? {}) as Record<string, unknown>,
         (latest.mermaidDiagrams ?? {}) as Record<string, string>,
+        ((latest.metadata ?? {}) as Record<string, unknown>).systemView,
       ),
     };
   }
@@ -356,15 +359,96 @@ export class HldService {
   }
 
   /** Render the 17-section HLD + Mermaid diagrams to canonical Markdown. */
+  /** Strip legacy free-text §3 layer fields now superseded by the band model. */
+  private withoutLegacySystemViewFields(body: unknown): Record<string, unknown> | null {
+    if (!body || typeof body !== 'object') return null;
+    const legacy = new Set(['layers', 'phasing', 'externalSystems']);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+      if (!legacy.has(k)) out[k] = v;
+    }
+    return out;
+  }
+
+  /** Render the 50k-ft band model as readable Markdown (canonical §3 representation). */
+  private systemViewBandsMarkdown(model: Record<string, unknown>): string {
+    const m = model as {
+      actors?: string[]; channels?: string[]; coreInfra?: string[];
+      functionalModules?: { name?: string; subtitle?: string; phase?: number; thirdParty?: boolean }[];
+      rbac?: { title?: string; subtitle?: string };
+      integrationModules?: { name?: string; subtitle?: string }[];
+      externalGroups?: { title?: string; items?: string[] }[];
+      aiLayer?: { capabilities?: string[]; rag?: { title?: string; subtitle?: string }; llmProviders?: string[] };
+      layerNotes?: Record<string, string>; gatewayNote?: string; gaps?: string[];
+    };
+    const ln = m.layerNotes ?? {};
+    const out: string[] = [];
+    const band = (title: string, note?: string) => {
+      out.push(`### ${title}`);
+      if (note) out.push(`_${note}_`, '');
+    };
+    const bullets = (items?: string[]) => (items ?? []).forEach((x) => out.push(`- ${x}`));
+    const mods = (list?: { name?: string; subtitle?: string; phase?: number; thirdParty?: boolean }[]) =>
+      (list ?? []).forEach((x) => {
+        const tags = [x.thirdParty ? '3rd-party' : '', x.phase && x.phase > 1 ? `Phase ${x.phase}` : '']
+          .filter(Boolean)
+          .map((t) => ` _[${t}]_`)
+          .join('');
+        out.push(`- ${x.name ?? ''}${x.subtitle ? ` — ${x.subtitle}` : ''}${tags}`);
+      });
+
+    band('1. Access layer', ln.access);
+    bullets(m.channels);
+    if (m.actors?.length) out.push(`- **Actors:** ${m.actors.join(' · ')}`);
+    out.push('');
+    band('2. Core infrastructure', ln.coreInfra);
+    bullets(m.coreInfra);
+    out.push('');
+    band('3. Core functional modules', ln.functionalModules);
+    mods(m.functionalModules);
+    if (m.rbac?.title) out.push(`- **${m.rbac.title}**${m.rbac.subtitle ? ` — ${m.rbac.subtitle}` : ''}`);
+    out.push('');
+    band('4. Integration layer — 3rd party module integrations', ln.integration);
+    mods(m.integrationModules);
+    out.push('');
+    band(`5. External / 3rd party systems${m.gatewayNote ? ` (${m.gatewayNote})` : ''}`, ln.external);
+    (m.externalGroups ?? []).forEach((g) => out.push(`- **${g.title ?? ''}:** ${(g.items ?? []).join(' · ')}`));
+    out.push('');
+    band('6. AI layer — conversational, RAG, multi-LLM', ln.ai);
+    const hasAi = (m.aiLayer?.capabilities?.length ?? 0) > 0 || !!m.aiLayer?.rag?.title || (m.aiLayer?.llmProviders?.length ?? 0) > 0;
+    if (hasAi) {
+      if (m.aiLayer?.capabilities?.length) out.push(`- **Capabilities:** ${m.aiLayer.capabilities.join(' · ')}`);
+      if (m.aiLayer?.rag?.title) out.push(`- **RAG:** ${m.aiLayer.rag.title}${m.aiLayer.rag.subtitle ? ` — ${m.aiLayer.rag.subtitle}` : ''}`);
+      if (m.aiLayer?.llmProviders?.length) out.push(`- **LLM providers:** ${m.aiLayer.llmProviders.join(' · ')}`);
+    } else {
+      out.push('- _No AI layer in scope._');
+    }
+    if (m.gaps?.length) {
+      out.push('', '### Gaps & assumptions');
+      bullets(m.gaps);
+    }
+    return out.join('\n');
+  }
+
   private renderMarkdown(
     version: number,
     sections: Record<string, unknown>,
     diagrams: Record<string, string>,
+    systemView?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
       lines.push(`## ${i + 1}. ${HLD_SECTION_NAMES[key]}`, ``);
       const body = sections[key];
+      // §3 — render the canonical band model; drop legacy free-text layer fields.
+      if (key === 'systemView' && systemView && typeof systemView === 'object') {
+        lines.push(this.systemViewBandsMarkdown(systemView as Record<string, unknown>), '');
+        const rest = this.withoutLegacySystemViewFields(body);
+        if (rest && Object.keys(rest).length) {
+          lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
+        }
+        return;
+      }
       if (body == null) {
         lines.push('_Not generated._', '');
         return;

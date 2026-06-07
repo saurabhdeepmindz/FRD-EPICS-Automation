@@ -3,7 +3,7 @@
 import { type ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Network } from 'lucide-react';
-import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
+import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
 import { HldMermaid } from './HldMermaid';
 import { HldStructureDiagram } from './HldStructureDiagram';
 import { HldSystemViewPanel } from './HldSystemViewPanel';
@@ -44,6 +44,12 @@ export function HldPreview({
 
         {HLD_SECTIONS.map((s, i) => {
           const body = hld.sections?.[s.key] as Record<string, unknown> | undefined;
+          // §3 — band diagram is canonical; hide legacy free-text layer fields.
+          const bodyEntries = body
+            ? Object.entries(body).filter(
+                ([k]) => s.key !== 'systemView' || !SYSTEM_VIEW_LEGACY_FIELDS.includes(k),
+              )
+            : [];
           const diagKey = DIAGRAM_FOR_SECTION[s.key];
           const diagram = diagKey ? hld.mermaidDiagrams?.[diagKey] : undefined;
           return (
@@ -79,9 +85,11 @@ export function HldPreview({
 
               {!body || !Object.keys(body).length ? (
                 <p className="text-sm text-gray-400 pt-1">Not generated.</p>
+              ) : bodyEntries.length === 0 ? (
+                s.key === 'systemView' ? null : <p className="text-sm text-gray-400 pt-1">—</p>
               ) : (
                 <dl className="pt-1 space-y-3">
-                  {Object.entries(body).map(([k, v]) => (
+                  {bodyEntries.map(([k, v]) => (
                     <div key={k}>
                       <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{humanize(k)}</dt>
                       <dd className="text-sm text-gray-700 mt-0.5">{renderValue(v)}</dd>

@@ -31,6 +31,7 @@ import {
   hldDocxUrl,
   HLD_SECTIONS,
   HLD_DIAGRAM_LABELS,
+  SYSTEM_VIEW_LEGACY_FIELDS,
   type Hld,
   type PrdGap,
   type ProjectStructure,
@@ -416,6 +417,12 @@ export default function HldPage() {
                       if (!sec) return null;
                       const body = hld.sections[sec.key] as Record<string, unknown> | undefined;
                       const diagKey = DIAGRAM_FOR_SECTION[sec.key];
+                      // §3 — band diagram is canonical; hide legacy free-text layer fields.
+                      const bodyEntries = body
+                        ? Object.entries(body).filter(
+                            ([k]) => sec.key !== 'systemView' || !SYSTEM_VIEW_LEGACY_FIELDS.includes(k),
+                          )
+                        : [];
                       return (
                         <section className="space-y-3">
                           <h2 className="font-semibold text-gray-900 flex items-baseline gap-2">
@@ -435,24 +442,28 @@ export default function HldPage() {
                               </CardContent>
                             </Card>
                           )}
-                          <Card>
-                            <CardContent className="p-4">
-                              {!body ? (
-                                <p className="text-sm text-gray-400">Not generated.</p>
-                              ) : (
-                                <dl className="space-y-3">
-                                  {Object.entries(body).map(([k, v]) => (
-                                    <div key={k}>
-                                      <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                                        {k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()}
-                                      </dt>
-                                      <dd className="text-sm text-gray-700 mt-0.5">{renderValue(v)}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              )}
-                            </CardContent>
-                          </Card>
+                          {(bodyEntries.length > 0 || sec.key !== 'systemView') && (
+                            <Card>
+                              <CardContent className="p-4">
+                                {!body ? (
+                                  <p className="text-sm text-gray-400">Not generated.</p>
+                                ) : bodyEntries.length === 0 ? (
+                                  <p className="text-sm text-gray-400">Shown in the diagram above.</p>
+                                ) : (
+                                  <dl className="space-y-3">
+                                    {bodyEntries.map(([k, v]) => (
+                                      <div key={k}>
+                                        <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                          {k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()}
+                                        </dt>
+                                        <dd className="text-sm text-gray-700 mt-0.5">{renderValue(v)}</dd>
+                                      </div>
+                                    ))}
+                                  </dl>
+                                )}
+                              </CardContent>
+                            </Card>
+                          )}
                           <div className="flex justify-end">
                             <Button variant="outline" size="sm" onClick={() => setView('edit')}>
                               <Pencil className="h-4 w-4 mr-1" /> Edit this section

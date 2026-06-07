@@ -438,6 +438,12 @@ export const HLD_SECTIONS: { key: string; name: string }[] = [
   { key: 'projectStructure', name: 'Project Structure' },
 ];
 
+/**
+ * Legacy free-text §3 fields superseded by the 50k-ft band diagram (the canonical
+ * representation). Hidden in browse/preview so the layers always match the image.
+ */
+export const SYSTEM_VIEW_LEGACY_FIELDS = ['layers', 'phasing', 'externalSystems'];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
