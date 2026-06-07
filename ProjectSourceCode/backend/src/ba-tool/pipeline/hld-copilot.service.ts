@@ -220,6 +220,7 @@ export class HldCopilotService {
       template?: string | null;
       fieldName?: string | null;
       fieldContent?: string | null;
+      scope?: 'section' | 'document';
     },
   ) {
     const message = (opts.message ?? '').trim();
@@ -246,7 +247,7 @@ export class HldCopilotService {
     });
 
     const { prdContext, stack } = await this.buildContext(hld.projectId, hld.sections as Record<string, unknown>);
-    const sectionContent = this.sectionText((hld.sections as Record<string, unknown>)[sectionKey]);
+    const sc = this.scopeFields(hld, sectionKey, opts.scope);
     const references = await this.buildReferencesContext(hldId, sectionKey, message);
 
     let markdown: string;
@@ -256,8 +257,10 @@ export class HldCopilotService {
         `${this.aiServiceUrl}/hld-chat`,
         {
           provider: opts.provider ?? 'anthropic',
-          section_name: HLD_SECTION_NAMES[sectionKey] ?? sectionKey,
-          section_content: sectionContent,
+          section_name: sc.sectionName,
+          section_content: sc.sectionContent,
+          scope: sc.scope,
+          document_content: sc.documentContent,
           prd_context: prdContext,
           stack,
           template: opts.template ?? null,
@@ -300,6 +303,7 @@ export class HldCopilotService {
       template?: string | null;
       fieldName?: string | null;
       fieldContent?: string | null;
+      scope?: 'section' | 'document';
     },
   ): Promise<{ threadId: string; userMessage: { id: string }; payload: Record<string, unknown> }> {
     const message = (opts.message ?? '').trim();
@@ -322,7 +326,7 @@ export class HldCopilotService {
     });
 
     const { prdContext, stack } = await this.buildContext(hld.projectId, hld.sections as Record<string, unknown>);
-    const sectionContent = this.sectionText((hld.sections as Record<string, unknown>)[sectionKey]);
+    const sc = this.scopeFields(hld, sectionKey, opts.scope);
     const references = await this.buildReferencesContext(hldId, sectionKey, message);
 
     return {
@@ -330,8 +334,10 @@ export class HldCopilotService {
       userMessage: { id: userMessage.id },
       payload: {
         provider: opts.provider ?? 'anthropic',
-        section_name: HLD_SECTION_NAMES[sectionKey] ?? sectionKey,
-        section_content: sectionContent,
+        section_name: sc.sectionName,
+        section_content: sc.sectionContent,
+        scope: sc.scope,
+        document_content: sc.documentContent,
         prd_context: prdContext,
         stack,
         template: opts.template ?? null,
@@ -341,6 +347,34 @@ export class HldCopilotService {
         history,
         user_message: message,
       },
+    };
+  }
+
+  /**
+   * Resolve the section-vs-document scope into the AI payload fields. For document
+   * scope the whole HLD is rendered as Markdown; for section scope only that
+   * section's content is sent.
+   */
+  private scopeFields(
+    hld: { sections: unknown; mermaidDiagrams: unknown },
+    sectionKey: string,
+    scope?: 'section' | 'document',
+  ): { scope: 'section' | 'document'; sectionName: string; sectionContent: string; documentContent: string } {
+    const sections = (hld.sections ?? {}) as Record<string, unknown>;
+    if (scope === 'document') {
+      const diagrams = (hld.mermaidDiagrams ?? {}) as Record<string, string>;
+      return {
+        scope: 'document',
+        sectionName: 'Whole HLD (all sections)',
+        sectionContent: '',
+        documentContent: this.hldToMarkdown(sections, diagrams),
+      };
+    }
+    return {
+      scope: 'section',
+      sectionName: HLD_SECTION_NAMES[sectionKey] ?? sectionKey,
+      sectionContent: this.sectionText(sections[sectionKey]),
+      documentContent: '',
     };
   }
 

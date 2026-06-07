@@ -626,6 +626,7 @@ export async function hldCopilotChat(
     template?: string | null;
     fieldName?: string | null;
     fieldContent?: string | null;
+    scope?: 'section' | 'document';
   },
 ): Promise<{ userMessage: HldChatMessage; assistantMessage: HldChatMessage }> {
   const { data } = await api.post<ApiEnvelope<{ userMessage: HldChatMessage; assistantMessage: HldChatMessage }>>(
@@ -647,6 +648,7 @@ export async function streamHldCopilotChat(
     template?: string | null;
     fieldName?: string | null;
     fieldContent?: string | null;
+    scope?: 'section' | 'document';
   },
   handlers: {
     onDelta?: (text: string) => void;

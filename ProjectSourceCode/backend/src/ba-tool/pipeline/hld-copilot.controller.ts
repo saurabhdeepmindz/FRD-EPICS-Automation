@@ -70,6 +70,7 @@ export class HldCopilotController {
       template?: string | null;
       fieldName?: string | null;
       fieldContent?: string | null;
+      scope?: 'section' | 'document';
     },
   ) {
     const data = await this.copilot.chat(hldId, body.sectionKey, {
@@ -78,6 +79,7 @@ export class HldCopilotController {
       template: body.template ?? null,
       fieldName: body.fieldName ?? null,
       fieldContent: body.fieldContent ?? null,
+      scope: body.scope,
     });
     return { success: true, data };
   }
@@ -94,6 +96,7 @@ export class HldCopilotController {
       template?: string | null;
       fieldName?: string | null;
       fieldContent?: string | null;
+      scope?: 'section' | 'document';
     },
     @Res() res: Response,
   ) {
@@ -109,6 +112,7 @@ export class HldCopilotController {
         template: body.template ?? null,
         fieldName: body.fieldName ?? null,
         fieldContent: body.fieldContent ?? null,
+        scope: body.scope,
       });
       res.write(`data: ${JSON.stringify({ userMessageId: userMessage.id })}\n\n`);
 

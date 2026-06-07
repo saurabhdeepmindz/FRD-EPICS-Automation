@@ -33,6 +33,8 @@ from prompts.hld_prompts import HLD_SYSTEM_PROMPT, build_hld_user_message
 from prompts.hld_chat_prompts import (
     HLD_CHAT_SYSTEM_PROMPT,
     build_hld_chat_user_message,
+    HLD_DOC_CHAT_SYSTEM_PROMPT,
+    build_hld_doc_chat_user_message,
     HLD_MERGE_SYSTEM_PROMPT,
     build_hld_merge_user_message,
 )
@@ -2528,6 +2530,8 @@ class HldChatRequest(BaseModel):
     references: str = ""
     field_name: str = ""
     field_content: str = ""
+    scope: str = "section"          # "section" | "document"
+    document_content: str = ""      # full HLD text, used when scope == "document"
     history: list[ChatTurn] = Field(default_factory=list)
     user_message: str
 
@@ -2638,7 +2642,38 @@ async def hld_chat(
     openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
     anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
 ) -> HldChatResponse:
-    """Context-aware architecture chat for one HLD section."""
+    """Context-aware architecture chat for one HLD section, or the whole document."""
+    system, user = _build_hld_chat_prompt(body)
+    text, model = await _complete_text(
+        provider=body.provider,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+        system=system,
+        user=user,
+        history=body.history,
+        max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
+        temperature=settings.HLD_COPILOT_TEMPERATURE,
+    )
+    logger.info(
+        "HLD chat (%s) %d chars scope=%s section=%s field=%s",
+        body.provider, len(text), body.scope, body.section_name, body.field_name or "-",
+    )
+    return HldChatResponse(markdown=text, model=model)
+
+
+def _build_hld_chat_prompt(body: "HldChatRequest") -> tuple[str, str]:
+    """Pick the system prompt + build the user message for section vs whole-document scope."""
+    if body.scope == "document":
+        user = build_hld_doc_chat_user_message(
+            document_content=body.document_content,
+            prd_context=body.prd_context,
+            stack=body.stack,
+            template=body.template,
+            user_message=body.user_message,
+            references=body.references,
+        )
+        return HLD_DOC_CHAT_SYSTEM_PROMPT, user
     user = build_hld_chat_user_message(
         section_name=body.section_name,
         section_content=body.section_content,
@@ -2650,22 +2685,7 @@ async def hld_chat(
         field_name=body.field_name,
         field_content=body.field_content,
     )
-    text, model = await _complete_text(
-        provider=body.provider,
-        settings=settings,
-        openai_client=openai_client,
-        anthropic_client=anthropic_client,
-        system=HLD_CHAT_SYSTEM_PROMPT,
-        user=user,
-        history=body.history,
-        max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
-        temperature=settings.HLD_COPILOT_TEMPERATURE,
-    )
-    logger.info(
-        "HLD chat (%s) %d chars for section=%s field=%s",
-        body.provider, len(text), body.section_name, body.field_name or "-",
-    )
-    return HldChatResponse(markdown=text, model=model)
+    return HLD_CHAT_SYSTEM_PROMPT, user
 
 
 class HldSuggestFieldRequest(BaseModel):
@@ -2728,17 +2748,7 @@ async def hld_chat_stream(
     anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
 ) -> StreamingResponse:
     """HD-01 — streaming variant of /hld-chat. Emits SSE token deltas then [DONE]."""
-    user = build_hld_chat_user_message(
-        section_name=body.section_name,
-        section_content=body.section_content,
-        prd_context=body.prd_context,
-        stack=body.stack,
-        template=body.template,
-        user_message=body.user_message,
-        references=body.references,
-        field_name=body.field_name,
-        field_content=body.field_content,
-    )
+    system, user = _build_hld_chat_prompt(body)
     turns = [{"role": t.role, "content": t.content} for t in body.history if t.content.strip()]
 
     async def gen():
@@ -2750,7 +2760,7 @@ async def hld_chat_stream(
                     model=model,
                     max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
                     temperature=settings.HLD_COPILOT_TEMPERATURE,
-                    system=HLD_CHAT_SYSTEM_PROMPT,
+                    system=system,
                     messages=[*turns, {"role": "user", "content": user}],
                 ) as stream:
                     async for delta in stream.text_stream:
@@ -2761,7 +2771,7 @@ async def hld_chat_stream(
                 yield _sse({"model": model})
                 resp = await openai_client.chat.completions.create(
                     model=model,
-                    messages=[{"role": "system", "content": HLD_CHAT_SYSTEM_PROMPT}, *turns, {"role": "user", "content": user}],
+                    messages=[{"role": "system", "content": system}, *turns, {"role": "user", "content": user}],
                     max_tokens=max(settings.HLD_COPILOT_MAX_TOKENS, 1024),
                     temperature=settings.HLD_COPILOT_TEMPERATURE,
                     stream=True,
@@ -2774,7 +2784,7 @@ async def hld_chat_stream(
                 # gemini / other → non-streaming fallback emitted as one delta
                 text, model = await _complete_text(
                     provider=body.provider, settings=settings, openai_client=openai_client,
-                    anthropic_client=anthropic_client, system=HLD_CHAT_SYSTEM_PROMPT, user=user,
+                    anthropic_client=anthropic_client, system=system, user=user,
                     history=body.history, max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
                     temperature=settings.HLD_COPILOT_TEMPERATURE,
                 )
