@@ -29,11 +29,20 @@ Return ONLY this JSON shape (no markdown, no prose):
     "rag":{"title":"string","subtitle":"string"},
     "llmProviders":["string"]                   // e.g. Claude, Gemini, ChatGPT
   },
+  "layerNotes": {                               // one short "what it represents" line per band (see rule below)
+    "access":"string",
+    "coreInfra":"string",
+    "functionalModules":"string",
+    "integration":"string",
+    "external":"string",
+    "ai":"string"
+  },
   "gatewayNote": "accessed via secure API gateway",
   "gaps": ["string"]                            // anything you inferred, defaulted, or that's missing from the docs
 }
 
 Rules:
+- `layerNotes`: for each of the six bands write ONE short sentence (max ~18 words) describing WHAT THAT LAYER REPRESENTS for THIS project — the same idea as a reference HLD's "what it represents" column. Be concrete and project-specific (name the actual surfaces/modules/vendors where helpful), not generic textbook text. Examples of the intended style: access = "User-facing surfaces plus the tenant envelope that scopes every request"; coreInfra = "Platform-wide capabilities every module consumes"; functionalModules = "The business/lifecycle modules, plus the role & permission model that scopes access across all of them".
 - `phase`: 1 = MVP, 2 = later phase, 3 = future — infer from PRD scope/out-of-scope/timelines; default 1 if unclear.
 - `thirdParty`: true when the module relies on an external integration (from PRD Integration Requirements).
 - If the project is single-tenant, do NOT add a "Multi-tenant" channel; note it in gaps if relevant.

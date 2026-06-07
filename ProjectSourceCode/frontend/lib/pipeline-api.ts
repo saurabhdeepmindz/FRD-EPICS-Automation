@@ -492,6 +492,15 @@ export interface SystemViewModel {
   integrationModules: { name: string; subtitle?: string }[];
   externalGroups: { title: string; items: string[] }[];
   aiLayer?: { capabilities?: string[]; rag?: { title: string; subtitle?: string }; llmProviders?: string[] };
+  /** §3.1-style "what it represents" line per band (optional; absent on older cached models). */
+  layerNotes?: {
+    access?: string;
+    coreInfra?: string;
+    functionalModules?: string;
+    integration?: string;
+    external?: string;
+    ai?: string;
+  };
   gatewayNote?: string;
   gaps?: string[];
 }
