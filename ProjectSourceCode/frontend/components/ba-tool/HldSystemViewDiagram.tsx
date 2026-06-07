@@ -54,16 +54,37 @@ function Caption({ children }: { children: React.ReactNode }) {
 
 /**
  * The six bands and their cross-references into this HLD (§3.1-style table).
- * `key` matches the layerNotes keys; `unpacked` maps deterministically to the
- * project's real 17-section HLD.
+ * `key` matches the layerNotes keys; `refs` map deterministically to the
+ * project's real 17-section HLD (section key + number + name → clickable link).
  */
-const SV_LAYERS: { key: 'access' | 'coreInfra' | 'functionalModules' | 'integration' | 'external' | 'ai'; name: string; unpacked: string }[] = [
-  { key: 'access', name: 'Access layer', unpacked: '§4 Layered Technical View · §6 Architecture Style & Patterns View' },
-  { key: 'coreInfra', name: 'Core infrastructure', unpacked: '§9 Technology Stack · §13 Integration Architecture' },
-  { key: 'functionalModules', name: 'Core functional modules', unpacked: '§5 Detailed Component View · §10 Design Patterns Catalogue' },
-  { key: 'integration', name: 'Integration layer — 3rd party module integrations', unpacked: '§13 Integration Architecture' },
-  { key: 'external', name: 'External / 3rd party systems', unpacked: '§11 Auth & Security Design · §13 Integration Architecture' },
-  { key: 'ai', name: 'AI layer (conversational, RAG, multi-LLM)', unpacked: '§12 AI Layer Architecture' },
+type SvRef = { key: string; n: number; name: string };
+const SV_LAYERS: {
+  key: 'access' | 'coreInfra' | 'functionalModules' | 'integration' | 'external' | 'ai';
+  name: string;
+  refs: SvRef[];
+}[] = [
+  { key: 'access', name: 'Access layer', refs: [
+    { key: 'technicalLayersView', n: 4, name: 'Layered Technical View' },
+    { key: 'architectureStyleView', n: 6, name: 'Architecture Style & Patterns View' },
+  ] },
+  { key: 'coreInfra', name: 'Core infrastructure', refs: [
+    { key: 'technologyStack', n: 9, name: 'Technology Stack' },
+    { key: 'integrations', n: 13, name: 'Integration Architecture' },
+  ] },
+  { key: 'functionalModules', name: 'Core functional modules', refs: [
+    { key: 'componentView', n: 5, name: 'Detailed Component View' },
+    { key: 'designPatterns', n: 10, name: 'Design Patterns Catalogue' },
+  ] },
+  { key: 'integration', name: 'Integration layer — 3rd party module integrations', refs: [
+    { key: 'integrations', n: 13, name: 'Integration Architecture' },
+  ] },
+  { key: 'external', name: 'External / 3rd party systems', refs: [
+    { key: 'authDesign', n: 11, name: 'Auth & Security Design' },
+    { key: 'integrations', n: 13, name: 'Integration Architecture' },
+  ] },
+  { key: 'ai', name: 'AI layer (conversational, RAG, multi-LLM)', refs: [
+    { key: 'aiLayer', n: 12, name: 'AI Layer Architecture' },
+  ] },
 ];
 function Connector() {
   return <div className="mx-auto my-1 h-4 w-px border-l border-dashed" style={{ borderColor: T.connector }} />;
@@ -73,10 +94,13 @@ export function HldSystemViewDiagram({
   model,
   onRegenerate,
   regenerating,
+  onNavigateSection,
 }: {
   model: SystemViewModel;
   onRegenerate?: () => void;
   regenerating?: boolean;
+  /** Jump to a referenced HLD section (browse: select it; preview: scroll to it). */
+  onNavigateSection?: (sectionKey: string) => void;
 }) {
   const m = model;
   return (
@@ -234,7 +258,24 @@ export function HldSystemViewDiagram({
                     <td className="border px-2.5 py-1.5 leading-snug" style={{ borderColor: '#E5E2DD', color: '#3D3D3A' }}>
                       {m.layerNotes?.[l.key]?.trim() || <span className="text-gray-400 italic">Regenerate to add a description.</span>}
                     </td>
-                    <td className="border px-2.5 py-1.5 leading-snug" style={{ borderColor: '#E5E2DD', color: T.caption }}>{l.unpacked}</td>
+                    <td className="border px-2.5 py-1.5 leading-snug" style={{ borderColor: '#E5E2DD', color: T.caption }}>
+                      {l.refs.map((r, ri) => (
+                        <span key={`${r.key}-${ri}`}>
+                          {ri > 0 && ' · '}
+                          {onNavigateSection ? (
+                            <button
+                              type="button"
+                              onClick={() => onNavigateSection(r.key)}
+                              className="text-indigo-600 hover:underline"
+                            >
+                              §{r.n} {r.name}
+                            </button>
+                          ) : (
+                            <span>§{r.n} {r.name}</span>
+                          )}
+                        </span>
+                      ))}
+                    </td>
                   </tr>
                 ))}
               </tbody>

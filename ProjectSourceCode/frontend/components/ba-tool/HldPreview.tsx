@@ -62,7 +62,13 @@ export function HldPreview({
               {/* 50k-ft System View → layered band diagram (replaces Mermaid) */}
               {s.key === 'systemView' && (
                 <div className="mb-3">
-                  <HldSystemViewPanel projectId={hld.projectId} hldId={hld.id} />
+                  <HldSystemViewPanel
+                    projectId={hld.projectId}
+                    hldId={hld.id}
+                    onNavigateSection={(k) =>
+                      document.getElementById(`prev-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                  />
                 </div>
               )}
 
