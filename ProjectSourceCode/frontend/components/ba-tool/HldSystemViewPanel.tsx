@@ -11,7 +11,15 @@ import { HldSystemViewDiagram } from './HldSystemViewDiagram';
  * Fetches (and caches) the 50,000-ft System View band model for an HLD and renders
  * the layered diagram. First build derives it from the PRD/FRD/HLD (~20–40s).
  */
-export function HldSystemViewPanel({ projectId, hldId }: { projectId: string; hldId: string }) {
+export function HldSystemViewPanel({
+  projectId,
+  hldId,
+  onNavigateSection,
+}: {
+  projectId: string;
+  hldId: string;
+  onNavigateSection?: (sectionKey: string) => void;
+}) {
   const [model, setModel] = useState<SystemViewModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
@@ -71,5 +79,12 @@ export function HldSystemViewPanel({ projectId, hldId }: { projectId: string; hl
       </Card>
     );
   }
-  return <HldSystemViewDiagram model={model} onRegenerate={regen} regenerating={regenerating} />;
+  return (
+    <HldSystemViewDiagram
+      model={model}
+      onRegenerate={regen}
+      regenerating={regenerating}
+      onNavigateSection={onNavigateSection}
+    />
+  );
 }

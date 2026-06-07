@@ -435,7 +435,9 @@ export default function HldPage() {
                           {sec.key === 'projectStructure' && structure && (
                             <HldStructureDiagram structure={structure} palette={palette} />
                           )}
-                          {sec.key === 'systemView' && <HldSystemViewPanel projectId={projectId} hldId={hld.id} />}
+                          {sec.key === 'systemView' && (
+                            <HldSystemViewPanel projectId={projectId} hldId={hld.id} onNavigateSection={selectSection} />
+                          )}
                           {diagKey && hld.mermaidDiagrams?.[diagKey] && sec.key !== 'systemView' && (
                             <Card>
                               <CardContent className="p-4">

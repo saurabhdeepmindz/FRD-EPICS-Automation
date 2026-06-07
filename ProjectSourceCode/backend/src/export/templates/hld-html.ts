@@ -214,20 +214,40 @@ function renderSystemViewBands(model: Record<string, unknown>): string {
     : '';
 
   // §3.1-style reference table: Layer | What it represents | Where it gets unpacked.
-  const tableRows: [string, string | undefined, string][] = [
-    ['Access layer', ln.access, '§4 Layered Technical View · §6 Architecture Style & Patterns View'],
-    ['Core infrastructure', ln.coreInfra, '§9 Technology Stack · §13 Integration Architecture'],
-    ['Core functional modules', ln.functionalModules, '§5 Detailed Component View · §10 Design Patterns Catalogue'],
-    ['Integration layer — 3rd party module integrations', ln.integration, '§13 Integration Architecture'],
-    ['External / 3rd party systems', ln.external, '§11 Auth & Security Design · §13 Integration Architecture'],
-    ['AI layer (conversational, RAG, multi-LLM)', ln.ai, '§12 AI Layer Architecture'],
+  // The 3rd column links to each section's anchor (id="section-<key>") for PDF/HTML.
+  type Ref = { key: string; n: number; name: string };
+  const tableRows: { name: string; note?: string; refs: Ref[] }[] = [
+    { name: 'Access layer', note: ln.access, refs: [
+      { key: 'technicalLayersView', n: 4, name: 'Layered Technical View' },
+      { key: 'architectureStyleView', n: 6, name: 'Architecture Style & Patterns View' },
+    ] },
+    { name: 'Core infrastructure', note: ln.coreInfra, refs: [
+      { key: 'technologyStack', n: 9, name: 'Technology Stack' },
+      { key: 'integrations', n: 13, name: 'Integration Architecture' },
+    ] },
+    { name: 'Core functional modules', note: ln.functionalModules, refs: [
+      { key: 'componentView', n: 5, name: 'Detailed Component View' },
+      { key: 'designPatterns', n: 10, name: 'Design Patterns Catalogue' },
+    ] },
+    { name: 'Integration layer — 3rd party module integrations', note: ln.integration, refs: [
+      { key: 'integrations', n: 13, name: 'Integration Architecture' },
+    ] },
+    { name: 'External / 3rd party systems', note: ln.external, refs: [
+      { key: 'authDesign', n: 11, name: 'Auth & Security Design' },
+      { key: 'integrations', n: 13, name: 'Integration Architecture' },
+    ] },
+    { name: 'AI layer (conversational, RAG, multi-LLM)', note: ln.ai, refs: [
+      { key: 'aiLayer', n: 12, name: 'AI Layer Architecture' },
+    ] },
   ];
+  const refLinks = (refs: Ref[]) =>
+    refs.map((r) => `<a href="#section-${r.key}">§${r.n} ${esc(r.name)}</a>`).join(' · ');
   const table = `<table class="sv-table">
     <thead><tr><th>Layer</th><th>What it represents</th><th>Where it gets unpacked in this HLD</th></tr></thead>
     <tbody>${tableRows
       .map(
-        ([name, note, ref]) =>
-          `<tr><td class="sv-td-layer">${esc(name)}</td><td>${note ? esc(note) : '<span class="empty">—</span>'}</td><td class="sv-td-ref">${esc(ref)}</td></tr>`,
+        (row) =>
+          `<tr><td class="sv-td-layer">${esc(row.name)}</td><td>${row.note ? esc(row.note) : '<span class="empty">—</span>'}</td><td class="sv-td-ref">${refLinks(row.refs)}</td></tr>`,
       )
       .join('')}</tbody></table>`;
 
@@ -344,6 +364,7 @@ export function generateHldHtml(data: HldHtmlData): string {
     .sv-table td { padding:6px 9px; border:1px solid #E5E2DD; vertical-align:top; line-height:1.45; }
     .sv-td-layer { font-weight:600; color:#141413; width:22%; }
     .sv-td-ref { color:#475569; width:26%; }
+    .sv-td-ref a { color:#4F46B5; text-decoration:none; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }
