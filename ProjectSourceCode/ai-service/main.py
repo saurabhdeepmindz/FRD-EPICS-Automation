@@ -43,6 +43,10 @@ from prompts.reference_prompts import (
     REFERENCE_SUMMARY_SYSTEM_PROMPT,
     build_reference_summary_user_message,
 )
+from prompts.technical_view_prompts import (
+    TECHNICAL_VIEW_SYSTEM_PROMPT,
+    build_technical_view_user_message,
+)
 from prompts.system_view_prompts import (
     SYSTEM_VIEW_SYSTEM_PROMPT,
     build_system_view_user_message,
@@ -2951,4 +2955,57 @@ async def hld_system_view(
         logger.error("System view JSON parse failed: %s", exc)
         raise HTTPException(status_code=502, detail="AI returned malformed system-view JSON") from exc
     logger.info("System view generated for '%s' (%d modules)", body.product_name, len(model.get("functionalModules", [])))
+    return model
+
+
+# ─── Layered Technical View — structured layered-band model (§4) ───────────────
+
+class TechnicalViewRequest(BaseModel):
+    provider: str = "anthropic"
+    product_name: str = ""
+    prd_context: str = ""
+    hld_context: str = ""
+
+
+@app.post("/hld-technical-view", tags=["copilot"])
+async def hld_technical_view(
+    body: TechnicalViewRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """Return the layered technical view (§4) as a structured JSON model (grounded; lists gaps)."""
+    user = build_technical_view_user_message(body.product_name, body.prd_context, body.hld_context)
+    provider = body.provider or "anthropic"
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": TECHNICAL_VIEW_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=4000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except openai.OpenAIError as exc:
+            logger.error("Technical view (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=TECHNICAL_VIEW_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=4000,
+            temperature=0.3,
+        )
+    try:
+        model = _parse_ai_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Technical view JSON parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI returned malformed technical-view JSON") from exc
+    logger.info("Technical view generated for '%s' (%d layers)", body.product_name, len(model.get("layers", [])))
     return model

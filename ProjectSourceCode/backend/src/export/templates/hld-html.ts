@@ -47,10 +47,14 @@ export interface HldHtmlData {
   mermaidDiagrams: Record<string, string>;
   /** 50k-ft band model — canonical §3 representation (replaces legacy layer text). */
   systemView?: unknown;
+  /** Layered technical view band model — canonical §4 representation. */
+  technicalView?: unknown;
 }
 
 /** Legacy free-text §3 fields superseded by the band model; hidden when it exists. */
 const SYSTEM_VIEW_LEGACY_FIELDS = new Set(['layers', 'phasing', 'externalSystems']);
+/** Legacy free-text §4 fields superseded by the layered technical view model. */
+const TECHNICAL_VIEW_LEGACY_FIELDS = new Set(['layers', 'description']);
 
 // ─── Pastel diagram palette (mirrors the Design System / frontend defaults) ───
 
@@ -264,6 +268,52 @@ function renderSystemViewBands(model: Record<string, unknown>): string {
   </div>`;
 }
 
+// ─── Layered Technical View band model → HTML (canonical §4 representation) ────
+
+type TvLayer = { key?: string; name?: string; applicable?: boolean; outOfScope?: string; nodes?: string[]; whatLivesHere?: string; keyTech?: string };
+
+function renderTechnicalViewBands(model: Record<string, unknown>): string {
+  const m = model as { layers?: TvLayer[]; gaps?: string[] };
+  const layers = m.layers ?? [];
+  const shown = layers.filter((l) => l.applicable !== false);
+
+  const bands = shown
+    .map((l) => {
+      const inner = (l.nodes ?? []).length
+        ? svList(l.nodes)
+        : `<span class="empty">${esc(l.keyTech ?? '—')}</span>`;
+      return `<div class="sv-band"><h3 class="sv-band-title">${esc(l.name ?? '')}</h3>${inner}</div>`;
+    })
+    .join('');
+
+  const rows = layers
+    .map((l) => {
+      const oos = l.applicable === false;
+      const what = oos
+        ? `<em>Out of scope — ${esc(l.outOfScope ?? 'not applicable to this project')}</em>`
+        : l.whatLivesHere
+          ? esc(l.whatLivesHere)
+          : '<span class="empty">—</span>';
+      const tech = oos ? '—' : esc(l.keyTech ?? '—');
+      return `<tr><td class="sv-td-layer">${esc(l.name ?? '')}</td><td>${what}</td><td class="sv-td-ref">${tech}</td></tr>`;
+    })
+    .join('');
+  const table = `<table class="sv-table">
+    <thead><tr><th>Layer</th><th>What lives here</th><th>Key technology / pattern</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  const gaps = m.gaps?.length
+    ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
+    : '';
+
+  return `<div class="sv-bands">
+    ${bands}
+    <h3 class="sv-band-title" style="margin-top:14px;">The technical layers — what lives in each</h3>
+    ${table}
+    ${gaps}
+  </div>`;
+}
+
 // ─── Main export ───────────────────────────────────────────────────────────
 
 export function generateHldHtml(data: HldHtmlData): string {
@@ -283,6 +333,10 @@ export function generateHldHtml(data: HldHtmlData): string {
       // Band model is the canonical §3 view; legacy free-text layer fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, SYSTEM_VIEW_LEGACY_FIELDS) : '';
       inner = renderSystemViewBands(data.systemView as Record<string, unknown>) + rest;
+    } else if (key === 'technicalLayersView' && data.technicalView && typeof data.technicalView === 'object') {
+      // Band model is the canonical §4 view; legacy free-text layer fields are dropped.
+      const rest = body && typeof body === 'object' ? renderSectionBody(body, TECHNICAL_VIEW_LEGACY_FIELDS) : '';
+      inner = renderTechnicalViewBands(data.technicalView as Record<string, unknown>) + rest;
     } else {
       inner = renderSectionBody(body);
     }
