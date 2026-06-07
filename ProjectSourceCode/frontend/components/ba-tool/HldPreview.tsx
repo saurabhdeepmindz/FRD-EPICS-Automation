@@ -3,11 +3,12 @@
 import { type ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Network } from 'lucide-react';
-import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
+import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, COMPONENT_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
 import { HldMermaid } from './HldMermaid';
 import { HldStructureDiagram } from './HldStructureDiagram';
 import { HldSystemViewPanel } from './HldSystemViewPanel';
 import { HldTechnicalViewPanel } from './HldTechnicalViewPanel';
+import { HldComponentViewPanel } from './HldComponentViewPanel';
 import { Markdown } from './Markdown';
 import { DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -45,12 +46,14 @@ export function HldPreview({
 
         {HLD_SECTIONS.map((s, i) => {
           const body = hld.sections?.[s.key] as Record<string, unknown> | undefined;
-          // §3/§4 render as band diagrams (canonical); hide legacy free-text fields.
-          const isBandSection = s.key === 'systemView' || s.key === 'technicalLayersView';
+          // §3/§4/§5 render as band diagrams (canonical); hide legacy free-text fields.
+          const isBandSection =
+            s.key === 'systemView' || s.key === 'technicalLayersView' || s.key === 'componentView';
           const bodyEntries = body
             ? Object.entries(body).filter(([k]) => {
                 if (s.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
                 if (s.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
+                if (s.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
                 return true;
               })
             : [];
@@ -80,6 +83,19 @@ export function HldPreview({
               {s.key === 'technicalLayersView' && (
                 <div className="mb-3">
                   <HldTechnicalViewPanel projectId={hld.projectId} hldId={hld.id} />
+                </div>
+              )}
+
+              {/* Detailed Component View → enriched band diagram + §5.1/§5.2 (replaces Mermaid) */}
+              {s.key === 'componentView' && (
+                <div className="mb-3">
+                  <HldComponentViewPanel
+                    projectId={hld.projectId}
+                    hldId={hld.id}
+                    onNavigateSection={(k) =>
+                      document.getElementById(`prev-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                  />
                 </div>
               )}
 

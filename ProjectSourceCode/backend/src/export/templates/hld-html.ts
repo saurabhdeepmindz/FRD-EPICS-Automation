@@ -49,12 +49,16 @@ export interface HldHtmlData {
   systemView?: unknown;
   /** Layered technical view band model — canonical §4 representation. */
   technicalView?: unknown;
+  /** Detailed component view model — canonical §5 representation. */
+  componentView?: unknown;
 }
 
 /** Legacy free-text §3 fields superseded by the band model; hidden when it exists. */
 const SYSTEM_VIEW_LEGACY_FIELDS = new Set(['layers', 'phasing', 'externalSystems']);
 /** Legacy free-text §4 fields superseded by the layered technical view model. */
 const TECHNICAL_VIEW_LEGACY_FIELDS = new Set(['layers', 'description']);
+/** Legacy free-text §5 fields superseded by the detailed component view model. */
+const COMPONENT_VIEW_LEGACY_FIELDS = new Set(['components', 'description']);
 
 // ─── Pastel diagram palette (mirrors the Design System / frontend defaults) ───
 
@@ -314,6 +318,62 @@ function renderTechnicalViewBands(model: Record<string, unknown>): string {
   </div>`;
 }
 
+// ─── Detailed Component View model → HTML (canonical §5 representation) ────────
+
+type CvComponent = { name?: string; subtext?: string };
+type CvLayer = { key?: string; name?: string; applicable?: boolean; outOfScope?: string; pattern?: string; components?: CvComponent[] };
+type CvService = { name?: string; dominantConcern?: string; whereKeys?: string[] };
+
+function renderComponentViewBands(model: Record<string, unknown>): string {
+  const m = model as { intro?: string; layers?: CvLayer[]; services?: CvService[]; reading?: string[]; gaps?: string[] };
+  const shown = (m.layers ?? []).filter((l) => l.applicable !== false);
+
+  const bands = shown
+    .map((l) => {
+      const banner = l.pattern && l.pattern !== '—' ? `<span class="cv-pattern">${esc(l.pattern)}</span>` : '';
+      const comps = (l.components ?? []).length
+        ? `<ul class="vlist">${l.components!
+            .map((c) => `<li>${esc(c.name ?? '')}${c.subtext ? ` <em>— ${esc(c.subtext)}</em>` : ''}</li>`)
+            .join('')}</ul>`
+        : `<span class="empty">${esc(l.pattern ?? '—')}</span>`;
+      return `<div class="sv-band"><h3 class="sv-band-title">${esc(l.name ?? '')} ${banner}</h3>${comps}</div>`;
+    })
+    .join('');
+
+  const reading = (m.reading ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">5.1 · Reading the detailed view</h3>${svList(m.reading)}`
+    : '';
+
+  // §5.2 table — Service | Dominant concern | Where it lives (links to section anchors).
+  const refLink = (key: string) => {
+    const n = HLD_SECTION_ORDER.indexOf(key) + 1;
+    if (n <= 0) return '';
+    return `<a href="#section-${key}">§${n} ${esc(HLD_SECTION_NAMES[key])}</a>`;
+  };
+  const svcRows = (m.services ?? [])
+    .map((s) => {
+      const where = (s.whereKeys ?? []).map(refLink).filter(Boolean).join(' · ') || '—';
+      return `<tr><td class="sv-td-layer">${esc(s.name ?? '')}</td><td>${esc(s.dominantConcern ?? '—')}</td><td class="sv-td-ref">${where}</td></tr>`;
+    })
+    .join('');
+  const servicesTable = (m.services ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">5.2 · How modules show up in this view</h3>
+       <table class="sv-table"><thead><tr><th>Service</th><th>Dominant concern</th><th>Where it lives</th></tr></thead><tbody>${svcRows}</tbody></table>`
+    : '';
+
+  const gaps = m.gaps?.length
+    ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
+    : '';
+
+  return `<div class="sv-bands">
+    ${m.intro ? `<p class="sv-note">${esc(m.intro)}</p>` : ''}
+    ${bands}
+    ${reading}
+    ${servicesTable}
+    ${gaps}
+  </div>`;
+}
+
 // ─── Main export ───────────────────────────────────────────────────────────
 
 export function generateHldHtml(data: HldHtmlData): string {
@@ -337,6 +397,10 @@ export function generateHldHtml(data: HldHtmlData): string {
       // Band model is the canonical §4 view; legacy free-text layer fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, TECHNICAL_VIEW_LEGACY_FIELDS) : '';
       inner = renderTechnicalViewBands(data.technicalView as Record<string, unknown>) + rest;
+    } else if (key === 'componentView' && data.componentView && typeof data.componentView === 'object') {
+      // Band model is the canonical §5 view; legacy free-text fields are dropped.
+      const rest = body && typeof body === 'object' ? renderSectionBody(body, COMPONENT_VIEW_LEGACY_FIELDS) : '';
+      inner = renderComponentViewBands(data.componentView as Record<string, unknown>) + rest;
     } else {
       inner = renderSectionBody(body);
     }
@@ -419,6 +483,7 @@ export function generateHldHtml(data: HldHtmlData): string {
     .sv-td-layer { font-weight:600; color:#141413; width:22%; }
     .sv-td-ref { color:#475569; width:26%; }
     .sv-td-ref a { color:#4F46B5; text-decoration:none; }
+    .cv-pattern { font-size:10px; font-style:italic; color:#64748b; font-weight:400; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }

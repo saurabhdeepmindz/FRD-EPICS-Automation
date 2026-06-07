@@ -157,6 +157,8 @@ export class HldService {
       systemView: ((hld.metadata ?? {}) as Record<string, unknown>).systemView ?? null,
       // Layered technical view (canonical §4 representation) for export rendering.
       technicalView: ((hld.metadata ?? {}) as Record<string, unknown>).technicalView ?? null,
+      // Detailed component view (canonical §5 representation) for export rendering.
+      componentView: ((hld.metadata ?? {}) as Record<string, unknown>).componentView ?? null,
     };
   }
 
@@ -264,6 +266,58 @@ export class HldService {
     return model;
   }
 
+  /**
+   * Detailed Component View (§5) — structured model derived from the project's
+   * PRD/FRD/HLD via the AI service, cached on the HLD's metadata. Pass force=true
+   * to regenerate. Reuses the §4 context (component/technical-leaning sections).
+   */
+  async getComponentView(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.componentView) return meta.componentView as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.technicalViewHldContext(hld.sections);
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-component-view`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`Component view generation failed: ${detail}`);
+      throw new BadRequestException(`Component view generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, componentView: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
   /** HLD context tuned for the layered technical view (§4). */
   private technicalViewHldContext(sections: unknown): string {
     const s = (sections ?? {}) as Record<string, unknown>;
@@ -319,6 +373,7 @@ export class HldService {
         (latest.mermaidDiagrams ?? {}) as Record<string, string>,
         ((latest.metadata ?? {}) as Record<string, unknown>).systemView,
         ((latest.metadata ?? {}) as Record<string, unknown>).technicalView,
+        ((latest.metadata ?? {}) as Record<string, unknown>).componentView,
       ),
     };
   }
@@ -468,6 +523,48 @@ export class HldService {
     return out.join('\n');
   }
 
+  /** Render the detailed component view (§5) model as readable Markdown. */
+  private componentViewBandsMarkdown(model: Record<string, unknown>): string {
+    const m = model as {
+      intro?: string;
+      layers?: { name?: string; applicable?: boolean; pattern?: string; components?: { name?: string; subtext?: string }[] }[];
+      services?: { name?: string; dominantConcern?: string; whereKeys?: string[] }[];
+      reading?: string[];
+      gaps?: string[];
+    };
+    const out: string[] = [];
+    if (m.intro) out.push(`_${m.intro}_`, '');
+    for (const l of (m.layers ?? []).filter((x) => x.applicable !== false)) {
+      out.push(`### ${l.name ?? ''}${l.pattern && l.pattern !== '—' ? ` — _${l.pattern}_` : ''}`);
+      (l.components ?? []).forEach((c) => out.push(`- ${c.name ?? ''}${c.subtext ? ` — ${c.subtext}` : ''}`));
+      out.push('');
+    }
+    if (m.reading?.length) {
+      out.push('### 5.1 — Reading the detailed view', '');
+      m.reading.forEach((r) => out.push(`- ${r}`));
+      out.push('');
+    }
+    if (m.services?.length) {
+      const esc = (s?: string) => (s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim() || '—';
+      const ref = (k: string) => {
+        const n = HLD_SECTION_ORDER.indexOf(k) + 1;
+        return n > 0 ? `§${n} ${HLD_SECTION_NAMES[k]}` : '';
+      };
+      out.push('### 5.2 — How modules show up in this view', '');
+      out.push('| Service | Dominant concern | Where it lives |');
+      out.push('| --- | --- | --- |');
+      m.services.forEach((s) => {
+        const where = (s.whereKeys ?? []).map(ref).filter(Boolean).join(' · ') || '—';
+        out.push(`| ${esc(s.name)} | ${esc(s.dominantConcern)} | ${where} |`);
+      });
+    }
+    if (m.gaps?.length) {
+      out.push('', '### Gaps & assumptions');
+      m.gaps.forEach((g) => out.push(`- ${g}`));
+    }
+    return out.join('\n');
+  }
+
   /** Render the 50k-ft band model as readable Markdown (canonical §3 representation). */
   private systemViewBandsMarkdown(model: Record<string, unknown>): string {
     const m = model as {
@@ -547,6 +644,7 @@ export class HldService {
     diagrams: Record<string, string>,
     systemView?: unknown,
     technicalView?: unknown,
+    componentView?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
@@ -565,6 +663,15 @@ export class HldService {
       if (key === 'technicalLayersView' && technicalView && typeof technicalView === 'object') {
         lines.push(this.technicalViewBandsMarkdown(technicalView as Record<string, unknown>), '');
         const rest = this.withoutLegacyFields(body, ['layers', 'description']);
+        if (rest && Object.keys(rest).length) {
+          lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
+        }
+        return;
+      }
+      // §5 — render the canonical detailed component view; drop legacy free-text fields.
+      if (key === 'componentView' && componentView && typeof componentView === 'object') {
+        lines.push(this.componentViewBandsMarkdown(componentView as Record<string, unknown>), '');
+        const rest = this.withoutLegacyFields(body, ['components', 'description']);
         if (rest && Object.keys(rest).length) {
           lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
         }
