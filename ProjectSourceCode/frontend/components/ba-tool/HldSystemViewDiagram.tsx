@@ -51,11 +51,20 @@ function Box({ tone, title, sub, badge, wide }: { tone: Tone; title: string; sub
 function Caption({ children }: { children: React.ReactNode }) {
   return <p className="text-[12px] mb-1.5" style={{ color: T.caption }}>{children}</p>;
 }
-/** §3.1-style "what it represents" line shown under a band heading. */
-function LayerNote({ children }: { children?: React.ReactNode }) {
-  if (!children) return null;
-  return <p className="text-[11px] italic leading-snug mb-1.5 -mt-1" style={{ color: T.caption }}>{children}</p>;
-}
+
+/**
+ * The six bands and their cross-references into this HLD (§3.1-style table).
+ * `key` matches the layerNotes keys; `unpacked` maps deterministically to the
+ * project's real 17-section HLD.
+ */
+const SV_LAYERS: { key: 'access' | 'coreInfra' | 'functionalModules' | 'integration' | 'external' | 'ai'; name: string; unpacked: string }[] = [
+  { key: 'access', name: 'Access layer', unpacked: '§4 Layered Technical View · §6 Architecture Style & Patterns View' },
+  { key: 'coreInfra', name: 'Core infrastructure', unpacked: '§9 Technology Stack · §13 Integration Architecture' },
+  { key: 'functionalModules', name: 'Core functional modules', unpacked: '§5 Detailed Component View · §10 Design Patterns Catalogue' },
+  { key: 'integration', name: 'Integration layer — 3rd party module integrations', unpacked: '§13 Integration Architecture' },
+  { key: 'external', name: 'External / 3rd party systems', unpacked: '§11 Auth & Security Design · §13 Integration Architecture' },
+  { key: 'ai', name: 'AI layer (conversational, RAG, multi-LLM)', unpacked: '§12 AI Layer Architecture' },
+];
 function Connector() {
   return <div className="mx-auto my-1 h-4 w-px border-l border-dashed" style={{ borderColor: T.connector }} />;
 }
@@ -88,7 +97,6 @@ export function HldSystemViewDiagram({
 
         {/* 1 — Access layer (channels) + actors */}
         <Caption>Access layer</Caption>
-        <LayerNote>{m.layerNotes?.access}</LayerNote>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {(m.channels ?? []).map((c, i) => (
             <Box key={i} tone={T.access} title={c} />
@@ -109,7 +117,6 @@ export function HldSystemViewDiagram({
 
         {/* 2 — Core infrastructure */}
         <Caption>Core infrastructure</Caption>
-        <LayerNote>{m.layerNotes?.coreInfra}</LayerNote>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {(m.coreInfra ?? []).map((c, i) => (
             <Box key={i} tone={T.infra} title={c} />
@@ -120,9 +127,8 @@ export function HldSystemViewDiagram({
 
         {/* 3 — Core functional modules + RBAC */}
         <div className="rounded-xl border p-3" style={{ borderColor: T.connector }}>
-          <p className="text-[13px] font-medium" style={{ color: T.bandTitle }}>Core functional modules</p>
-          <LayerNote>{m.layerNotes?.functionalModules}</LayerNote>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
+          <p className="text-[13px] font-medium mb-2" style={{ color: T.bandTitle }}>Core functional modules</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {(m.functionalModules ?? []).map((f, i) => (
               <Box
                 key={i}
@@ -144,7 +150,6 @@ export function HldSystemViewDiagram({
 
         {/* 4 — Integration layer */}
         <Caption>Integration layer — 3rd party module integrations</Caption>
-        <LayerNote>{m.layerNotes?.integration}</LayerNote>
         {(m.integrationModules ?? []).length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {m.integrationModules.map((f, i) => (
@@ -163,7 +168,6 @@ export function HldSystemViewDiagram({
             External / 3rd party systems{' '}
             {m.gatewayNote && <span className="text-[11px] font-normal" style={{ color: T.caption }}>— {m.gatewayNote}</span>}
           </p>
-          <LayerNote>{m.layerNotes?.external}</LayerNote>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
             {(m.externalGroups ?? []).map((g, i) => (
               <div key={i} className="rounded-md border px-2.5 py-2" style={{ background: T.ext.fill, borderColor: T.ext.border }}>
@@ -181,7 +185,6 @@ export function HldSystemViewDiagram({
           <p className="text-[13px] font-medium" style={{ color: T.bandTitle }}>
             AI layer <span className="text-[11px] font-normal" style={{ color: T.caption }}>— conversational, RAG, multi-LLM</span>
           </p>
-          <LayerNote>{m.layerNotes?.ai}</LayerNote>
           {hasAi(m) ? (
             <div className="mt-2 space-y-2">
               {(m.aiLayer?.capabilities ?? []).length > 0 && (
@@ -210,6 +213,33 @@ export function HldSystemViewDiagram({
           <LegendDot n={1} label="3rd party integration" />
           <LegendDot n={2} label="Phase 2" />
           <LegendDot n={3} label="Phase 3 / future" />
+        </div>
+
+        {/* §3.1-style layer reference table — what each layer represents + where it's unpacked */}
+        <div className="pt-3 mt-1 border-t">
+          <p className="text-[13px] font-semibold mb-2" style={{ color: T.bandTitle }}>The six layers — what each represents</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-[12px]">
+              <thead>
+                <tr style={{ background: '#7C4A1E' }}>
+                  <th className="border px-2.5 py-1.5 font-semibold text-white" style={{ borderColor: '#E5E2DD', width: '20%' }}>Layer</th>
+                  <th className="border px-2.5 py-1.5 font-semibold text-white" style={{ borderColor: '#E5E2DD' }}>What it represents</th>
+                  <th className="border px-2.5 py-1.5 font-semibold text-white" style={{ borderColor: '#E5E2DD', width: '26%' }}>Where it gets unpacked in this HLD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SV_LAYERS.map((l) => (
+                  <tr key={l.key} className="align-top">
+                    <td className="border px-2.5 py-1.5 font-medium" style={{ borderColor: '#E5E2DD', color: T.bandTitle }}>{l.name}</td>
+                    <td className="border px-2.5 py-1.5 leading-snug" style={{ borderColor: '#E5E2DD', color: '#3D3D3A' }}>
+                      {m.layerNotes?.[l.key]?.trim() || <span className="text-gray-400 italic">Regenerate to add a description.</span>}
+                    </td>
+                    <td className="border px-2.5 py-1.5 leading-snug" style={{ borderColor: '#E5E2DD', color: T.caption }}>{l.unpacked}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Gaps & assumptions */}

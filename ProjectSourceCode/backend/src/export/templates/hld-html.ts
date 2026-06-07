@@ -186,9 +186,8 @@ function renderSystemViewBands(model: Record<string, unknown>): string {
     layerNotes?: Record<string, string>; gatewayNote?: string; gaps?: string[];
   };
   const ln = m.layerNotes ?? {};
-  const note = (t?: string) => (t ? `<p class="sv-note"><em>${esc(t)}</em></p>` : '');
-  const band = (title: string, noteText: string | undefined, inner: string) =>
-    `<div class="sv-band"><h3 class="sv-band-title">${esc(title)}</h3>${note(noteText)}${inner}</div>`;
+  const band = (title: string, inner: string) =>
+    `<div class="sv-band"><h3 class="sv-band-title">${esc(title)}</h3>${inner}</div>`;
 
   const actorsLine = m.actors?.length
     ? `<p class="sv-sub"><strong>Actors:</strong> ${m.actors.map((a) => esc(a)).join(' · ')}</p>`
@@ -214,13 +213,33 @@ function renderSystemViewBands(model: Record<string, unknown>): string {
     ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
     : '';
 
+  // §3.1-style reference table: Layer | What it represents | Where it gets unpacked.
+  const tableRows: [string, string | undefined, string][] = [
+    ['Access layer', ln.access, '§4 Layered Technical View · §6 Architecture Style & Patterns View'],
+    ['Core infrastructure', ln.coreInfra, '§9 Technology Stack · §13 Integration Architecture'],
+    ['Core functional modules', ln.functionalModules, '§5 Detailed Component View · §10 Design Patterns Catalogue'],
+    ['Integration layer — 3rd party module integrations', ln.integration, '§13 Integration Architecture'],
+    ['External / 3rd party systems', ln.external, '§11 Auth & Security Design · §13 Integration Architecture'],
+    ['AI layer (conversational, RAG, multi-LLM)', ln.ai, '§12 AI Layer Architecture'],
+  ];
+  const table = `<table class="sv-table">
+    <thead><tr><th>Layer</th><th>What it represents</th><th>Where it gets unpacked in this HLD</th></tr></thead>
+    <tbody>${tableRows
+      .map(
+        ([name, note, ref]) =>
+          `<tr><td class="sv-td-layer">${esc(name)}</td><td>${note ? esc(note) : '<span class="empty">—</span>'}</td><td class="sv-td-ref">${esc(ref)}</td></tr>`,
+      )
+      .join('')}</tbody></table>`;
+
   return `<div class="sv-bands">
-    ${band('1. Access layer', ln.access, `${svList(m.channels)}${actorsLine}`)}
-    ${band('2. Core infrastructure', ln.coreInfra, svList(m.coreInfra))}
-    ${band('3. Core functional modules', ln.functionalModules, `${svModules(m.functionalModules)}${rbac}`)}
-    ${band('4. Integration layer — 3rd party module integrations', ln.integration, svModules(m.integrationModules))}
-    ${band(`5. External / 3rd party systems${m.gatewayNote ? ` (${esc(m.gatewayNote)})` : ''}`, ln.external, external)}
-    ${band('6. AI layer — conversational, RAG, multi-LLM', ln.ai, ai)}
+    ${band('1. Access layer', `${svList(m.channels)}${actorsLine}`)}
+    ${band('2. Core infrastructure', svList(m.coreInfra))}
+    ${band('3. Core functional modules', `${svModules(m.functionalModules)}${rbac}`)}
+    ${band('4. Integration layer — 3rd party module integrations', svModules(m.integrationModules))}
+    ${band(`5. External / 3rd party systems${m.gatewayNote ? ` (${esc(m.gatewayNote)})` : ''}`, external)}
+    ${band('6. AI layer — conversational, RAG, multi-LLM', ai)}
+    <h3 class="sv-band-title" style="margin-top:14px;">The six layers — what each represents</h3>
+    ${table}
     ${gaps}
   </div>`;
 }
@@ -320,6 +339,11 @@ export function generateHldHtml(data: HldHtmlData): string {
     .sv-note { margin:0 0 6px 0; font-size:12px; color:#475569; }
     .sv-sub { margin:4px 0 0 0; font-size:12px; color:#334155; }
     .sv-gaps { margin:8px 0 0 0; padding:10px 12px; border:1px solid #fde68a; border-radius:6px; background:#fffbeb; }
+    .sv-table { width:100%; border-collapse:collapse; font-size:12px; margin:4px 0 8px 0; }
+    .sv-table th { background:#7C4A1E; color:#fff; text-align:left; padding:6px 9px; border:1px solid #E5E2DD; font-weight:600; }
+    .sv-table td { padding:6px 9px; border:1px solid #E5E2DD; vertical-align:top; line-height:1.45; }
+    .sv-td-layer { font-weight:600; color:#141413; width:22%; }
+    .sv-td-ref { color:#475569; width:26%; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }

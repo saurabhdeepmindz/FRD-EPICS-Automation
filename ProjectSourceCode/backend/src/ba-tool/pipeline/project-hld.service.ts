@@ -383,10 +383,7 @@ export class HldService {
     };
     const ln = m.layerNotes ?? {};
     const out: string[] = [];
-    const band = (title: string, note?: string) => {
-      out.push(`### ${title}`);
-      if (note) out.push(`_${note}_`, '');
-    };
+    const band = (title: string) => out.push(`### ${title}`);
     const bullets = (items?: string[]) => (items ?? []).forEach((x) => out.push(`- ${x}`));
     const mods = (list?: { name?: string; subtitle?: string; phase?: number; thirdParty?: boolean }[]) =>
       (list ?? []).forEach((x) => {
@@ -397,24 +394,24 @@ export class HldService {
         out.push(`- ${x.name ?? ''}${x.subtitle ? ` — ${x.subtitle}` : ''}${tags}`);
       });
 
-    band('1. Access layer', ln.access);
+    band('1. Access layer');
     bullets(m.channels);
     if (m.actors?.length) out.push(`- **Actors:** ${m.actors.join(' · ')}`);
     out.push('');
-    band('2. Core infrastructure', ln.coreInfra);
+    band('2. Core infrastructure');
     bullets(m.coreInfra);
     out.push('');
-    band('3. Core functional modules', ln.functionalModules);
+    band('3. Core functional modules');
     mods(m.functionalModules);
     if (m.rbac?.title) out.push(`- **${m.rbac.title}**${m.rbac.subtitle ? ` — ${m.rbac.subtitle}` : ''}`);
     out.push('');
-    band('4. Integration layer — 3rd party module integrations', ln.integration);
+    band('4. Integration layer — 3rd party module integrations');
     mods(m.integrationModules);
     out.push('');
-    band(`5. External / 3rd party systems${m.gatewayNote ? ` (${m.gatewayNote})` : ''}`, ln.external);
+    band(`5. External / 3rd party systems${m.gatewayNote ? ` (${m.gatewayNote})` : ''}`);
     (m.externalGroups ?? []).forEach((g) => out.push(`- **${g.title ?? ''}:** ${(g.items ?? []).join(' · ')}`));
     out.push('');
-    band('6. AI layer — conversational, RAG, multi-LLM', ln.ai);
+    band('6. AI layer — conversational, RAG, multi-LLM');
     const hasAi = (m.aiLayer?.capabilities?.length ?? 0) > 0 || !!m.aiLayer?.rag?.title || (m.aiLayer?.llmProviders?.length ?? 0) > 0;
     if (hasAi) {
       if (m.aiLayer?.capabilities?.length) out.push(`- **Capabilities:** ${m.aiLayer.capabilities.join(' · ')}`);
@@ -423,6 +420,22 @@ export class HldService {
     } else {
       out.push('- _No AI layer in scope._');
     }
+
+    // §3.1-style reference table: Layer | What it represents | Where it gets unpacked.
+    const esc = (s?: string) => (s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim() || '—';
+    const rows: [string, string | undefined, string][] = [
+      ['Access layer', ln.access, '§4 Layered Technical View · §6 Architecture Style & Patterns View'],
+      ['Core infrastructure', ln.coreInfra, '§9 Technology Stack · §13 Integration Architecture'],
+      ['Core functional modules', ln.functionalModules, '§5 Detailed Component View · §10 Design Patterns Catalogue'],
+      ['Integration layer — 3rd party module integrations', ln.integration, '§13 Integration Architecture'],
+      ['External / 3rd party systems', ln.external, '§11 Auth & Security Design · §13 Integration Architecture'],
+      ['AI layer (conversational, RAG, multi-LLM)', ln.ai, '§12 AI Layer Architecture'],
+    ];
+    out.push('', '### The six layers — what each represents', '');
+    out.push('| Layer | What it represents | Where it gets unpacked in this HLD |');
+    out.push('| --- | --- | --- |');
+    rows.forEach(([name, note, ref]) => out.push(`| ${esc(name)} | ${esc(note)} | ${esc(ref)} |`));
+
     if (m.gaps?.length) {
       out.push('', '### Gaps & assumptions');
       bullets(m.gaps);

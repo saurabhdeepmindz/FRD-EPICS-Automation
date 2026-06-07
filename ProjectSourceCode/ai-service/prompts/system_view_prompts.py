@@ -29,7 +29,7 @@ Return ONLY this JSON shape (no markdown, no prose):
     "rag":{"title":"string","subtitle":"string"},
     "llmProviders":["string"]                   // e.g. Claude, Gemini, ChatGPT
   },
-  "layerNotes": {                               // one short "what it represents" line per band (see rule below)
+  "layerNotes": {                               // a DETAILED "what it represents" paragraph per band (see rule below)
     "access":"string",
     "coreInfra":"string",
     "functionalModules":"string",
@@ -42,7 +42,7 @@ Return ONLY this JSON shape (no markdown, no prose):
 }
 
 Rules:
-- `layerNotes`: for each of the six bands write ONE short sentence (max ~18 words) describing WHAT THAT LAYER REPRESENTS for THIS project — the same idea as a reference HLD's "what it represents" column. Be concrete and project-specific (name the actual surfaces/modules/vendors where helpful), not generic textbook text. Examples of the intended style: access = "User-facing surfaces plus the tenant envelope that scopes every request"; coreInfra = "Platform-wide capabilities every module consumes"; functionalModules = "The business/lifecycle modules, plus the role & permission model that scopes access across all of them".
+- `layerNotes`: for each of the six bands write a DETAILED 2-4 sentence description of WHAT THAT LAYER REPRESENTS for THIS project — this fills the "What it represents" column of a reference-HLD-style table rendered below the diagram (like the HRMS HLD §3.1). Be concrete and project-specific: name the actual surfaces, modules, services, and vendors; explain their role and how they relate to the rest of the system; mention phasing/3rd-party where relevant. Do NOT write generic textbook text and do NOT just restate the box labels — add genuine architectural context grounded in the PRD/FRD/HLD. Each note should read as a self-contained paragraph a stakeholder can understand on its own.
 - `phase`: 1 = MVP, 2 = later phase, 3 = future — infer from PRD scope/out-of-scope/timelines; default 1 if unclear.
 - `thirdParty`: true when the module relies on an external integration (from PRD Integration Requirements).
 - If the project is single-tenant, do NOT add a "Multi-tenant" channel; note it in gaps if relevant.
