@@ -155,6 +155,8 @@ export class HldService {
       mermaidDiagrams: (hld.mermaidDiagrams ?? {}) as Record<string, string>,
       // 50k-ft band model (canonical §3 representation) for export rendering.
       systemView: ((hld.metadata ?? {}) as Record<string, unknown>).systemView ?? null,
+      // Layered technical view (canonical §4 representation) for export rendering.
+      technicalView: ((hld.metadata ?? {}) as Record<string, unknown>).technicalView ?? null,
     };
   }
 
@@ -210,6 +212,72 @@ export class HldService {
     return model;
   }
 
+  /**
+   * Layered Technical View (§4) — structured layered-band model derived from the
+   * project's PRD/FRD/HLD via the AI service, cached on the HLD's metadata. Pass
+   * force=true to regenerate. Reuses the System View context builders.
+   */
+  async getTechnicalView(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.technicalView) return meta.technicalView as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.technicalViewHldContext(hld.sections);
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-technical-view`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`Technical view generation failed: ${detail}`);
+      throw new BadRequestException(`Technical view generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, technicalView: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
+  /** HLD context tuned for the layered technical view (§4). */
+  private technicalViewHldContext(sections: unknown): string {
+    const s = (sections ?? {}) as Record<string, unknown>;
+    const picks = [
+      'technicalLayersView', 'componentView', 'technologyStack', 'architectureStyleDecision',
+      'authDesign', 'aiLayer', 'integrations', 'deploymentView', 'multiTenancy',
+    ];
+    const parts: string[] = [];
+    for (const k of picks) {
+      if (s[k]) parts.push(`## ${HLD_SECTION_NAMES[k]}\n${JSON.stringify(flattenValue(s[k]))}`);
+    }
+    return parts.join('\n\n').slice(0, 6000);
+  }
+
   private systemViewPrdContext(sections?: unknown): string {
     if (!sections) return '';
     const s = sections as Record<string, unknown>;
@@ -250,6 +318,7 @@ export class HldService {
         (latest.sections ?? {}) as Record<string, unknown>,
         (latest.mermaidDiagrams ?? {}) as Record<string, string>,
         ((latest.metadata ?? {}) as Record<string, unknown>).systemView,
+        ((latest.metadata ?? {}) as Record<string, unknown>).technicalView,
       ),
     };
   }
@@ -358,16 +427,45 @@ export class HldService {
       .join('\n');
   }
 
-  /** Render the 17-section HLD + Mermaid diagrams to canonical Markdown. */
-  /** Strip legacy free-text §3 layer fields now superseded by the band model. */
-  private withoutLegacySystemViewFields(body: unknown): Record<string, unknown> | null {
+  /** Strip legacy free-text fields now superseded by a band model (§3/§4). */
+  private withoutLegacyFields(body: unknown, legacyKeys: string[]): Record<string, unknown> | null {
     if (!body || typeof body !== 'object') return null;
-    const legacy = new Set(['layers', 'phasing', 'externalSystems']);
+    const legacy = new Set(legacyKeys);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
       if (!legacy.has(k)) out[k] = v;
     }
     return out;
+  }
+
+  /** Render the layered technical view (§4) band model as readable Markdown. */
+  private technicalViewBandsMarkdown(model: Record<string, unknown>): string {
+    const m = model as {
+      layers?: { name?: string; applicable?: boolean; outOfScope?: string; nodes?: string[]; whatLivesHere?: string; keyTech?: string }[];
+      gaps?: string[];
+    };
+    const layers = m.layers ?? [];
+    const out: string[] = [];
+    for (const l of layers.filter((x) => x.applicable !== false)) {
+      out.push(`### ${l.name ?? ''}`);
+      (l.nodes ?? []).forEach((n) => out.push(`- ${n}`));
+      out.push('');
+    }
+    const esc = (s?: string) => (s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim() || '—';
+    out.push('### The technical layers — what lives in each', '');
+    out.push('| Layer | What lives here | Key technology / pattern |');
+    out.push('| --- | --- | --- |');
+    layers.forEach((l) => {
+      const oos = l.applicable === false;
+      const what = oos ? `Out of scope — ${l.outOfScope || 'not applicable to this project'}` : esc(l.whatLivesHere);
+      const tech = oos ? '—' : esc(l.keyTech);
+      out.push(`| ${esc(l.name)} | ${what} | ${tech} |`);
+    });
+    if (m.gaps?.length) {
+      out.push('', '### Gaps & assumptions');
+      m.gaps.forEach((g) => out.push(`- ${g}`));
+    }
+    return out.join('\n');
   }
 
   /** Render the 50k-ft band model as readable Markdown (canonical §3 representation). */
@@ -448,6 +546,7 @@ export class HldService {
     sections: Record<string, unknown>,
     diagrams: Record<string, string>,
     systemView?: unknown,
+    technicalView?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
@@ -456,7 +555,16 @@ export class HldService {
       // §3 — render the canonical band model; drop legacy free-text layer fields.
       if (key === 'systemView' && systemView && typeof systemView === 'object') {
         lines.push(this.systemViewBandsMarkdown(systemView as Record<string, unknown>), '');
-        const rest = this.withoutLegacySystemViewFields(body);
+        const rest = this.withoutLegacyFields(body, ['layers', 'phasing', 'externalSystems']);
+        if (rest && Object.keys(rest).length) {
+          lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
+        }
+        return;
+      }
+      // §4 — render the canonical layered technical view; drop legacy free-text fields.
+      if (key === 'technicalLayersView' && technicalView && typeof technicalView === 'object') {
+        lines.push(this.technicalViewBandsMarkdown(technicalView as Record<string, unknown>), '');
+        const rest = this.withoutLegacyFields(body, ['layers', 'description']);
         if (rest && Object.keys(rest).length) {
           lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
         }

@@ -3,10 +3,11 @@
 import { type ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Network } from 'lucide-react';
-import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
+import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
 import { HldMermaid } from './HldMermaid';
 import { HldStructureDiagram } from './HldStructureDiagram';
 import { HldSystemViewPanel } from './HldSystemViewPanel';
+import { HldTechnicalViewPanel } from './HldTechnicalViewPanel';
 import { Markdown } from './Markdown';
 import { DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -44,11 +45,14 @@ export function HldPreview({
 
         {HLD_SECTIONS.map((s, i) => {
           const body = hld.sections?.[s.key] as Record<string, unknown> | undefined;
-          // §3 — band diagram is canonical; hide legacy free-text layer fields.
+          // §3/§4 render as band diagrams (canonical); hide legacy free-text fields.
+          const isBandSection = s.key === 'systemView' || s.key === 'technicalLayersView';
           const bodyEntries = body
-            ? Object.entries(body).filter(
-                ([k]) => s.key !== 'systemView' || !SYSTEM_VIEW_LEGACY_FIELDS.includes(k),
-              )
+            ? Object.entries(body).filter(([k]) => {
+                if (s.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
+                if (s.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
+                return true;
+              })
             : [];
           const diagKey = DIAGRAM_FOR_SECTION[s.key];
           const diagram = diagKey ? hld.mermaidDiagrams?.[diagKey] : undefined;
@@ -72,8 +76,15 @@ export function HldPreview({
                 </div>
               )}
 
+              {/* Layered Technical View → layered band diagram (replaces Mermaid) */}
+              {s.key === 'technicalLayersView' && (
+                <div className="mb-3">
+                  <HldTechnicalViewPanel projectId={hld.projectId} hldId={hld.id} />
+                </div>
+              )}
+
               {/* Inline architecture diagram for this section (v9 MM parity) */}
-              {diagram && s.key !== 'systemView' && (
+              {diagram && !isBandSection && (
                 <div className="mb-3 border rounded-lg p-3">
                   <p className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5">
                     <Network className="h-3.5 w-3.5" /> {HLD_DIAGRAM_LABELS[diagKey] ?? 'Diagram'}
@@ -92,7 +103,7 @@ export function HldPreview({
               {!body || !Object.keys(body).length ? (
                 <p className="text-sm text-gray-400 pt-1">Not generated.</p>
               ) : bodyEntries.length === 0 ? (
-                s.key === 'systemView' ? null : <p className="text-sm text-gray-400 pt-1">—</p>
+                isBandSection ? null : <p className="text-sm text-gray-400 pt-1">—</p>
               ) : (
                 <dl className="pt-1 space-y-3">
                   {bodyEntries.map(([k, v]) => (

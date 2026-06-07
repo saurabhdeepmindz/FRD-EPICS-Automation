@@ -444,6 +444,12 @@ export const HLD_SECTIONS: { key: string; name: string }[] = [
  */
 export const SYSTEM_VIEW_LEGACY_FIELDS = ['layers', 'phasing', 'externalSystems'];
 
+/**
+ * Legacy free-text §4 fields superseded by the Layered Technical View band model.
+ * Hidden in browse/preview so the layered view is the single source.
+ */
+export const TECHNICAL_VIEW_LEGACY_FIELDS = ['layers', 'description'];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
@@ -524,6 +530,46 @@ export async function getHldSystemView(projectId: string, hldId: string): Promis
 export async function regenerateHldSystemView(projectId: string, hldId: string): Promise<SystemViewModel> {
   const { data } = await api.post<ApiEnvelope<SystemViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/system-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── Layered Technical View (§4) — structured layered-band model ──────────────
+
+export interface TechnicalViewLayer {
+  key: string;
+  name: string;
+  /** false → layer removed from the diagram; shown as out-of-scope in the table. */
+  applicable?: boolean;
+  outOfScope?: string;
+  /** Components shown as boxes in the band. */
+  nodes?: string[];
+  /** §4.1 "What lives here" — detailed, project-specific. */
+  whatLivesHere?: string;
+  /** §4.1 "Key technology / pattern". */
+  keyTech?: string;
+}
+
+export interface TechnicalViewModel {
+  layers: TechnicalViewLayer[];
+  gaps?: string[];
+}
+
+/** Build (cached) the Layered Technical View (§4) band model for an HLD. */
+export async function getHldTechnicalView(projectId: string, hldId: string): Promise<TechnicalViewModel> {
+  const { data } = await api.get<ApiEnvelope<TechnicalViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/technical-view`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Technical View band model (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldTechnicalView(projectId: string, hldId: string): Promise<TechnicalViewModel> {
+  const { data } = await api.post<ApiEnvelope<TechnicalViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/technical-view/regenerate`,
     {},
     { timeout: 180_000 },
   );

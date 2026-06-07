@@ -32,6 +32,7 @@ import {
   HLD_SECTIONS,
   HLD_DIAGRAM_LABELS,
   SYSTEM_VIEW_LEGACY_FIELDS,
+  TECHNICAL_VIEW_LEGACY_FIELDS,
   type Hld,
   type PrdGap,
   type ProjectStructure,
@@ -43,6 +44,7 @@ import { HldSectionEditor } from '@/components/ba-tool/HldSectionEditor';
 import { HldCopilot } from '@/components/ba-tool/HldCopilot';
 import { HldStructureDiagram } from '@/components/ba-tool/HldStructureDiagram';
 import { HldSystemViewPanel } from '@/components/ba-tool/HldSystemViewPanel';
+import { HldTechnicalViewPanel } from '@/components/ba-tool/HldTechnicalViewPanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -105,9 +107,11 @@ export default function HldPage() {
     }
   };
 
-  // 50k-ft System View now renders as the layered band diagram (not Mermaid).
+  // §3 System View + §4 Layered Technical View now render as band diagrams (not Mermaid).
   const diagramKeys = hld
-    ? Object.keys(hld.mermaidDiagrams ?? {}).filter((k) => hld.mermaidDiagrams[k]?.trim() && k !== 'systemView')
+    ? Object.keys(hld.mermaidDiagrams ?? {}).filter(
+        (k) => hld.mermaidDiagrams[k]?.trim() && k !== 'systemView' && k !== 'technicalLayers',
+      )
     : [];
   // Diagrams not tied to a section (those shown inline) — for the Preview nav entry.
   const mappedDiagramSet = new Set(HLD_SECTIONS.map((s) => DIAGRAM_FOR_SECTION[s.key]).filter(Boolean));
@@ -139,7 +143,9 @@ export default function HldPage() {
     const body = hld?.sections?.[key] as Record<string, unknown> | undefined;
     if (!body) return [];
     const keys = Object.keys(body);
-    return key === 'systemView' ? keys.filter((k) => !SYSTEM_VIEW_LEGACY_FIELDS.includes(k)) : keys;
+    if (key === 'systemView') return keys.filter((k) => !SYSTEM_VIEW_LEGACY_FIELDS.includes(k));
+    if (key === 'technicalLayersView') return keys.filter((k) => !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k));
+    return keys;
   };
 
   const selectSection = (key: string) => {
@@ -421,11 +427,14 @@ export default function HldPage() {
                       if (!sec) return null;
                       const body = hld.sections[sec.key] as Record<string, unknown> | undefined;
                       const diagKey = DIAGRAM_FOR_SECTION[sec.key];
-                      // §3 — band diagram is canonical; hide legacy free-text layer fields.
+                      // §3/§4 render as band diagrams (canonical); hide legacy free-text fields + mermaid.
+                      const isBandSection = sec.key === 'systemView' || sec.key === 'technicalLayersView';
                       const bodyEntries = body
-                        ? Object.entries(body).filter(
-                            ([k]) => sec.key !== 'systemView' || !SYSTEM_VIEW_LEGACY_FIELDS.includes(k),
-                          )
+                        ? Object.entries(body).filter(([k]) => {
+                            if (sec.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
+                            if (sec.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
+                            return true;
+                          })
                         : [];
                       return (
                         <section className="space-y-3">
@@ -438,7 +447,10 @@ export default function HldPage() {
                           {sec.key === 'systemView' && (
                             <HldSystemViewPanel projectId={projectId} hldId={hld.id} onNavigateSection={selectSection} />
                           )}
-                          {diagKey && hld.mermaidDiagrams?.[diagKey] && sec.key !== 'systemView' && (
+                          {sec.key === 'technicalLayersView' && (
+                            <HldTechnicalViewPanel projectId={projectId} hldId={hld.id} />
+                          )}
+                          {diagKey && hld.mermaidDiagrams?.[diagKey] && !isBandSection && (
                             <Card>
                               <CardContent className="p-4">
                                 <p className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
@@ -448,7 +460,7 @@ export default function HldPage() {
                               </CardContent>
                             </Card>
                           )}
-                          {(bodyEntries.length > 0 || sec.key !== 'systemView') && (
+                          {(bodyEntries.length > 0 || !isBandSection) && (
                             <Card>
                               <CardContent className="p-4">
                                 {!body ? (
