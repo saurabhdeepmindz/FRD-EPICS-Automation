@@ -159,6 +159,8 @@ export class HldService {
       technicalView: ((hld.metadata ?? {}) as Record<string, unknown>).technicalView ?? null,
       // Detailed component view (canonical §5 representation) for export rendering.
       componentView: ((hld.metadata ?? {}) as Record<string, unknown>).componentView ?? null,
+      // Architecture style & patterns view (canonical §6 representation).
+      styleView: ((hld.metadata ?? {}) as Record<string, unknown>).styleView ?? null,
     };
   }
 
@@ -318,6 +320,72 @@ export class HldService {
     return model;
   }
 
+  /**
+   * Architecture Style & Design Patterns View (§6) — structured model derived
+   * from the project's PRD/FRD/HLD via the AI service, cached on the HLD's
+   * metadata. Pass force=true to regenerate.
+   */
+  async getStyleView(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.styleView) return meta.styleView as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.styleViewHldContext(hld.sections);
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-style-view`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`Style view generation failed: ${detail}`);
+      throw new BadRequestException(`Style view generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, styleView: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
+  /** HLD context tuned for the architecture style & patterns view (§6). */
+  private styleViewHldContext(sections: unknown): string {
+    const s = (sections ?? {}) as Record<string, unknown>;
+    const picks = [
+      'architectureStyleView', 'architectureStyleDecision', 'componentView', 'technicalLayersView',
+      'designPatterns', 'technologyStack', 'authDesign', 'aiLayer', 'integrations', 'multiTenancy',
+    ];
+    const parts: string[] = [];
+    for (const k of picks) {
+      if (s[k]) parts.push(`## ${HLD_SECTION_NAMES[k]}\n${JSON.stringify(flattenValue(s[k]))}`);
+    }
+    return parts.join('\n\n').slice(0, 6000);
+  }
+
   /** HLD context tuned for the layered technical view (§4). */
   private technicalViewHldContext(sections: unknown): string {
     const s = (sections ?? {}) as Record<string, unknown>;
@@ -374,6 +442,7 @@ export class HldService {
         ((latest.metadata ?? {}) as Record<string, unknown>).systemView,
         ((latest.metadata ?? {}) as Record<string, unknown>).technicalView,
         ((latest.metadata ?? {}) as Record<string, unknown>).componentView,
+        ((latest.metadata ?? {}) as Record<string, unknown>).styleView,
       ),
     };
   }
@@ -638,6 +707,65 @@ export class HldService {
     return out.join('\n');
   }
 
+  /** Render the architecture style & patterns view (§6) model as readable Markdown. */
+  private styleViewBandsMarkdown(model: Record<string, unknown>): string {
+    const m = model as {
+      intro?: string;
+      actors?: string[];
+      tiers?: { name?: string; applicable?: boolean; pattern?: string; components?: { name?: string; subtext?: string }[] }[];
+      architecturalChoices?: { choice?: string; explicit?: string }[];
+      tierPatterns?: { tier?: string; patterns?: string }[];
+      modulePattern?: { applicable?: boolean; note?: string; tiers?: { tier?: string; archetype?: string; stack?: string; responsibility?: string; mustHave?: boolean }[]; forcingFunctions?: { service?: string; trigger?: string }[] };
+      gaps?: string[];
+    };
+    const esc = (s?: string) => (s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim() || '—';
+    const out: string[] = [];
+    if (m.intro) out.push(`_${m.intro}_`, '');
+    if (m.actors?.length) out.push(`**Actors:** ${m.actors.join(' · ')}`, '');
+    for (const t of (m.tiers ?? []).filter((x) => x.applicable !== false)) {
+      out.push(`### ${t.name ?? ''}${t.pattern && t.pattern !== '—' ? ` — _${t.pattern}_` : ''}`);
+      (t.components ?? []).forEach((c) => out.push(`- ${c.name ?? ''}${c.subtext ? ` — ${c.subtext}` : ''}`));
+      out.push('');
+    }
+    if (m.architecturalChoices?.length) {
+      out.push('### 6.1 — What this view tells you that the others do not', '');
+      out.push('| Architectural choice | What the diagram makes explicit |');
+      out.push('| --- | --- |');
+      m.architecturalChoices.forEach((c) => out.push(`| ${esc(c.choice)} | ${esc(c.explicit)} |`));
+      out.push('');
+    }
+    if (m.tierPatterns?.length) {
+      out.push('### 6.2 — Design patterns visible in this view', '');
+      out.push('| Tier | Patterns applied |');
+      out.push('| --- | --- |');
+      m.tierPatterns.forEach((tp) => out.push(`| ${esc(tp.tier)} | ${esc(tp.patterns)} |`));
+      out.push('');
+    }
+    const mp = m.modulePattern;
+    if (mp) {
+      out.push('### 6.3 — The 3-Tier Module Pattern', '');
+      if (mp.note) out.push(`_${mp.note}_`, '');
+      if (mp.applicable !== false && mp.tiers?.length) {
+        out.push('| Tier | Service archetype | Stack | Responsibility |');
+        out.push('| --- | --- | --- | --- |');
+        mp.tiers.forEach((t) => out.push(`| ${esc(t.tier)}${t.mustHave ? ' *' : ''} | ${esc(t.archetype)} | ${esc(t.stack)} | ${esc(t.responsibility)} |`));
+        out.push('');
+      }
+      if (mp.applicable !== false && mp.forcingFunctions?.length) {
+        out.push('**When to break the optional tiers out of M1**', '');
+        out.push('| Service to extract | Forcing function |');
+        out.push('| --- | --- |');
+        mp.forcingFunctions.forEach((f) => out.push(`| ${esc(f.service)} | ${esc(f.trigger)} |`));
+        out.push('');
+      }
+    }
+    if (m.gaps?.length) {
+      out.push('### Gaps & assumptions');
+      m.gaps.forEach((g) => out.push(`- ${g}`));
+    }
+    return out.join('\n');
+  }
+
   private renderMarkdown(
     version: number,
     sections: Record<string, unknown>,
@@ -645,6 +773,7 @@ export class HldService {
     systemView?: unknown,
     technicalView?: unknown,
     componentView?: unknown,
+    styleView?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
@@ -672,6 +801,15 @@ export class HldService {
       if (key === 'componentView' && componentView && typeof componentView === 'object') {
         lines.push(this.componentViewBandsMarkdown(componentView as Record<string, unknown>), '');
         const rest = this.withoutLegacyFields(body, ['components', 'description']);
+        if (rest && Object.keys(rest).length) {
+          lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
+        }
+        return;
+      }
+      // §6 — render the canonical architecture style & patterns view; drop legacy fields.
+      if (key === 'architectureStyleView' && styleView && typeof styleView === 'object') {
+        lines.push(this.styleViewBandsMarkdown(styleView as Record<string, unknown>), '');
+        const rest = this.withoutLegacyFields(body, ['tiers', 'description', 'patternsByTier']);
         if (rest && Object.keys(rest).length) {
           lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
         }
