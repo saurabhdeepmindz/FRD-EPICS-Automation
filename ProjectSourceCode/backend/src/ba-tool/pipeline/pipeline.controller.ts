@@ -587,6 +587,18 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  @Get('hld/:hldId/style-view')
+  async getHldStyleView(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getStyleView(hldId);
+    return { success: true, data };
+  }
+
+  @Post('hld/:hldId/style-view/regenerate')
+  async regenerateHldStyleView(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getStyleView(hldId, true);
+    return { success: true, data };
+  }
+
   @Post('hld/generate')
   async generateHld(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.hld.generate(id);

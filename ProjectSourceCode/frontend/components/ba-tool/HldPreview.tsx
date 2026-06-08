@@ -3,12 +3,13 @@
 import { type ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Network } from 'lucide-react';
-import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, COMPONENT_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
+import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, COMPONENT_VIEW_LEGACY_FIELDS, STYLE_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
 import { HldMermaid } from './HldMermaid';
 import { HldStructureDiagram } from './HldStructureDiagram';
 import { HldSystemViewPanel } from './HldSystemViewPanel';
 import { HldTechnicalViewPanel } from './HldTechnicalViewPanel';
 import { HldComponentViewPanel } from './HldComponentViewPanel';
+import { HldStyleViewPanel } from './HldStyleViewPanel';
 import { Markdown } from './Markdown';
 import { DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -46,14 +47,18 @@ export function HldPreview({
 
         {HLD_SECTIONS.map((s, i) => {
           const body = hld.sections?.[s.key] as Record<string, unknown> | undefined;
-          // §3/§4/§5 render as band diagrams (canonical); hide legacy free-text fields.
+          // §3/§4/§5/§6 render as band diagrams (canonical); hide legacy free-text fields.
           const isBandSection =
-            s.key === 'systemView' || s.key === 'technicalLayersView' || s.key === 'componentView';
+            s.key === 'systemView' ||
+            s.key === 'technicalLayersView' ||
+            s.key === 'componentView' ||
+            s.key === 'architectureStyleView';
           const bodyEntries = body
             ? Object.entries(body).filter(([k]) => {
                 if (s.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
                 if (s.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
                 if (s.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
+                if (s.key === 'architectureStyleView') return !STYLE_VIEW_LEGACY_FIELDS.includes(k);
                 return true;
               })
             : [];
@@ -96,6 +101,13 @@ export function HldPreview({
                       document.getElementById(`prev-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                     }
                   />
+                </div>
+              )}
+
+              {/* Architecture Style & Patterns View → actors+tiers + §6.1/§6.2/§6.3 (replaces Mermaid) */}
+              {s.key === 'architectureStyleView' && (
+                <div className="mb-3">
+                  <HldStyleViewPanel projectId={hld.projectId} hldId={hld.id} />
                 </div>
               )}
 

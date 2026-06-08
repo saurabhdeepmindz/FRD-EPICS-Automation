@@ -34,6 +34,7 @@ import {
   SYSTEM_VIEW_LEGACY_FIELDS,
   TECHNICAL_VIEW_LEGACY_FIELDS,
   COMPONENT_VIEW_LEGACY_FIELDS,
+  STYLE_VIEW_LEGACY_FIELDS,
   type Hld,
   type PrdGap,
   type ProjectStructure,
@@ -47,6 +48,7 @@ import { HldStructureDiagram } from '@/components/ba-tool/HldStructureDiagram';
 import { HldSystemViewPanel } from '@/components/ba-tool/HldSystemViewPanel';
 import { HldTechnicalViewPanel } from '@/components/ba-tool/HldTechnicalViewPanel';
 import { HldComponentViewPanel } from '@/components/ba-tool/HldComponentViewPanel';
+import { HldStyleViewPanel } from '@/components/ba-tool/HldStyleViewPanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -109,12 +111,10 @@ export default function HldPage() {
     }
   };
 
-  // §3/§4/§5 now render as band diagrams (not Mermaid).
+  // §3/§4/§5/§6 now render as band diagrams (not Mermaid).
+  const bandDiagramKeys = new Set(['systemView', 'technicalLayers', 'componentView', 'architectureStyle']);
   const diagramKeys = hld
-    ? Object.keys(hld.mermaidDiagrams ?? {}).filter(
-        (k) =>
-          hld.mermaidDiagrams[k]?.trim() && k !== 'systemView' && k !== 'technicalLayers' && k !== 'componentView',
-      )
+    ? Object.keys(hld.mermaidDiagrams ?? {}).filter((k) => hld.mermaidDiagrams[k]?.trim() && !bandDiagramKeys.has(k))
     : [];
   // Diagrams not tied to a section (those shown inline) — for the Preview nav entry.
   const mappedDiagramSet = new Set(HLD_SECTIONS.map((s) => DIAGRAM_FOR_SECTION[s.key]).filter(Boolean));
@@ -149,6 +149,7 @@ export default function HldPage() {
     if (key === 'systemView') return keys.filter((k) => !SYSTEM_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'technicalLayersView') return keys.filter((k) => !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'componentView') return keys.filter((k) => !COMPONENT_VIEW_LEGACY_FIELDS.includes(k));
+    if (key === 'architectureStyleView') return keys.filter((k) => !STYLE_VIEW_LEGACY_FIELDS.includes(k));
     return keys;
   };
 
@@ -431,14 +432,18 @@ export default function HldPage() {
                       if (!sec) return null;
                       const body = hld.sections[sec.key] as Record<string, unknown> | undefined;
                       const diagKey = DIAGRAM_FOR_SECTION[sec.key];
-                      // §3/§4/§5 render as band diagrams (canonical); hide legacy free-text fields + mermaid.
+                      // §3/§4/§5/§6 render as band diagrams (canonical); hide legacy free-text fields + mermaid.
                       const isBandSection =
-                        sec.key === 'systemView' || sec.key === 'technicalLayersView' || sec.key === 'componentView';
+                        sec.key === 'systemView' ||
+                        sec.key === 'technicalLayersView' ||
+                        sec.key === 'componentView' ||
+                        sec.key === 'architectureStyleView';
                       const bodyEntries = body
                         ? Object.entries(body).filter(([k]) => {
                             if (sec.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
+                            if (sec.key === 'architectureStyleView') return !STYLE_VIEW_LEGACY_FIELDS.includes(k);
                             return true;
                           })
                         : [];
@@ -458,6 +463,9 @@ export default function HldPage() {
                           )}
                           {sec.key === 'componentView' && (
                             <HldComponentViewPanel projectId={projectId} hldId={hld.id} onNavigateSection={selectSection} />
+                          )}
+                          {sec.key === 'architectureStyleView' && (
+                            <HldStyleViewPanel projectId={projectId} hldId={hld.id} />
                           )}
                           {diagKey && hld.mermaidDiagrams?.[diagKey] && !isBandSection && (
                             <Card>

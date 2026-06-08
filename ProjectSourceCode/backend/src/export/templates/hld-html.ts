@@ -51,6 +51,8 @@ export interface HldHtmlData {
   technicalView?: unknown;
   /** Detailed component view model — canonical §5 representation. */
   componentView?: unknown;
+  /** Architecture style & patterns view model — canonical §6 representation. */
+  styleView?: unknown;
 }
 
 /** Legacy free-text §3 fields superseded by the band model; hidden when it exists. */
@@ -59,6 +61,8 @@ const SYSTEM_VIEW_LEGACY_FIELDS = new Set(['layers', 'phasing', 'externalSystems
 const TECHNICAL_VIEW_LEGACY_FIELDS = new Set(['layers', 'description']);
 /** Legacy free-text §5 fields superseded by the detailed component view model. */
 const COMPONENT_VIEW_LEGACY_FIELDS = new Set(['components', 'description']);
+/** Legacy free-text §6 fields superseded by the architecture style & patterns view. */
+const STYLE_VIEW_LEGACY_FIELDS = new Set(['tiers', 'description', 'patternsByTier']);
 
 // ─── Pastel diagram palette (mirrors the Design System / frontend defaults) ───
 
@@ -374,6 +378,88 @@ function renderComponentViewBands(model: Record<string, unknown>): string {
   </div>`;
 }
 
+// ─── Architecture Style & Patterns View model → HTML (canonical §6) ───────────
+
+type StTier = { key?: string; name?: string; applicable?: boolean; pattern?: string; components?: { name?: string; subtext?: string }[] };
+type StMpTier = { tier?: string; archetype?: string; stack?: string; responsibility?: string; mustHave?: boolean };
+
+function renderStyleViewBands(model: Record<string, unknown>): string {
+  const m = model as {
+    intro?: string; actors?: string[]; tiers?: StTier[];
+    architecturalChoices?: { choice?: string; explicit?: string }[];
+    tierPatterns?: { tier?: string; patterns?: string }[];
+    modulePattern?: { applicable?: boolean; note?: string; tiers?: StMpTier[]; forcingFunctions?: { service?: string; trigger?: string }[] };
+    gaps?: string[];
+  };
+  const shown = (m.tiers ?? []).filter((t) => t.applicable !== false);
+
+  const actors = (m.actors ?? []).length
+    ? `<div class="sv-band"><h3 class="sv-band-title">Actors</h3><p class="sv-sub">${(m.actors ?? []).map((a) => esc(a)).join(' · ')}</p></div>`
+    : '';
+
+  const bands = shown
+    .map((t) => {
+      const banner = t.pattern && t.pattern !== '—' ? `<span class="cv-pattern">${esc(t.pattern)}</span>` : '';
+      const comps = (t.components ?? []).length
+        ? `<ul class="vlist">${t.components!
+            .map((c) => `<li>${esc(c.name ?? '')}${c.subtext ? ` <em>— ${esc(c.subtext)}</em>` : ''}</li>`)
+            .join('')}</ul>`
+        : '';
+      return `<div class="sv-band"><h3 class="sv-band-title">${esc(t.name ?? '')} ${banner}</h3>${comps}</div>`;
+    })
+    .join('');
+
+  const choices = (m.architecturalChoices ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">6.1 · What this view tells you that the others do not</h3>
+       <table class="sv-table"><thead><tr><th>Architectural choice</th><th>What the diagram makes explicit</th></tr></thead>
+       <tbody>${(m.architecturalChoices ?? [])
+         .map((c) => `<tr><td class="sv-td-layer">${esc(c.choice ?? '')}</td><td>${esc(c.explicit ?? '')}</td></tr>`)
+         .join('')}</tbody></table>`
+    : '';
+
+  const tps = (m.tierPatterns ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">6.2 · Design patterns visible in this view</h3>
+       <table class="sv-table"><thead><tr><th>Tier</th><th>Patterns applied</th></tr></thead>
+       <tbody>${(m.tierPatterns ?? [])
+         .map((tp) => `<tr><td class="sv-td-layer">${esc(tp.tier ?? '')}</td><td>${esc(tp.patterns ?? '')}</td></tr>`)
+         .join('')}</tbody></table>`
+    : '';
+
+  const mp = m.modulePattern;
+  let mpHtml = '';
+  if (mp) {
+    const note = mp.note ? `<p class="sv-note">${esc(mp.note)}</p>` : '';
+    const mpTable = mp.applicable !== false && (mp.tiers ?? []).length
+      ? `<table class="sv-table"><thead><tr><th>Tier</th><th>Service archetype</th><th>Stack</th><th>Responsibility</th></tr></thead>
+         <tbody>${(mp.tiers ?? [])
+           .map((t) => `<tr><td class="sv-td-layer">${esc(t.tier ?? '')}${t.mustHave ? ' *' : ''}</td><td>${esc(t.archetype ?? '')}</td><td>${esc(t.stack ?? '')}</td><td>${esc(t.responsibility ?? '')}</td></tr>`)
+           .join('')}</tbody></table>`
+      : '';
+    const ffTable = mp.applicable !== false && (mp.forcingFunctions ?? []).length
+      ? `<p class="sv-sub" style="margin-top:6px;"><strong>When to break the optional tiers out of M1</strong></p>
+         <table class="sv-table"><thead><tr><th>Service to extract</th><th>Forcing function</th></tr></thead>
+         <tbody>${(mp.forcingFunctions ?? [])
+           .map((f) => `<tr><td class="sv-td-layer">${esc(f.service ?? '')}</td><td>${esc(f.trigger ?? '')}</td></tr>`)
+           .join('')}</tbody></table>`
+      : '';
+    mpHtml = `<h3 class="sv-band-title" style="margin-top:14px;">6.3 · The 3-Tier Module Pattern</h3>${note}${mpTable}${ffTable}`;
+  }
+
+  const gaps = m.gaps?.length
+    ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
+    : '';
+
+  return `<div class="sv-bands">
+    ${m.intro ? `<p class="sv-note">${esc(m.intro)}</p>` : ''}
+    ${actors}
+    ${bands}
+    ${choices}
+    ${tps}
+    ${mpHtml}
+    ${gaps}
+  </div>`;
+}
+
 // ─── Main export ───────────────────────────────────────────────────────────
 
 export function generateHldHtml(data: HldHtmlData): string {
@@ -401,6 +487,10 @@ export function generateHldHtml(data: HldHtmlData): string {
       // Band model is the canonical §5 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, COMPONENT_VIEW_LEGACY_FIELDS) : '';
       inner = renderComponentViewBands(data.componentView as Record<string, unknown>) + rest;
+    } else if (key === 'architectureStyleView' && data.styleView && typeof data.styleView === 'object') {
+      // Band model is the canonical §6 view; legacy free-text fields are dropped.
+      const rest = body && typeof body === 'object' ? renderSectionBody(body, STYLE_VIEW_LEGACY_FIELDS) : '';
+      inner = renderStyleViewBands(data.styleView as Record<string, unknown>) + rest;
     } else {
       inner = renderSectionBody(body);
     }

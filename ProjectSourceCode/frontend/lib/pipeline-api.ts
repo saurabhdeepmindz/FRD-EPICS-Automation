@@ -456,6 +456,12 @@ export const TECHNICAL_VIEW_LEGACY_FIELDS = ['layers', 'description'];
  */
 export const COMPONENT_VIEW_LEGACY_FIELDS = ['components', 'description'];
 
+/**
+ * Legacy free-text §6 fields superseded by the Architecture Style & Patterns View.
+ * Hidden in browse/preview so the style view is the single source.
+ */
+export const STYLE_VIEW_LEGACY_FIELDS = ['tiers', 'description', 'patternsByTier'];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
@@ -626,6 +632,64 @@ export async function getHldComponentView(projectId: string, hldId: string): Pro
 export async function regenerateHldComponentView(projectId: string, hldId: string): Promise<ComponentViewModel> {
   const { data } = await api.post<ApiEnvelope<ComponentViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/component-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── Architecture Style & Design Patterns View (§6) — structured model ────────
+
+export interface StyleViewTier {
+  key: string;
+  name: string;
+  applicable?: boolean;
+  outOfScope?: string;
+  /** Tier-wide pattern caption. */
+  pattern?: string;
+  components?: { name: string; subtext?: string }[];
+}
+
+export interface StyleViewModulePatternTier {
+  tier: string;
+  archetype?: string;
+  stack?: string;
+  responsibility?: string;
+  mustHave?: boolean;
+}
+
+export interface StyleViewModel {
+  intro?: string;
+  /** Top actors row (RBAC-scoped user types). */
+  actors?: string[];
+  tiers: StyleViewTier[];
+  /** §6.1 — Architectural choice | What the diagram makes explicit. */
+  architecturalChoices?: { choice: string; explicit: string }[];
+  /** §6.2 — Tier | Patterns applied. */
+  tierPatterns?: { tier: string; patterns: string }[];
+  /** §6.3 — The 3-Tier Module Pattern. */
+  modulePattern?: {
+    applicable?: boolean;
+    note?: string;
+    tiers?: StyleViewModulePatternTier[];
+    forcingFunctions?: { service: string; trigger: string }[];
+  };
+  gaps?: string[];
+}
+
+/** Build (cached) the Architecture Style & Patterns View (§6) model for an HLD. */
+export async function getHldStyleView(projectId: string, hldId: string): Promise<StyleViewModel> {
+  const { data } = await api.get<ApiEnvelope<StyleViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/style-view`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Style View model (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldStyleView(projectId: string, hldId: string): Promise<StyleViewModel> {
+  const { data } = await api.post<ApiEnvelope<StyleViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/style-view/regenerate`,
     {},
     { timeout: 180_000 },
   );
