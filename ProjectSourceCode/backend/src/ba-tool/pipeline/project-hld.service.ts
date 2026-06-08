@@ -161,6 +161,8 @@ export class HldService {
       componentView: ((hld.metadata ?? {}) as Record<string, unknown>).componentView ?? null,
       // Architecture style & patterns view (canonical §6 representation).
       styleView: ((hld.metadata ?? {}) as Record<string, unknown>).styleView ?? null,
+      // Project structure overview (canonical §17 representation).
+      structureView: ((hld.metadata ?? {}) as Record<string, unknown>).structureView ?? null,
     };
   }
 
@@ -370,6 +372,72 @@ export class HldService {
       data: { metadata: { ...meta, styleView: model } as Prisma.InputJsonValue },
     });
     return model;
+  }
+
+  /**
+   * Project Structure (§17) overview — structured monorepo map derived from the
+   * project's PRD/FRD/HLD via the AI service, cached on the HLD's metadata. Pass
+   * force=true to regenerate.
+   */
+  async getProjectStructureView(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.structureView) return meta.structureView as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.structureViewHldContext(hld.sections);
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-project-structure`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`Project structure generation failed: ${detail}`);
+      throw new BadRequestException(`Project structure generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, structureView: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
+  /** HLD context tuned for the project structure overview (§17). */
+  private structureViewHldContext(sections: unknown): string {
+    const s = (sections ?? {}) as Record<string, unknown>;
+    const picks = [
+      'projectStructure', 'componentView', 'technologyStack', 'technicalLayersView',
+      'integrations', 'aiLayer', 'multiTenancy', 'dataLayer',
+    ];
+    const parts: string[] = [];
+    for (const k of picks) {
+      if (s[k]) parts.push(`## ${HLD_SECTION_NAMES[k] ?? k}\n${JSON.stringify(flattenValue(s[k]))}`);
+    }
+    return parts.join('\n\n').slice(0, 5000);
   }
 
   /** HLD context tuned for the architecture style & patterns view (§6). */

@@ -55,6 +55,10 @@ from prompts.style_view_prompts import (
     STYLE_VIEW_SYSTEM_PROMPT,
     build_style_view_user_message,
 )
+from prompts.project_structure_prompts import (
+    PROJECT_STRUCTURE_SYSTEM_PROMPT,
+    build_project_structure_user_message,
+)
 from prompts.system_view_prompts import (
     SYSTEM_VIEW_SYSTEM_PROMPT,
     build_system_view_user_message,
@@ -3122,4 +3126,57 @@ async def hld_style_view(
         logger.error("Style view JSON parse failed: %s", exc)
         raise HTTPException(status_code=502, detail="AI returned malformed style-view JSON") from exc
     logger.info("Style view generated for '%s' (%d tiers)", body.product_name, len(model.get("tiers", [])))
+    return model
+
+
+# ─── Project Structure (§17) — structured model ───────────────────────────────
+
+class ProjectStructureRequest(BaseModel):
+    provider: str = "anthropic"
+    product_name: str = ""
+    prd_context: str = ""
+    hld_context: str = ""
+
+
+@app.post("/hld-project-structure", tags=["copilot"])
+async def hld_project_structure(
+    body: ProjectStructureRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """Return the project structure overview (§17) as a structured JSON model."""
+    user = build_project_structure_user_message(body.product_name, body.prd_context, body.hld_context)
+    provider = body.provider or "anthropic"
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": PROJECT_STRUCTURE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=3000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except openai.OpenAIError as exc:
+            logger.error("Project structure (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=PROJECT_STRUCTURE_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=3000,
+            temperature=0.3,
+        )
+    try:
+        model = _parse_ai_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Project structure JSON parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI returned malformed project-structure JSON") from exc
+    logger.info("Project structure generated for '%s' (%d groups)", body.product_name, len(model.get("groups", [])))
     return model

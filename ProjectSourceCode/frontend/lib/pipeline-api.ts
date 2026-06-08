@@ -462,6 +462,12 @@ export const COMPONENT_VIEW_LEGACY_FIELDS = ['components', 'description'];
  */
 export const STYLE_VIEW_LEGACY_FIELDS = ['tiers', 'description', 'patternsByTier'];
 
+/**
+ * Legacy free-text §17 fields superseded by the Project Structure view.
+ * Hidden in browse/preview so the structure view is the single source.
+ */
+export const STRUCTURE_VIEW_LEGACY_FIELDS = ['aiAgent', 'backend', 'frontend', 'namingConventions'];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
@@ -690,6 +696,42 @@ export async function getHldStyleView(projectId: string, hldId: string): Promise
 export async function regenerateHldStyleView(projectId: string, hldId: string): Promise<StyleViewModel> {
   const { data } = await api.post<ApiEnvelope<StyleViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/style-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── Project Structure (§17) — structured model ───────────────────────────────
+
+export interface ProjectStructureGroup {
+  key: string;
+  title: string;
+  /** frontend | backend | db | shared | config | ai (drives the tile colour). */
+  kind: string;
+  items: string[];
+}
+
+export interface ProjectStructureModel {
+  monorepoLabel?: string;
+  groups: ProjectStructureGroup[];
+  aiAgent?: { applicable?: boolean; note?: string };
+  gaps?: string[];
+}
+
+/** Build (cached) the Project Structure (§17) overview model for an HLD. */
+export async function getHldProjectStructure(projectId: string, hldId: string): Promise<ProjectStructureModel> {
+  const { data } = await api.get<ApiEnvelope<ProjectStructureModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/project-structure`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Project Structure overview (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldProjectStructure(projectId: string, hldId: string): Promise<ProjectStructureModel> {
+  const { data } = await api.post<ApiEnvelope<ProjectStructureModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/project-structure/regenerate`,
     {},
     { timeout: 180_000 },
   );
