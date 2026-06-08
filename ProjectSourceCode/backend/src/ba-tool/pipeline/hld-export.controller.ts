@@ -2,7 +2,8 @@ import { Controller, Get, Logger, Param, ParseUUIDPipe, Res } from '@nestjs/comm
 import { Response } from 'express';
 import { HldService } from './project-hld.service';
 import { PdfService } from '../../export/pdf.service';
-import { generateHldHtml } from '../../export/templates/hld-html';
+import { generateHldHtml, orderedFlowDiagrams } from '../../export/templates/hld-html';
+import { buildFlowDiagramSvg } from '../../export/templates/aws-flow-diagram';
 
 // html-to-docx is CommonJS with no bundled types — converts an HTML string to a
 // real OOXML .docx Buffer in Node. The `margins` object MUST include
@@ -53,7 +54,21 @@ export class HldExportController {
     @Res() res: Response,
   ) {
     const data = await this.hld.getExport(hldId);
-    const html = generateHldHtml(data);
+    // §7.5 flow diagrams: html-to-docx can't render inline SVG, so rasterize each
+    // diagram to a PNG and embed those instead. Failures degrade to a textual
+    // node→edge fallback inside generateHldHtml (never blocks the export).
+    let flowImagePngs: (string | null)[] | undefined;
+    if (data.deploymentFlows && typeof data.deploymentFlows === 'object') {
+      try {
+        const svgs = orderedFlowDiagrams(data.deploymentFlows as Record<string, unknown>).map((d) =>
+          buildFlowDiagramSvg(d),
+        );
+        if (svgs.length) flowImagePngs = await this.pdf.rasterizeSvgs(svgs);
+      } catch (err) {
+        this.logger.warn(`Flow-diagram rasterization failed for HLD ${hldId} (non-fatal): ${(err as Error).message}`);
+      }
+    }
+    const html = generateHldHtml(data, { flowImagePngs });
     let buffer: Buffer;
     try {
       const raw = await htmlToDocx(html, null, {
