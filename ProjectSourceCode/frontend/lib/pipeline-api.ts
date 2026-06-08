@@ -471,9 +471,10 @@ export const STRUCTURE_VIEW_LEGACY_FIELDS = ['aiAgent', 'backend', 'frontend', '
 /** §17 sub-sections — left-menu entries + panel anchor ids (`struct-<id>`). */
 export const STRUCTURE_SUBSECTIONS: { id: string; label: string }[] = [
   { id: 'backend', label: '17.1 Backend' },
-  { id: 'frontend', label: '17.2 Frontend' },
-  { id: 'aiagent', label: '17.3 AI Agent' },
-  { id: 'naming', label: '17.4 Naming conventions' },
+  { id: 'permodule', label: '17.2 Per-module structure' },
+  { id: 'frontend', label: '17.3 Frontend' },
+  { id: 'aiagent', label: '17.4 AI Agent' },
+  { id: 'naming', label: '17.5 Naming conventions' },
 ];
 
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
