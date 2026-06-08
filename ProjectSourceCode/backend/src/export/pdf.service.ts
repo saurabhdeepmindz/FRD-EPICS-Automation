@@ -110,6 +110,64 @@ export class PdfService {
       }
     }
   }
+
+  /**
+   * Rasterize SVG strings to PNG data-URIs in a single headless Chromium session.
+   * Used to embed the §7.5 AWS flow diagrams in DOCX (html-to-docx runs no JS and
+   * does not render inline SVG). Returns `null` for any diagram that fails and an
+   * all-`null` array if Puppeteer/Chrome is unavailable — callers degrade to a
+   * textual fallback rather than failing the export.
+   */
+  async rasterizeSvgs(svgs: string[], scale = 2): Promise<(string | null)[]> {
+    if (!svgs.length) return [];
+    let puppeteer: typeof import('puppeteer');
+    try {
+      puppeteer = await import('puppeteer');
+    } catch {
+      this.logger.warn('Puppeteer not available — DOCX flow diagrams will use the textual fallback');
+      return svgs.map(() => null);
+    }
+    let browser: import('puppeteer').Browser;
+    try {
+      browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    } catch (err) {
+      this.logger.error(
+        `Puppeteer failed to launch for SVG rasterization — DOCX flow diagrams will use the textual fallback. ` +
+          `Fix: run "npx puppeteer browsers install chrome". Original error: ${(err as Error).message}`,
+      );
+      return svgs.map(() => null);
+    }
+    try {
+      const out: (string | null)[] = [];
+      for (const svg of svgs) {
+        try {
+          const page = await browser.newPage();
+          await page.setViewport({ width: 1400, height: 900, deviceScaleFactor: scale });
+          const html = `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{background:#fff}body{display:inline-block}svg{display:block}</style></head><body>${svg}</body></html>`;
+          await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60_000 });
+          const el = await page.$('svg');
+          if (!el) {
+            out.push(null);
+            await page.close();
+            continue;
+          }
+          const buf = await el.screenshot({ type: 'png', omitBackground: false });
+          out.push(`data:image/png;base64,${Buffer.from(buf as Uint8Array).toString('base64')}`);
+          await page.close();
+        } catch (err) {
+          this.logger.warn(`SVG rasterization failed for one diagram (non-fatal): ${(err as Error).message}`);
+          out.push(null);
+        }
+      }
+      return out;
+    } finally {
+      try {
+        await browser.close();
+      } catch (err) {
+        this.logger.warn(`puppeteer cleanup failed (non-fatal): ${(err as Error).message}`);
+      }
+    }
+  }
 }
 
 function escapeHtml(s: string): string {

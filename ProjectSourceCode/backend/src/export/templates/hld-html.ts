@@ -585,17 +585,46 @@ function renderDeploymentView(model: Record<string, unknown>): string {
 
 // ─── AWS Flow Diagrams → HTML (§7.5, connected reference-architecture views) ───
 
-function renderDeploymentFlows(model: Record<string, unknown>): string {
+/** The §7.5 diagrams in render order: per-flow diagrams then the consolidated one. */
+export function orderedFlowDiagrams(model: Record<string, unknown>): FlowDiagramModel[] {
   const m = model as { diagrams?: FlowDiagramModel[]; consolidated?: FlowDiagramModel };
   const all: FlowDiagramModel[] = [...(m.diagrams ?? [])];
   if (m.consolidated) all.push(m.consolidated);
+  return all;
+}
+
+/** Build a textual node→edge fallback for a flow (DOCX when rasterization fails). */
+function flowTextFallback(d: FlowDiagramModel): string {
+  const labels = new Map<string, string>();
+  (d.nodes ?? []).forEach((n) => labels.set(n.id, n.label ?? n.id));
+  const items = (d.edges ?? [])
+    .map((e) => `<li>${esc(labels.get(e.from) ?? e.from)} &rarr; ${esc(labels.get(e.to) ?? e.to)}${e.label ? ` (${esc(e.label)})` : ''}</li>`)
+    .join('');
+  return `<ul class="vlist">${items}</ul>`;
+}
+
+/**
+ * Render the §7.5 flow diagrams. By default emits inline SVG (screen + PDF). When
+ * `pngs` is provided (DOCX path) each diagram uses its rasterized PNG instead, or
+ * a textual node→edge fallback if that diagram's PNG is null.
+ */
+function renderDeploymentFlows(model: Record<string, unknown>, pngs?: (string | null)[]): string {
+  const all = orderedFlowDiagrams(model);
   if (!all.length) return '';
   const blocks = all
-    .map(
-      (d) => `<div class="dv-flow"><h4 class="dv-band-title">${esc(d.title ?? 'Flow')}</h4>
+    .map((d, i) => {
+      let body: string;
+      if (pngs) {
+        body = pngs[i]
+          ? `<img class="dv-flow-img" src="${pngs[i]}" alt="${esc(d.title ?? 'AWS flow diagram')}"/>`
+          : flowTextFallback(d);
+      } else {
+        body = buildFlowDiagramSvg(d);
+      }
+      return `<div class="dv-flow"><h4 class="dv-band-title">${esc(d.title ?? 'Flow')}</h4>
         ${d.description ? `<p class="sv-note">${esc(d.description)}</p>` : ''}
-        <div class="dv-flow-wrap">${buildFlowDiagramSvg(d)}</div></div>`,
-    )
+        <div class="dv-flow-wrap">${body}</div></div>`;
+    })
     .join('');
   return `<h3 class="sv-band-title" style="margin-top:14px;">7.5 &middot; AWS flow diagrams</h3>${blocks}`;
 }
@@ -689,7 +718,17 @@ function renderProjectStructure(model: Record<string, unknown>): string {
 
 // ─── Main export ───────────────────────────────────────────────────────────
 
-export function generateHldHtml(data: HldHtmlData): string {
+export interface HldHtmlOptions {
+  /**
+   * Rasterized PNG data-URIs for the §7.5 flow diagrams, index-aligned to
+   * `orderedFlowDiagrams(deploymentFlows)`. Supplied by the DOCX export so the
+   * diagrams embed as images (html-to-docx cannot render inline SVG). Omitted for
+   * PDF/preview, which use crisp inline SVG.
+   */
+  flowImagePngs?: (string | null)[];
+}
+
+export function generateHldHtml(data: HldHtmlData, opts: HldHtmlOptions = {}): string {
   const date =
     data.createdAt instanceof Date
       ? data.createdAt.toLocaleDateString()
@@ -722,7 +761,7 @@ export function generateHldHtml(data: HldHtmlData): string {
       // AWS deployment view is the canonical §7 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, DEPLOYMENT_VIEW_LEGACY_FIELDS) : '';
       const flows = data.deploymentFlows && typeof data.deploymentFlows === 'object'
-        ? renderDeploymentFlows(data.deploymentFlows as Record<string, unknown>)
+        ? renderDeploymentFlows(data.deploymentFlows as Record<string, unknown>, opts.flowImagePngs)
         : '';
       inner = renderDeploymentView(data.deploymentView as Record<string, unknown>) + flows + rest;
     } else if (key === 'projectStructure' && data.structureView && typeof data.structureView === 'object') {
@@ -832,6 +871,7 @@ export function generateHldHtml(data: HldHtmlData): string {
     .dv-flow { margin:0 0 14px 0; page-break-inside:avoid; }
     .dv-flow-wrap { overflow-x:auto; }
     .dv-flow-svg { max-width:100%; height:auto; }
+    .dv-flow-img { max-width:100%; height:auto; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }
