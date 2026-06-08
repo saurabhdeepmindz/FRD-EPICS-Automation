@@ -45,6 +45,13 @@ interface AiHldResponse {
 export class HldService {
   private readonly logger = new Logger(HldService.name);
   private readonly aiServiceUrl: string;
+  /**
+   * Provider for the structured HLD view generators (§3–§7, §17). Defaults to
+   * OpenAI; set HLD_AI_PROVIDER=anthropic in backend/.env to use Claude. Lets us
+   * switch providers without a code change (e.g. when one account is out of
+   * credits). See [[ai-engines-and-env]].
+   */
+  private readonly hldProvider: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -52,6 +59,7 @@ export class HldService {
     private readonly projectFolders: ProjectFolderService,
   ) {
     this.aiServiceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:5000');
+    this.hldProvider = this.config.get<string>('HLD_AI_PROVIDER', 'openai');
   }
 
   async list(projectId: string) {
@@ -197,7 +205,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-system-view`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
@@ -249,7 +257,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-technical-view`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
@@ -301,7 +309,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-component-view`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
@@ -353,7 +361,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-style-view`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
@@ -406,7 +414,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-deployment-view`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
@@ -460,7 +468,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-deployment-flows`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
@@ -513,7 +521,7 @@ export class HldService {
       const { data } = await axios.post<Record<string, unknown>>(
         `${this.aiServiceUrl}/hld-project-structure`,
         {
-          provider: 'anthropic',
+          provider: this.hldProvider,
           product_name: project?.productName ?? project?.name ?? 'Project',
           prd_context: prdContext,
           hld_context: hldContext,
