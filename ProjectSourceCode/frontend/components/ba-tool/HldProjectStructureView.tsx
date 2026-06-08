@@ -129,12 +129,18 @@ export function HldProjectStructureView({
           </div>
         )}
 
-        {/* §17.1 Backend */}
+        {/* §17.1 Backend (root layout) */}
         {model.backend && (
           <SubSection id="struct-backend" title={`17.1 · Backend project structure${model.backend.stack ? ` (${model.backend.stack})` : ''}`}>
             {model.backend.intro && <p className="text-[12px] leading-snug mb-2" style={{ color: T.caption }}>{model.backend.intro}</p>}
             {model.backend.rootTree && <><p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Root layout</p><Tree>{model.backend.rootTree}</Tree></>}
-            {model.backend.perModuleTree && <><p className="text-[11px] font-medium mt-2 mb-1" style={{ color: T.bandTitle }}>Per-module structure — apps/[module]-api/</p><Tree>{model.backend.perModuleTree}</Tree></>}
+          </SubSection>
+        )}
+
+        {/* §17.2 Per-module structure */}
+        {model.backend && (model.backend.perModuleTree || (model.backend.folderReference ?? []).length > 0) && (
+          <SubSection id="struct-permodule" title="17.2 · Per-module structure — apps/[module]-api/">
+            {model.backend.perModuleTree && <Tree>{model.backend.perModuleTree}</Tree>}
             {(model.backend.folderReference ?? []).length > 0 && (
               <div className="mt-2">
                 <p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Folder reference</p>
@@ -148,9 +154,9 @@ export function HldProjectStructureView({
           </SubSection>
         )}
 
-        {/* §17.2 Frontend */}
+        {/* §17.3 Frontend */}
         {model.frontend && (
-          <SubSection id="struct-frontend" title={`17.2 · Frontend project structure${model.frontend.stack ? ` (${model.frontend.stack})` : ''}`}>
+          <SubSection id="struct-frontend" title={`17.3 · Frontend project structure${model.frontend.stack ? ` (${model.frontend.stack})` : ''}`}>
             {model.frontend.intro && <p className="text-[12px] leading-snug mb-2" style={{ color: T.caption }}>{model.frontend.intro}</p>}
             {model.frontend.rootTree && <><p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Root layout</p><Tree>{model.frontend.rootTree}</Tree></>}
             {(model.frontend.componentRule ?? []).length > 0 && (
@@ -167,8 +173,8 @@ export function HldProjectStructureView({
           </SubSection>
         )}
 
-        {/* §17.3 AI Agent */}
-        <SubSection id="struct-aiagent" title={`17.3 · AI Agent project structure${model.aiAgent?.applicable !== false && model.aiAgent?.stack ? ` (${model.aiAgent.stack})` : ''}`}>
+        {/* §17.4 AI Agent */}
+        <SubSection id="struct-aiagent" title={`17.4 · AI Agent project structure${model.aiAgent?.applicable !== false && model.aiAgent?.stack ? ` (${model.aiAgent.stack})` : ''}`}>
           {model.aiAgent?.applicable === false ? (
             <p className="text-[12px] italic" style={{ color: '#9A968F' }}>{model.aiAgent?.note || 'Not applicable — no AI agent required for this project.'}</p>
           ) : (
@@ -192,7 +198,7 @@ export function HldProjectStructureView({
 
         {/* §17.4 Naming conventions */}
         {(model.namingConventions ?? []).length > 0 && (
-          <SubSection id="struct-naming" title="17.4 · Naming conventions across all stacks">
+          <SubSection id="struct-naming" title="17.5 · Naming conventions across all stacks">
             <Table head={['Concern', 'Convention', 'Examples']} widths={['24%', '30%']}>
               {model.namingConventions!.map((n, i) => (
                 <Row key={i} cells={[n.concern, n.convention, n.examples]} bold={[true, false, false]} mono={[false, false, true]} />

@@ -874,11 +874,14 @@ export class HldService {
       out.push(`### 17.1 — Backend project structure${m.backend.stack ? ` (${m.backend.stack})` : ''}`, '');
       if (m.backend.intro) out.push(m.backend.intro, '');
       codeBlock(m.backend.rootTree);
-      codeBlock(m.backend.perModuleTree);
-      refTable(m.backend.folderReference);
+      if (m.backend.perModuleTree?.trim() || m.backend.folderReference?.length) {
+        out.push('### 17.2 — Per-module structure — apps/[module]-api/', '');
+        codeBlock(m.backend.perModuleTree);
+        refTable(m.backend.folderReference);
+      }
     }
     if (m.frontend) {
-      out.push(`### 17.2 — Frontend project structure${m.frontend.stack ? ` (${m.frontend.stack})` : ''}`, '');
+      out.push(`### 17.3 — Frontend project structure${m.frontend.stack ? ` (${m.frontend.stack})` : ''}`, '');
       if (m.frontend.intro) out.push(m.frontend.intro, '');
       codeBlock(m.frontend.rootTree);
       if (m.frontend.componentRule?.length) {
@@ -888,7 +891,7 @@ export class HldService {
       }
       if (m.frontend.promotionRule) out.push(`**Promotion rule —** ${m.frontend.promotionRule}`, '');
     }
-    out.push(`### 17.3 — AI Agent project structure${m.aiAgent?.applicable !== false && m.aiAgent?.stack ? ` (${m.aiAgent.stack})` : ''}`, '');
+    out.push(`### 17.4 — AI Agent project structure${m.aiAgent?.applicable !== false && m.aiAgent?.stack ? ` (${m.aiAgent.stack})` : ''}`, '');
     if (m.aiAgent?.applicable === false) {
       out.push(`_${m.aiAgent?.note || 'Not applicable — no AI agent required.'}_`, '');
     } else {
@@ -898,7 +901,7 @@ export class HldService {
       codeBlock(m.aiAgent?.runtimeInteraction);
     }
     if (m.namingConventions?.length) {
-      out.push('### 17.4 — Naming conventions across all stacks', '');
+      out.push('### 17.5 — Naming conventions across all stacks', '');
       out.push('| Concern | Convention | Examples |', '| --- | --- | --- |');
       m.namingConventions.forEach((n) => out.push(`| ${esc(n.concern)} | ${esc(n.convention)} | ${esc(n.examples)} |`));
       out.push('');

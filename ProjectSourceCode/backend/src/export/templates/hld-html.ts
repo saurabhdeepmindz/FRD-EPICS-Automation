@@ -503,11 +503,16 @@ function renderProjectStructure(model: Record<string, unknown>): string {
   const backend = m.backend
     ? `<h3 class="sv-band-title" style="margin-top:14px;">17.1 · Backend project structure${m.backend.stack ? ` (${esc(m.backend.stack)})` : ''}</h3>
        ${m.backend.intro ? `<p class="sv-note">${esc(m.backend.intro)}</p>` : ''}
-       ${tree(m.backend.rootTree)}${tree(m.backend.perModuleTree)}${refTable(m.backend.folderReference)}`
+       ${tree(m.backend.rootTree)}`
+    : '';
+
+  const perModule = m.backend && (m.backend.perModuleTree || (m.backend.folderReference ?? []).length)
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.2 · Per-module structure — apps/[module]-api/</h3>
+       ${tree(m.backend.perModuleTree)}${refTable(m.backend.folderReference)}`
     : '';
 
   const frontend = m.frontend
-    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.2 · Frontend project structure${m.frontend.stack ? ` (${esc(m.frontend.stack)})` : ''}</h3>
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.3 · Frontend project structure${m.frontend.stack ? ` (${esc(m.frontend.stack)})` : ''}</h3>
        ${m.frontend.intro ? `<p class="sv-note">${esc(m.frontend.intro)}</p>` : ''}
        ${tree(m.frontend.rootTree)}
        ${(m.frontend.componentRule ?? []).length ? `<table class="sv-table"><thead><tr><th>Scope</th><th>Location</th><th>Rule</th></tr></thead><tbody>${(m.frontend.componentRule ?? []).map((c) => `<tr><td class="sv-td-layer">${esc(c.scope ?? '')}</td><td>${esc(c.location ?? '')}</td><td>${esc(c.rule ?? '')}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -515,14 +520,14 @@ function renderProjectStructure(model: Record<string, unknown>): string {
     : '';
 
   const ai = m.aiAgent
-    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.3 · AI Agent project structure${m.aiAgent.applicable !== false && m.aiAgent.stack ? ` (${esc(m.aiAgent.stack)})` : ''}</h3>
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.4 · AI Agent project structure${m.aiAgent.applicable !== false && m.aiAgent.stack ? ` (${esc(m.aiAgent.stack)})` : ''}</h3>
        ${m.aiAgent.applicable === false
          ? `<p class="sv-note"><em>${esc(m.aiAgent.note ?? 'Not applicable — no AI agent required.')}</em></p>`
          : `${m.aiAgent.note ? `<p class="sv-note">${esc(m.aiAgent.note)}</p>` : ''}${tree(m.aiAgent.rootTree)}${refTable(m.aiAgent.folderResponsibilities)}${tree(m.aiAgent.runtimeInteraction)}`}`
     : '';
 
   const naming = (m.namingConventions ?? []).length
-    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.4 · Naming conventions across all stacks</h3>
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.5 · Naming conventions across all stacks</h3>
        <table class="sv-table"><thead><tr><th>Concern</th><th>Convention</th><th>Examples</th></tr></thead><tbody>${(m.namingConventions ?? [])
          .map((n) => `<tr><td class="sv-td-layer">${esc(n.concern ?? '')}</td><td>${esc(n.convention ?? '')}</td><td>${esc(n.examples ?? '')}</td></tr>`)
          .join('')}</tbody></table>`
@@ -538,6 +543,7 @@ function renderProjectStructure(model: Record<string, unknown>): string {
     ${m.intro ? `<p class="sv-note">${esc(m.intro)}</p>` : ''}
     ${principles}
     ${backend}
+    ${perModule}
     ${frontend}
     ${ai}
     ${naming}
