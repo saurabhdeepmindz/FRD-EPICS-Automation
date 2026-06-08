@@ -11,6 +11,7 @@ import { HldTechnicalViewPanel } from './HldTechnicalViewPanel';
 import { HldComponentViewPanel } from './HldComponentViewPanel';
 import { HldStyleViewPanel } from './HldStyleViewPanel';
 import { HldDeploymentViewPanel } from './HldDeploymentViewPanel';
+import { HldDeploymentFlowsPanel } from './HldDeploymentFlowsPanel';
 import { HldProjectStructurePanel } from './HldProjectStructurePanel';
 import { Markdown } from './Markdown';
 import { DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
@@ -119,8 +120,9 @@ export function HldPreview({
 
               {/* AWS Deployment View → service-catalogue bands + §7.1–§7.4 (replaces Mermaid) */}
               {s.key === 'deploymentView' && (
-                <div className="mb-3">
+                <div className="mb-3 space-y-3">
                   <HldDeploymentViewPanel projectId={hld.projectId} hldId={hld.id} />
+                  <HldDeploymentFlowsPanel projectId={hld.projectId} hldId={hld.id} />
                 </div>
               )}
 

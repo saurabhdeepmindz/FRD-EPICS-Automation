@@ -9,6 +9,7 @@
  */
 
 import { awsIconSvg, AWS_FAMILY_LABELS, type AwsFamily } from './aws-icons';
+import { buildFlowDiagramSvg, type FlowDiagramModel } from './aws-flow-diagram';
 
 /** The 17 HLD section keys → human names (must match HldService / frontend). */
 const HLD_SECTION_NAMES: Record<string, string> = {
@@ -57,6 +58,8 @@ export interface HldHtmlData {
   styleView?: unknown;
   /** AWS deployment view model — canonical §7 representation. */
   deploymentView?: unknown;
+  /** AWS flow diagrams model — §7.5 connected reference-architecture views. */
+  deploymentFlows?: unknown;
   /** Project structure model — canonical §17 representation. */
   structureView?: unknown;
 }
@@ -580,6 +583,23 @@ function renderDeploymentView(model: Record<string, unknown>): string {
   </div>`;
 }
 
+// ─── AWS Flow Diagrams → HTML (§7.5, connected reference-architecture views) ───
+
+function renderDeploymentFlows(model: Record<string, unknown>): string {
+  const m = model as { diagrams?: FlowDiagramModel[]; consolidated?: FlowDiagramModel };
+  const all: FlowDiagramModel[] = [...(m.diagrams ?? [])];
+  if (m.consolidated) all.push(m.consolidated);
+  if (!all.length) return '';
+  const blocks = all
+    .map(
+      (d) => `<div class="dv-flow"><h4 class="dv-band-title">${esc(d.title ?? 'Flow')}</h4>
+        ${d.description ? `<p class="sv-note">${esc(d.description)}</p>` : ''}
+        <div class="dv-flow-wrap">${buildFlowDiagramSvg(d)}</div></div>`,
+    )
+    .join('');
+  return `<h3 class="sv-band-title" style="margin-top:14px;">7.5 &middot; AWS flow diagrams</h3>${blocks}`;
+}
+
 // ─── Project Structure model → HTML (canonical §17) ───────────────────────────
 
 type PsFolderRef = { folder?: string; poc?: boolean; purpose?: string };
@@ -701,7 +721,10 @@ export function generateHldHtml(data: HldHtmlData): string {
     } else if (key === 'deploymentView' && data.deploymentView && typeof data.deploymentView === 'object') {
       // AWS deployment view is the canonical §7 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, DEPLOYMENT_VIEW_LEGACY_FIELDS) : '';
-      inner = renderDeploymentView(data.deploymentView as Record<string, unknown>) + rest;
+      const flows = data.deploymentFlows && typeof data.deploymentFlows === 'object'
+        ? renderDeploymentFlows(data.deploymentFlows as Record<string, unknown>)
+        : '';
+      inner = renderDeploymentView(data.deploymentView as Record<string, unknown>) + flows + rest;
     } else if (key === 'projectStructure' && data.structureView && typeof data.structureView === 'object') {
       // Structure model is the canonical §17 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, STRUCTURE_VIEW_LEGACY_FIELDS) : '';
@@ -805,6 +828,10 @@ export function generateHldHtml(data: HldHtmlData): string {
     .dv-legend { display:flex; flex-wrap:wrap; gap:10px; margin:4px 0 6px 0; }
     .dv-leg { display:flex; align-items:center; gap:4px; font-size:9.5px; color:#475569; }
     .dv-leg-ico { line-height:0; }
+    /* §7.5 AWS flow diagrams */
+    .dv-flow { margin:0 0 14px 0; page-break-inside:avoid; }
+    .dv-flow-wrap { overflow-x:auto; }
+    .dv-flow-svg { max-width:100%; height:auto; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }

@@ -163,6 +163,8 @@ export class HldService {
       styleView: ((hld.metadata ?? {}) as Record<string, unknown>).styleView ?? null,
       // AWS deployment view (canonical §7 representation).
       deploymentView: ((hld.metadata ?? {}) as Record<string, unknown>).deploymentView ?? null,
+      // AWS flow diagrams (§7.5) — connected reference-architecture views.
+      deploymentFlows: ((hld.metadata ?? {}) as Record<string, unknown>).deploymentFlows ?? null,
       // Project structure overview (canonical §17 representation).
       structureView: ((hld.metadata ?? {}) as Record<string, unknown>).structureView ?? null,
     };
@@ -430,6 +432,61 @@ export class HldService {
   }
 
   /**
+   * AWS Flow Diagrams (§7.5) — connected reference-architecture flow model derived
+   * from the project's PRD/FRD/HLD (+ the cached §7 deployment view) via the AI
+   * service, cached on the HLD's metadata. Pass force=true to regenerate.
+   */
+  async getDeploymentFlows(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.deploymentFlows) return meta.deploymentFlows as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.deploymentViewHldContext(hld.sections);
+    // Reuse the §7 band model's chosen services so the flows stay consistent with it.
+    const deploymentView = meta.deploymentView ? JSON.stringify(meta.deploymentView).slice(0, 5000) : '';
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-deployment-flows`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+          deployment_view: deploymentView,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`Deployment flows generation failed: ${detail}`);
+      throw new BadRequestException(`Deployment flows generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, deploymentFlows: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
+  /**
    * Project Structure (§17) overview — structured monorepo map derived from the
    * project's PRD/FRD/HLD via the AI service, cached on the HLD's metadata. Pass
    * force=true to regenerate.
@@ -582,6 +639,7 @@ export class HldService {
         ((latest.metadata ?? {}) as Record<string, unknown>).styleView,
         ((latest.metadata ?? {}) as Record<string, unknown>).structureView,
         ((latest.metadata ?? {}) as Record<string, unknown>).deploymentView,
+        ((latest.metadata ?? {}) as Record<string, unknown>).deploymentFlows,
       ),
     };
   }
@@ -980,6 +1038,32 @@ export class HldService {
     return out.join('\n');
   }
 
+  /** Render the AWS flow diagrams (§7.5) as readable Markdown (textual flow listing). */
+  private deploymentFlowsMarkdown(model: Record<string, unknown>): string {
+    type Node = { id?: string; label?: string };
+    type Edge = { from?: string; to?: string; label?: string };
+    type Diagram = { title?: string; description?: string; nodes?: Node[]; edges?: Edge[] };
+    const m = model as { diagrams?: Diagram[]; consolidated?: Diagram };
+    const out: string[] = ['### 7.5 — AWS flow diagrams', ''];
+    const renderDiagram = (d?: Diagram) => {
+      if (!d) return;
+      const labels = new Map<string, string>();
+      (d.nodes ?? []).forEach((n) => n.id && labels.set(n.id, n.label ?? n.id));
+      out.push(`**${d.title ?? 'Flow'}**`);
+      if (d.description) out.push(`_${d.description}_`);
+      (d.edges ?? []).forEach((e) => {
+        const f = labels.get(e.from ?? '') ?? e.from ?? '';
+        const t = labels.get(e.to ?? '') ?? e.to ?? '';
+        out.push(`- ${f} → ${t}${e.label ? ` (${e.label})` : ''}`);
+      });
+      out.push('');
+    };
+    (m.diagrams ?? []).forEach(renderDiagram);
+    if (m.consolidated) renderDiagram(m.consolidated);
+    out.push('_(Diagrams render visually in the app preview, PDF and DOCX exports.)_', '');
+    return out.join('\n');
+  }
+
   /** Render the project structure (§17) model as readable Markdown. */
   private projectStructureMarkdown(model: Record<string, unknown>): string {
     type Ref = { folder?: string; poc?: boolean; purpose?: string };
@@ -1068,6 +1152,7 @@ export class HldService {
     styleView?: unknown,
     structureView?: unknown,
     deploymentView?: unknown,
+    deploymentFlows?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
@@ -1112,6 +1197,9 @@ export class HldService {
       // §7 — render the canonical AWS deployment view; drop legacy free-text fields.
       if (key === 'deploymentView' && deploymentView && typeof deploymentView === 'object') {
         lines.push(this.deploymentViewMarkdown(deploymentView as Record<string, unknown>), '');
+        if (deploymentFlows && typeof deploymentFlows === 'object') {
+          lines.push(this.deploymentFlowsMarkdown(deploymentFlows as Record<string, unknown>), '');
+        }
         const rest = this.withoutLegacyFields(body, ['description', 'cloudMapping', 'serverlessChoices', 'notInScope']);
         if (rest && Object.keys(rest).length) {
           lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');

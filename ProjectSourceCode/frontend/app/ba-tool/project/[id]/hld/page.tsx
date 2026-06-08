@@ -53,6 +53,7 @@ import { HldTechnicalViewPanel } from '@/components/ba-tool/HldTechnicalViewPane
 import { HldComponentViewPanel } from '@/components/ba-tool/HldComponentViewPanel';
 import { HldStyleViewPanel } from '@/components/ba-tool/HldStyleViewPanel';
 import { HldDeploymentViewPanel } from '@/components/ba-tool/HldDeploymentViewPanel';
+import { HldDeploymentFlowsPanel } from '@/components/ba-tool/HldDeploymentFlowsPanel';
 import { HldProjectStructurePanel } from '@/components/ba-tool/HldProjectStructurePanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
@@ -519,7 +520,10 @@ export default function HldPage() {
                             <HldStyleViewPanel projectId={projectId} hldId={hld.id} />
                           )}
                           {sec.key === 'deploymentView' && (
-                            <HldDeploymentViewPanel projectId={projectId} hldId={hld.id} />
+                            <>
+                              <HldDeploymentViewPanel projectId={projectId} hldId={hld.id} />
+                              <HldDeploymentFlowsPanel projectId={projectId} hldId={hld.id} />
+                            </>
                           )}
                           {diagKey && hld.mermaidDiagrams?.[diagKey] && !isBandSection && (
                             <Card>

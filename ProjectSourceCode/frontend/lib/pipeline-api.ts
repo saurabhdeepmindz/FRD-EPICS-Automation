@@ -475,6 +475,7 @@ export const DEPLOYMENT_SUBSECTIONS: { id: string; label: string }[] = [
   { id: 'serverless', label: '7.2 Serverless choices' },
   { id: 'notinview', label: '7.3 Not in this view' },
   { id: 'evolution', label: '7.4 How it evolves' },
+  { id: 'flows', label: '7.5 AWS flow diagrams' },
 ];
 
 /**
@@ -777,6 +778,55 @@ export async function getHldDeploymentView(projectId: string, hldId: string): Pr
 export async function regenerateHldDeploymentView(projectId: string, hldId: string): Promise<DeploymentViewModel> {
   const { data } = await api.post<ApiEnvelope<DeploymentViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/deployment-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── AWS Flow Diagrams (§7.5) — connected reference-architecture model ─────────
+
+export interface FlowDiagramNode {
+  id: string;
+  /** Key into AWS_SERVICE_ICONS (e.g. "s3"); falls back to family tile. */
+  iconKey?: string;
+  family?: string;
+  label: string;
+  tierId?: string;
+  kind?: 'aws' | 'external';
+}
+
+export interface FlowDiagram {
+  id?: string;
+  title?: string;
+  description?: string;
+  caption?: string;
+  tiers?: { id: string; label: string }[];
+  nodes?: FlowDiagramNode[];
+  edges?: { from: string; to: string; label?: string }[];
+}
+
+export interface DeploymentFlowsModel {
+  tiers?: { id: string; label: string }[];
+  /** Focused per-flow diagrams. */
+  diagrams?: FlowDiagram[];
+  /** One consolidated end-to-end diagram. */
+  consolidated?: FlowDiagram;
+}
+
+/** Build (cached) the AWS Flow Diagrams (§7.5) model for an HLD. */
+export async function getHldDeploymentFlows(projectId: string, hldId: string): Promise<DeploymentFlowsModel> {
+  const { data } = await api.get<ApiEnvelope<DeploymentFlowsModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/deployment-flows`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Flow Diagrams model (re-derives from PRD/FRD/HLD + §7 view). */
+export async function regenerateHldDeploymentFlows(projectId: string, hldId: string): Promise<DeploymentFlowsModel> {
+  const { data } = await api.post<ApiEnvelope<DeploymentFlowsModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/deployment-flows/regenerate`,
     {},
     { timeout: 180_000 },
   );
