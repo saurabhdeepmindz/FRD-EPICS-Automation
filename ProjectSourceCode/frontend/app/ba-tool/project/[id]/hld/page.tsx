@@ -35,6 +35,8 @@ import {
   TECHNICAL_VIEW_LEGACY_FIELDS,
   COMPONENT_VIEW_LEGACY_FIELDS,
   STYLE_VIEW_LEGACY_FIELDS,
+  DEPLOYMENT_VIEW_LEGACY_FIELDS,
+  DEPLOYMENT_SUBSECTIONS,
   STRUCTURE_VIEW_LEGACY_FIELDS,
   STRUCTURE_SUBSECTIONS,
   type Hld,
@@ -50,6 +52,7 @@ import { HldSystemViewPanel } from '@/components/ba-tool/HldSystemViewPanel';
 import { HldTechnicalViewPanel } from '@/components/ba-tool/HldTechnicalViewPanel';
 import { HldComponentViewPanel } from '@/components/ba-tool/HldComponentViewPanel';
 import { HldStyleViewPanel } from '@/components/ba-tool/HldStyleViewPanel';
+import { HldDeploymentViewPanel } from '@/components/ba-tool/HldDeploymentViewPanel';
 import { HldProjectStructurePanel } from '@/components/ba-tool/HldProjectStructurePanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
@@ -152,6 +155,7 @@ export default function HldPage() {
     if (key === 'technicalLayersView') return keys.filter((k) => !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'componentView') return keys.filter((k) => !COMPONENT_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'architectureStyleView') return keys.filter((k) => !STYLE_VIEW_LEGACY_FIELDS.includes(k));
+    if (key === 'deploymentView') return keys.filter((k) => !DEPLOYMENT_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'projectStructure') return keys.filter((k) => !STRUCTURE_VIEW_LEGACY_FIELDS.includes(k));
     return keys;
   };
@@ -175,6 +179,12 @@ export default function HldPage() {
   const scrollToStruct = (id: string) => {
     selectSection('projectStructure');
     setTimeout(() => document.getElementById(`struct-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  };
+
+  // §7 sub-section nav: select Deployment View, then scroll to the sub-anchor.
+  const scrollToDeploy = (id: string) => {
+    selectSection('deploymentView');
+    setTimeout(() => document.getElementById(`deploy-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   };
 
   // The focused sub-heading's content (string/JSON) for grounding the Copilot.
@@ -369,7 +379,7 @@ export default function HldPage() {
                               <span className="min-w-0">{s.name}</span>
                               {!has && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
                             </button>
-                            {(subFields.length > 0 || s.key === 'projectStructure') && (
+                            {(subFields.length > 0 || s.key === 'projectStructure' || s.key === 'deploymentView') && (
                               <button
                                 onClick={() => toggleExpand(s.key)}
                                 className="px-1.5 text-gray-400 hover:text-gray-700 shrink-0"
@@ -380,7 +390,7 @@ export default function HldPage() {
                               </button>
                             )}
                           </div>
-                          {/* §17 — fixed sub-section nav (17.1–17.4) scrolling to the panel anchors */}
+                          {/* §17 — fixed sub-section nav (17.1–17.5) scrolling to the panel anchors */}
                           {isExpanded && s.key === 'projectStructure' && (
                             <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
                               {STRUCTURE_SUBSECTIONS.map((ss) => (
@@ -394,7 +404,21 @@ export default function HldPage() {
                               ))}
                             </div>
                           )}
-                          {isExpanded && s.key !== 'projectStructure' && subFields.length > 0 && (
+                          {/* §7 — fixed sub-section nav (7, 7.1–7.4) scrolling to the panel anchors */}
+                          {isExpanded && s.key === 'deploymentView' && (
+                            <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
+                              {DEPLOYMENT_SUBSECTIONS.map((ss) => (
+                                <button
+                                  key={ss.id}
+                                  onClick={() => scrollToDeploy(ss.id)}
+                                  className="w-full text-left rounded-md px-2.5 py-1.5 text-xs border border-transparent text-gray-500 hover:bg-white hover:border-gray-200"
+                                >
+                                  {ss.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {isExpanded && s.key !== 'projectStructure' && s.key !== 'deploymentView' && subFields.length > 0 && (
                             <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
                               {subFields.map((fk) => {
                                 const fieldActive = isActive && activeField === fk;
@@ -461,6 +485,7 @@ export default function HldPage() {
                         sec.key === 'technicalLayersView' ||
                         sec.key === 'componentView' ||
                         sec.key === 'architectureStyleView' ||
+                        sec.key === 'deploymentView' ||
                         sec.key === 'projectStructure';
                       const bodyEntries = body
                         ? Object.entries(body).filter(([k]) => {
@@ -468,6 +493,7 @@ export default function HldPage() {
                             if (sec.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'architectureStyleView') return !STYLE_VIEW_LEGACY_FIELDS.includes(k);
+                            if (sec.key === 'deploymentView') return !DEPLOYMENT_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'projectStructure') return !STRUCTURE_VIEW_LEGACY_FIELDS.includes(k);
                             return true;
                           })
@@ -491,6 +517,9 @@ export default function HldPage() {
                           )}
                           {sec.key === 'architectureStyleView' && (
                             <HldStyleViewPanel projectId={projectId} hldId={hld.id} />
+                          )}
+                          {sec.key === 'deploymentView' && (
+                            <HldDeploymentViewPanel projectId={projectId} hldId={hld.id} />
                           )}
                           {diagKey && hld.mermaidDiagrams?.[diagKey] && !isBandSection && (
                             <Card>

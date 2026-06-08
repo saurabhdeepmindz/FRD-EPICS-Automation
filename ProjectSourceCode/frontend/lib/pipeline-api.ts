@@ -463,6 +463,21 @@ export const COMPONENT_VIEW_LEGACY_FIELDS = ['components', 'description'];
 export const STYLE_VIEW_LEGACY_FIELDS = ['tiers', 'description', 'patternsByTier'];
 
 /**
+ * Legacy free-text §7 fields superseded by the AWS Deployment View band model.
+ * Hidden in browse/preview so the deployment view is the single source.
+ */
+export const DEPLOYMENT_VIEW_LEGACY_FIELDS = ['description', 'cloudMapping', 'serverlessChoices', 'notInScope'];
+
+/** §7 sub-sections — left-menu entries + panel anchor ids (`deploy-<id>`). */
+export const DEPLOYMENT_SUBSECTIONS: { id: string; label: string }[] = [
+  { id: 'diagram', label: '7 Deployment diagram' },
+  { id: 'mapping', label: '7.1 AWS service mapping' },
+  { id: 'serverless', label: '7.2 Serverless choices' },
+  { id: 'notinview', label: '7.3 Not in this view' },
+  { id: 'evolution', label: '7.4 How it evolves' },
+];
+
+/**
  * Legacy free-text §17 fields superseded by the Project Structure view.
  * Hidden in browse/preview so the structure view is the single source.
  */
@@ -705,6 +720,63 @@ export async function getHldStyleView(projectId: string, hldId: string): Promise
 export async function regenerateHldStyleView(projectId: string, hldId: string): Promise<StyleViewModel> {
   const { data } = await api.post<ApiEnvelope<StyleViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/style-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── AWS Deployment View (§7) — structured model ──────────────────────────────
+
+export interface DeploymentService {
+  name: string;
+  abbr?: string;
+  /** AWS service-family → icon colour (see lib/aws-icons). */
+  family?: string;
+  subtext?: string;
+}
+
+export interface DeploymentLayer {
+  key: string;
+  name: string;
+  applicable?: boolean;
+  outOfScope?: string;
+  services?: DeploymentService[];
+  subGroups?: { label: string; services?: DeploymentService[] }[];
+}
+
+export interface DeploymentViewModel {
+  intro?: string;
+  cloud?: string;
+  region?: string;
+  account?: string;
+  scopeNote?: string;
+  /** Horizontal service-catalogue bands (edge → compute → async → data → cross-cutting). */
+  layers: DeploymentLayer[];
+  /** §7.1 — HLD layer | Component | AWS service | Rationale and trade-offs. */
+  serviceMapping?: { hldLayer: string; component: string; awsService: string; rationale: string }[];
+  /** §7.2 — where Lambda / serverless fits. */
+  serverless?: { intro?: string; patterns?: { pattern: string; detail: string }[]; closing?: string };
+  /** §7.3 — deliberate omissions. */
+  notInView?: { item: string; reason: string }[];
+  /** §7.4 — how the view evolves with the roadmap. */
+  evolution?: { when: string; added: string }[];
+  gaps?: string[];
+}
+
+/** Build (cached) the AWS Deployment View (§7) model for an HLD. */
+export async function getHldDeploymentView(projectId: string, hldId: string): Promise<DeploymentViewModel> {
+  const { data } = await api.get<ApiEnvelope<DeploymentViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/deployment-view`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Deployment View model (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldDeploymentView(projectId: string, hldId: string): Promise<DeploymentViewModel> {
+  const { data } = await api.post<ApiEnvelope<DeploymentViewModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/deployment-view/regenerate`,
     {},
     { timeout: 180_000 },
   );

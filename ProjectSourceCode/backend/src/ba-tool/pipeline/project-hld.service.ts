@@ -161,6 +161,8 @@ export class HldService {
       componentView: ((hld.metadata ?? {}) as Record<string, unknown>).componentView ?? null,
       // Architecture style & patterns view (canonical §6 representation).
       styleView: ((hld.metadata ?? {}) as Record<string, unknown>).styleView ?? null,
+      // AWS deployment view (canonical §7 representation).
+      deploymentView: ((hld.metadata ?? {}) as Record<string, unknown>).deploymentView ?? null,
       // Project structure overview (canonical §17 representation).
       structureView: ((hld.metadata ?? {}) as Record<string, unknown>).structureView ?? null,
     };
@@ -375,6 +377,59 @@ export class HldService {
   }
 
   /**
+   * AWS Deployment View (§7) — structured model derived from the project's
+   * PRD/FRD/HLD via the AI service, cached on the HLD's metadata. One concrete
+   * AWS instantiation of the cloud-agnostic architecture. Pass force=true to
+   * regenerate.
+   */
+  async getDeploymentView(hldId: string, force = false): Promise<Record<string, unknown>> {
+    const hld = await this.get(hldId);
+    const meta = (hld.metadata ?? {}) as Record<string, unknown>;
+    if (!force && meta.deploymentView) return meta.deploymentView as Record<string, unknown>;
+
+    const project = await this.prisma.baProject.findUnique({
+      where: { id: hld.projectId },
+      select: { name: true, productName: true },
+    });
+    const prd = await this.prisma.baProjectPrd.findFirst({
+      where: { projectId: hld.projectId },
+      orderBy: { version: 'desc' },
+      select: { sections: true },
+    });
+    const prdContext = this.systemViewPrdContext(prd?.sections);
+    const hldContext = this.deploymentViewHldContext(hld.sections);
+
+    let model: Record<string, unknown>;
+    try {
+      const { data } = await axios.post<Record<string, unknown>>(
+        `${this.aiServiceUrl}/hld-deployment-view`,
+        {
+          provider: 'anthropic',
+          product_name: project?.productName ?? project?.name ?? 'Project',
+          prd_context: prdContext,
+          hld_context: hldContext,
+        },
+        { timeout: 180_000 },
+      );
+      model = data;
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : err instanceof Error
+          ? err.message
+          : 'unknown error';
+      this.logger.error(`Deployment view generation failed: ${detail}`);
+      throw new BadRequestException(`Deployment view generation failed: ${detail}`);
+    }
+
+    await this.prisma.baHld.update({
+      where: { id: hldId },
+      data: { metadata: { ...meta, deploymentView: model } as Prisma.InputJsonValue },
+    });
+    return model;
+  }
+
+  /**
    * Project Structure (§17) overview — structured monorepo map derived from the
    * project's PRD/FRD/HLD via the AI service, cached on the HLD's metadata. Pass
    * force=true to regenerate.
@@ -454,6 +509,20 @@ export class HldService {
     return parts.join('\n\n').slice(0, 6000);
   }
 
+  /** HLD context tuned for the AWS deployment view (§7). */
+  private deploymentViewHldContext(sections: unknown): string {
+    const s = (sections ?? {}) as Record<string, unknown>;
+    const picks = [
+      'deploymentView', 'technicalLayersView', 'componentView', 'technologyStack',
+      'integrations', 'aiLayer', 'multiTenancy', 'authDesign', 'nfr', 'architectureStyleDecision',
+    ];
+    const parts: string[] = [];
+    for (const k of picks) {
+      if (s[k]) parts.push(`## ${HLD_SECTION_NAMES[k]}\n${JSON.stringify(flattenValue(s[k]))}`);
+    }
+    return parts.join('\n\n').slice(0, 7000);
+  }
+
   /** HLD context tuned for the layered technical view (§4). */
   private technicalViewHldContext(sections: unknown): string {
     const s = (sections ?? {}) as Record<string, unknown>;
@@ -512,6 +581,7 @@ export class HldService {
         ((latest.metadata ?? {}) as Record<string, unknown>).componentView,
         ((latest.metadata ?? {}) as Record<string, unknown>).styleView,
         ((latest.metadata ?? {}) as Record<string, unknown>).structureView,
+        ((latest.metadata ?? {}) as Record<string, unknown>).deploymentView,
       ),
     };
   }
@@ -835,6 +905,81 @@ export class HldService {
     return out.join('\n');
   }
 
+  /** Render the AWS deployment view (§7) model as readable Markdown. */
+  private deploymentViewMarkdown(model: Record<string, unknown>): string {
+    type Svc = { name?: string; abbr?: string; family?: string; subtext?: string };
+    const m = model as {
+      intro?: string;
+      cloud?: string;
+      region?: string;
+      account?: string;
+      scopeNote?: string;
+      layers?: { name?: string; applicable?: boolean; outOfScope?: string; services?: Svc[]; subGroups?: { label?: string; services?: Svc[] }[] }[];
+      serviceMapping?: { hldLayer?: string; component?: string; awsService?: string; rationale?: string }[];
+      serverless?: { intro?: string; patterns?: { pattern?: string; detail?: string }[]; closing?: string };
+      notInView?: { item?: string; reason?: string }[];
+      evolution?: { when?: string; added?: string }[];
+      gaps?: string[];
+    };
+    const esc = (s?: string) => (s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim() || '—';
+    const svc = (x: Svc) => `${x.name ?? x.abbr ?? ''}${x.subtext ? ` (${x.subtext})` : ''}`;
+    const out: string[] = [];
+    if (m.intro) out.push(`_${m.intro}_`, '');
+    const meta = [m.cloud, m.region ? `Region: ${m.region}` : '', m.account ? `Account: ${m.account}` : '']
+      .filter(Boolean)
+      .join(' · ');
+    if (meta) out.push(`**${meta}**`, '');
+    if (m.scopeNote) out.push(m.scopeNote, '');
+
+    out.push('### Deployment diagram — AWS service catalogue', '');
+    for (const l of (m.layers ?? []).filter((x) => x.applicable !== false)) {
+      out.push(`**${l.name ?? ''}**`);
+      if (l.subGroups?.length) {
+        l.subGroups.forEach((g) => {
+          out.push(`- _${g.label ?? ''}:_ ${(g.services ?? []).map(svc).join(' · ') || '—'}`);
+        });
+      } else {
+        out.push(`- ${(l.services ?? []).map(svc).join(' · ') || '—'}`);
+      }
+      out.push('');
+    }
+    for (const l of (m.layers ?? []).filter((x) => x.applicable === false)) {
+      out.push(`**${l.name ?? ''}** — _Out of scope${l.outOfScope ? `: ${l.outOfScope}` : ''}_`, '');
+    }
+
+    if (m.serviceMapping?.length) {
+      out.push('### 7.1 — AWS service mapping (HLD layer → AWS service)', '');
+      out.push('| HLD layer | Component | AWS service | Rationale and trade-offs |', '| --- | --- | --- | --- |');
+      m.serviceMapping.forEach((r) =>
+        out.push(`| ${esc(r.hldLayer)} | ${esc(r.component)} | ${esc(r.awsService)} | ${esc(r.rationale)} |`),
+      );
+      out.push('');
+    }
+    if (m.serverless) {
+      out.push('### 7.2 — Serverless choices (where Lambda fits)', '');
+      if (m.serverless.intro) out.push(m.serverless.intro, '');
+      (m.serverless.patterns ?? []).forEach((p) => out.push(`- **${p.pattern ?? ''}** — ${p.detail ?? ''}`));
+      if (m.serverless.patterns?.length) out.push('');
+      if (m.serverless.closing) out.push(m.serverless.closing, '');
+    }
+    if (m.notInView?.length) {
+      out.push('### 7.3 — What is deliberately NOT in this view', '');
+      m.notInView.forEach((n) => out.push(`- **${n.item ?? ''}** — ${n.reason ?? ''}`));
+      out.push('');
+    }
+    if (m.evolution?.length) {
+      out.push('### 7.4 — How this view evolves', '');
+      out.push('| When | What is added to this view |', '| --- | --- |');
+      m.evolution.forEach((e) => out.push(`| ${esc(e.when)} | ${esc(e.added)} |`));
+      out.push('');
+    }
+    if (m.gaps?.length) {
+      out.push('### Gaps & assumptions');
+      m.gaps.forEach((g) => out.push(`- ${g}`));
+    }
+    return out.join('\n');
+  }
+
   /** Render the project structure (§17) model as readable Markdown. */
   private projectStructureMarkdown(model: Record<string, unknown>): string {
     type Ref = { folder?: string; poc?: boolean; purpose?: string };
@@ -922,6 +1067,7 @@ export class HldService {
     componentView?: unknown,
     styleView?: unknown,
     structureView?: unknown,
+    deploymentView?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
@@ -958,6 +1104,15 @@ export class HldService {
       if (key === 'architectureStyleView' && styleView && typeof styleView === 'object') {
         lines.push(this.styleViewBandsMarkdown(styleView as Record<string, unknown>), '');
         const rest = this.withoutLegacyFields(body, ['tiers', 'description', 'patternsByTier']);
+        if (rest && Object.keys(rest).length) {
+          lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
+        }
+        return;
+      }
+      // §7 — render the canonical AWS deployment view; drop legacy free-text fields.
+      if (key === 'deploymentView' && deploymentView && typeof deploymentView === 'object') {
+        lines.push(this.deploymentViewMarkdown(deploymentView as Record<string, unknown>), '');
+        const rest = this.withoutLegacyFields(body, ['description', 'cloudMapping', 'serverlessChoices', 'notInScope']);
         if (rest && Object.keys(rest).length) {
           lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
         }

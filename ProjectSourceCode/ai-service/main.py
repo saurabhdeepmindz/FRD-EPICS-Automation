@@ -59,6 +59,10 @@ from prompts.project_structure_prompts import (
     PROJECT_STRUCTURE_SYSTEM_PROMPT,
     build_project_structure_user_message,
 )
+from prompts.deployment_view_prompts import (
+    DEPLOYMENT_VIEW_SYSTEM_PROMPT,
+    build_deployment_view_user_message,
+)
 from prompts.system_view_prompts import (
     SYSTEM_VIEW_SYSTEM_PROMPT,
     build_system_view_user_message,
@@ -3179,4 +3183,57 @@ async def hld_project_structure(
         logger.error("Project structure JSON parse failed: %s", exc)
         raise HTTPException(status_code=502, detail="AI returned malformed project-structure JSON") from exc
     logger.info("Project structure generated for '%s' (%d groups)", body.product_name, len(model.get("groups", [])))
+    return model
+
+
+# ─── AWS Deployment View (§7) — structured model ──────────────────────────────
+
+class DeploymentViewRequest(BaseModel):
+    provider: str = "anthropic"
+    product_name: str = ""
+    prd_context: str = ""
+    hld_context: str = ""
+
+
+@app.post("/hld-deployment-view", tags=["copilot"])
+async def hld_deployment_view(
+    body: DeploymentViewRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """Return the AWS deployment view (§7) as a structured JSON model."""
+    user = build_deployment_view_user_message(body.product_name, body.prd_context, body.hld_context)
+    provider = body.provider or "anthropic"
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": DEPLOYMENT_VIEW_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=9000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except openai.OpenAIError as exc:
+            logger.error("Deployment view (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=DEPLOYMENT_VIEW_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=9000,
+            temperature=0.3,
+        )
+    try:
+        model = _parse_ai_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Deployment view JSON parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI returned malformed deployment-view JSON") from exc
+    logger.info("Deployment view generated for '%s' (%d layers)", body.product_name, len(model.get("layers", [])))
     return model
