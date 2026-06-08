@@ -35,6 +35,8 @@ import {
   TECHNICAL_VIEW_LEGACY_FIELDS,
   COMPONENT_VIEW_LEGACY_FIELDS,
   STYLE_VIEW_LEGACY_FIELDS,
+  STRUCTURE_VIEW_LEGACY_FIELDS,
+  STRUCTURE_SUBSECTIONS,
   type Hld,
   type PrdGap,
   type ProjectStructure,
@@ -44,11 +46,11 @@ import { HldMermaid } from '@/components/ba-tool/HldMermaid';
 import { HldPreview } from '@/components/ba-tool/HldPreview';
 import { HldSectionEditor } from '@/components/ba-tool/HldSectionEditor';
 import { HldCopilot } from '@/components/ba-tool/HldCopilot';
-import { HldStructureDiagram } from '@/components/ba-tool/HldStructureDiagram';
 import { HldSystemViewPanel } from '@/components/ba-tool/HldSystemViewPanel';
 import { HldTechnicalViewPanel } from '@/components/ba-tool/HldTechnicalViewPanel';
 import { HldComponentViewPanel } from '@/components/ba-tool/HldComponentViewPanel';
 import { HldStyleViewPanel } from '@/components/ba-tool/HldStyleViewPanel';
+import { HldProjectStructurePanel } from '@/components/ba-tool/HldProjectStructurePanel';
 import { Markdown } from '@/components/ba-tool/Markdown';
 import { FALLBACK_PALETTE, DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -150,6 +152,7 @@ export default function HldPage() {
     if (key === 'technicalLayersView') return keys.filter((k) => !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'componentView') return keys.filter((k) => !COMPONENT_VIEW_LEGACY_FIELDS.includes(k));
     if (key === 'architectureStyleView') return keys.filter((k) => !STYLE_VIEW_LEGACY_FIELDS.includes(k));
+    if (key === 'projectStructure') return keys.filter((k) => !STRUCTURE_VIEW_LEGACY_FIELDS.includes(k));
     return keys;
   };
 
@@ -167,6 +170,12 @@ export default function HldPage() {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+
+  // §17 sub-section nav: select Project Structure, then scroll to the sub-anchor.
+  const scrollToStruct = (id: string) => {
+    selectSection('projectStructure');
+    setTimeout(() => document.getElementById(`struct-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  };
 
   // The focused sub-heading's content (string/JSON) for grounding the Copilot.
   const activeFieldContent: string | null = (() => {
@@ -360,7 +369,7 @@ export default function HldPage() {
                               <span className="min-w-0">{s.name}</span>
                               {!has && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
                             </button>
-                            {subFields.length > 0 && (
+                            {(subFields.length > 0 || s.key === 'projectStructure') && (
                               <button
                                 onClick={() => toggleExpand(s.key)}
                                 className="px-1.5 text-gray-400 hover:text-gray-700 shrink-0"
@@ -371,7 +380,21 @@ export default function HldPage() {
                               </button>
                             )}
                           </div>
-                          {isExpanded && subFields.length > 0 && (
+                          {/* §17 — fixed sub-section nav (17.1–17.4) scrolling to the panel anchors */}
+                          {isExpanded && s.key === 'projectStructure' && (
+                            <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
+                              {STRUCTURE_SUBSECTIONS.map((ss) => (
+                                <button
+                                  key={ss.id}
+                                  onClick={() => scrollToStruct(ss.id)}
+                                  className="w-full text-left rounded-md px-2.5 py-1.5 text-xs border border-transparent text-gray-500 hover:bg-white hover:border-gray-200"
+                                >
+                                  {ss.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {isExpanded && s.key !== 'projectStructure' && subFields.length > 0 && (
                             <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
                               {subFields.map((fk) => {
                                 const fieldActive = isActive && activeField === fk;
@@ -437,13 +460,15 @@ export default function HldPage() {
                         sec.key === 'systemView' ||
                         sec.key === 'technicalLayersView' ||
                         sec.key === 'componentView' ||
-                        sec.key === 'architectureStyleView';
+                        sec.key === 'architectureStyleView' ||
+                        sec.key === 'projectStructure';
                       const bodyEntries = body
                         ? Object.entries(body).filter(([k]) => {
                             if (sec.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
                             if (sec.key === 'architectureStyleView') return !STYLE_VIEW_LEGACY_FIELDS.includes(k);
+                            if (sec.key === 'projectStructure') return !STRUCTURE_VIEW_LEGACY_FIELDS.includes(k);
                             return true;
                           })
                         : [];
@@ -452,8 +477,8 @@ export default function HldPage() {
                           <h2 className="font-semibold text-gray-900 flex items-baseline gap-2">
                             <span className="text-sm font-mono text-gray-400">{idx + 1}</span> {sec.name}
                           </h2>
-                          {sec.key === 'projectStructure' && structure && (
-                            <HldStructureDiagram structure={structure} palette={palette} />
+                          {sec.key === 'projectStructure' && (
+                            <HldProjectStructurePanel projectId={projectId} hldId={hld.id} />
                           )}
                           {sec.key === 'systemView' && (
                             <HldSystemViewPanel projectId={projectId} hldId={hld.id} onNavigateSection={selectSection} />

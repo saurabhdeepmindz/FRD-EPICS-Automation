@@ -599,6 +599,18 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  @Get('hld/:hldId/project-structure')
+  async getHldProjectStructure(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getProjectStructureView(hldId);
+    return { success: true, data };
+  }
+
+  @Post('hld/:hldId/project-structure/regenerate')
+  async regenerateHldProjectStructure(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getProjectStructureView(hldId, true);
+    return { success: true, data };
+  }
+
   @Post('hld/generate')
   async generateHld(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.hld.generate(id);

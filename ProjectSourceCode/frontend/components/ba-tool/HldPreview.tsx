@@ -3,13 +3,14 @@
 import { type ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Network } from 'lucide-react';
-import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, COMPONENT_VIEW_LEGACY_FIELDS, STYLE_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
+import { HLD_SECTIONS, HLD_DIAGRAM_LABELS, SYSTEM_VIEW_LEGACY_FIELDS, TECHNICAL_VIEW_LEGACY_FIELDS, COMPONENT_VIEW_LEGACY_FIELDS, STYLE_VIEW_LEGACY_FIELDS, STRUCTURE_VIEW_LEGACY_FIELDS, type Hld, type ProjectStructure } from '@/lib/pipeline-api';
 import { HldMermaid } from './HldMermaid';
 import { HldStructureDiagram } from './HldStructureDiagram';
 import { HldSystemViewPanel } from './HldSystemViewPanel';
 import { HldTechnicalViewPanel } from './HldTechnicalViewPanel';
 import { HldComponentViewPanel } from './HldComponentViewPanel';
 import { HldStyleViewPanel } from './HldStyleViewPanel';
+import { HldProjectStructurePanel } from './HldProjectStructurePanel';
 import { Markdown } from './Markdown';
 import { DIAGRAM_FOR_SECTION, type DiagramPalette } from '@/lib/hld-diagram';
 
@@ -52,13 +53,15 @@ export function HldPreview({
             s.key === 'systemView' ||
             s.key === 'technicalLayersView' ||
             s.key === 'componentView' ||
-            s.key === 'architectureStyleView';
+            s.key === 'architectureStyleView' ||
+            s.key === 'projectStructure';
           const bodyEntries = body
             ? Object.entries(body).filter(([k]) => {
                 if (s.key === 'systemView') return !SYSTEM_VIEW_LEGACY_FIELDS.includes(k);
                 if (s.key === 'technicalLayersView') return !TECHNICAL_VIEW_LEGACY_FIELDS.includes(k);
                 if (s.key === 'componentView') return !COMPONENT_VIEW_LEGACY_FIELDS.includes(k);
                 if (s.key === 'architectureStyleView') return !STYLE_VIEW_LEGACY_FIELDS.includes(k);
+                if (s.key === 'projectStructure') return !STRUCTURE_VIEW_LEGACY_FIELDS.includes(k);
                 return true;
               })
             : [];
@@ -121,10 +124,10 @@ export function HldPreview({
                 </div>
               )}
 
-              {/* Pastel project-structure grid for §17 */}
-              {s.key === 'projectStructure' && structure && (
+              {/* Project Structure (§17) → monorepo overview (replaces tile diagram) */}
+              {s.key === 'projectStructure' && (
                 <div className="mb-3">
-                  <HldStructureDiagram structure={structure} palette={palette} />
+                  <HldProjectStructurePanel projectId={hld.projectId} hldId={hld.id} />
                 </div>
               )}
 

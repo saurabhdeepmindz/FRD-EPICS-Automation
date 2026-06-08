@@ -462,6 +462,20 @@ export const COMPONENT_VIEW_LEGACY_FIELDS = ['components', 'description'];
  */
 export const STYLE_VIEW_LEGACY_FIELDS = ['tiers', 'description', 'patternsByTier'];
 
+/**
+ * Legacy free-text §17 fields superseded by the Project Structure view.
+ * Hidden in browse/preview so the structure view is the single source.
+ */
+export const STRUCTURE_VIEW_LEGACY_FIELDS = ['aiAgent', 'backend', 'frontend', 'namingConventions'];
+
+/** §17 sub-sections — left-menu entries + panel anchor ids (`struct-<id>`). */
+export const STRUCTURE_SUBSECTIONS: { id: string; label: string }[] = [
+  { id: 'backend', label: '17.1 Backend' },
+  { id: 'frontend', label: '17.2 Frontend' },
+  { id: 'aiagent', label: '17.3 AI Agent' },
+  { id: 'naming', label: '17.4 Naming conventions' },
+];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
@@ -690,6 +704,78 @@ export async function getHldStyleView(projectId: string, hldId: string): Promise
 export async function regenerateHldStyleView(projectId: string, hldId: string): Promise<StyleViewModel> {
   const { data } = await api.post<ApiEnvelope<StyleViewModel>>(
     `/ba/projects/${projectId}/hld/${hldId}/style-view/regenerate`,
+    {},
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+// ─── Project Structure (§17) — structured model ───────────────────────────────
+
+export interface ProjectStructureGroup {
+  key: string;
+  title: string;
+  /** frontend | backend | db | shared | config | ai (drives the tile colour). */
+  kind: string;
+  items: string[];
+}
+
+export interface StructureFolderRef {
+  folder: string;
+  poc?: boolean;
+  purpose: string;
+}
+
+export interface ProjectStructureModel {
+  monorepoLabel?: string;
+  groups: ProjectStructureGroup[];
+  /** §17 intro paragraph. */
+  intro?: string;
+  /** §17 guiding principles (Principle | How it shows up). */
+  principles?: { principle: string; how: string }[];
+  /** §17.1 Backend project structure. */
+  backend?: {
+    stack?: string;
+    intro?: string;
+    rootTree?: string;
+    perModuleTree?: string;
+    folderReference?: StructureFolderRef[];
+  };
+  /** §17.2 Frontend project structure. */
+  frontend?: {
+    stack?: string;
+    intro?: string;
+    rootTree?: string;
+    componentRule?: { scope: string; location: string; rule: string }[];
+    promotionRule?: string;
+  };
+  /** §17.3 AI Agent project structure (or applicable=false). */
+  aiAgent?: {
+    applicable?: boolean;
+    note?: string;
+    stack?: string;
+    rootTree?: string;
+    folderResponsibilities?: StructureFolderRef[];
+    runtimeInteraction?: string;
+  };
+  /** §17.4 Naming conventions across stacks. */
+  namingConventions?: { concern: string; convention: string; examples: string }[];
+  gaps?: string[];
+}
+
+/** Build (cached) the Project Structure (§17) overview model for an HLD. */
+export async function getHldProjectStructure(projectId: string, hldId: string): Promise<ProjectStructureModel> {
+  const { data } = await api.get<ApiEnvelope<ProjectStructureModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/project-structure`,
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+/** Regenerate the Project Structure overview (re-derives from PRD/FRD/HLD). */
+export async function regenerateHldProjectStructure(projectId: string, hldId: string): Promise<ProjectStructureModel> {
+  const { data } = await api.post<ApiEnvelope<ProjectStructureModel>>(
+    `/ba/projects/${projectId}/hld/${hldId}/project-structure/regenerate`,
     {},
     { timeout: 180_000 },
   );
