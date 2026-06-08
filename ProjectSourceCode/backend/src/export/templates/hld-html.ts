@@ -8,6 +8,8 @@
  * the diagram source appears as a labelled code block (html-to-docx runs no JS).
  */
 
+import { awsIconSvg, AWS_FAMILY_LABELS, type AwsFamily } from './aws-icons';
+
 /** The 17 HLD section keys → human names (must match HldService / frontend). */
 const HLD_SECTION_NAMES: Record<string, string> = {
   documentControl: 'Document Control',
@@ -53,6 +55,8 @@ export interface HldHtmlData {
   componentView?: unknown;
   /** Architecture style & patterns view model — canonical §6 representation. */
   styleView?: unknown;
+  /** AWS deployment view model — canonical §7 representation. */
+  deploymentView?: unknown;
   /** Project structure model — canonical §17 representation. */
   structureView?: unknown;
 }
@@ -65,6 +69,8 @@ const TECHNICAL_VIEW_LEGACY_FIELDS = new Set(['layers', 'description']);
 const COMPONENT_VIEW_LEGACY_FIELDS = new Set(['components', 'description']);
 /** Legacy free-text §6 fields superseded by the architecture style & patterns view. */
 const STYLE_VIEW_LEGACY_FIELDS = new Set(['tiers', 'description', 'patternsByTier']);
+/** Legacy free-text §7 fields superseded by the AWS deployment view model. */
+const DEPLOYMENT_VIEW_LEGACY_FIELDS = new Set(['description', 'cloudMapping', 'serverlessChoices', 'notInScope']);
 /** Legacy free-text §17 fields superseded by the project structure view. */
 const STRUCTURE_VIEW_LEGACY_FIELDS = new Set(['aiAgent', 'backend', 'frontend', 'namingConventions']);
 
@@ -464,6 +470,116 @@ function renderStyleViewBands(model: Record<string, unknown>): string {
   </div>`;
 }
 
+// ─── AWS Deployment View model → HTML (canonical §7) ──────────────────────────
+
+type DvService = { name?: string; abbr?: string; family?: string; subtext?: string };
+type DvLayer = {
+  key?: string; name?: string; applicable?: boolean; outOfScope?: string;
+  services?: DvService[]; subGroups?: { label?: string; services?: DvService[] }[];
+};
+
+function renderDeploymentView(model: Record<string, unknown>): string {
+  const m = model as {
+    intro?: string; cloud?: string; region?: string; account?: string; scopeNote?: string;
+    layers?: DvLayer[];
+    serviceMapping?: { hldLayer?: string; component?: string; awsService?: string; rationale?: string }[];
+    serverless?: { intro?: string; patterns?: { pattern?: string; detail?: string }[]; closing?: string };
+    notInView?: { item?: string; reason?: string }[];
+    evolution?: { when?: string; added?: string }[];
+    gaps?: string[];
+  };
+  let seed = 0;
+  const tile = (s: DvService) => {
+    const icon = awsIconSvg(s.family, 36, seed++);
+    return `<div class="dv-tile"><div class="dv-ico">${icon}</div><div class="dv-tx"><span class="dv-name">${esc(s.name ?? s.abbr ?? '')}</span>${s.subtext ? `<span class="dv-sub">${esc(s.subtext)}</span>` : ''}</div></div>`;
+  };
+  const tiles = (services?: DvService[]) =>
+    `<div class="dv-row">${(services ?? []).map(tile).join('')}</div>`;
+
+  const shownLayers = (m.layers ?? []).filter((l) => l.applicable !== false);
+  const bands = shownLayers
+    .map((l) => {
+      const inner = l.subGroups?.length
+        ? l.subGroups
+            .map((g) => `<div class="dv-group"><p class="dv-grp-label">${esc(g.label ?? '')}</p>${tiles(g.services)}</div>`)
+            .join('')
+        : tiles(l.services);
+      return `<div class="dv-band"><h4 class="dv-band-title">${esc(l.name ?? '')}</h4>${inner}</div>`;
+    })
+    .join('');
+  const oos = (m.layers ?? [])
+    .filter((l) => l.applicable === false)
+    .map((l) => `<p class="dv-oos"><strong>${esc(l.name ?? '')}:</strong> Out of scope${l.outOfScope ? ` — ${esc(l.outOfScope)}` : ''}</p>`)
+    .join('');
+
+  // Legend of the families actually used in the diagram.
+  const usedFamilies = new Set<string>();
+  shownLayers.forEach((l) => {
+    (l.services ?? []).forEach((s) => s.family && usedFamilies.add(s.family));
+    (l.subGroups ?? []).forEach((g) => (g.services ?? []).forEach((s) => s.family && usedFamilies.add(s.family)));
+  });
+  const legend = usedFamilies.size
+    ? `<div class="dv-legend">${[...usedFamilies]
+        .map(
+          (f) =>
+            `<span class="dv-leg"><span class="dv-leg-ico">${awsIconSvg(f, 16, seed++)}</span>${esc(AWS_FAMILY_LABELS[f as AwsFamily] ?? f)}</span>`,
+        )
+        .join('')}</div>`
+    : '';
+
+  const meta = [m.cloud, m.region ? `Region: ${m.region}` : '', m.account ? `Account: ${m.account}` : '']
+    .filter(Boolean)
+    .map((x) => esc(x as string))
+    .join(' &middot; ');
+
+  const mapping = (m.serviceMapping ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">7.1 &middot; AWS service mapping — HLD layer to AWS service</h3>
+       <table class="sv-table"><thead><tr><th>HLD layer</th><th>Component</th><th>AWS service</th><th>Rationale and trade-offs</th></tr></thead>
+       <tbody>${(m.serviceMapping ?? [])
+         .map((r) => `<tr><td class="sv-td-layer">${esc(r.hldLayer ?? '')}</td><td>${esc(r.component ?? '')}</td><td>${esc(r.awsService ?? '')}</td><td>${esc(r.rationale ?? '')}</td></tr>`)
+         .join('')}</tbody></table>`
+    : '';
+
+  const sl = m.serverless;
+  const serverless = sl
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">7.2 &middot; Serverless choices — where Lambda fits</h3>
+       ${sl.intro ? `<p class="sv-note">${esc(sl.intro)}</p>` : ''}
+       ${(sl.patterns ?? []).length ? `<ul class="vlist">${(sl.patterns ?? []).map((p) => `<li><strong>${esc(p.pattern ?? '')}</strong> — ${esc(p.detail ?? '')}</li>`).join('')}</ul>` : ''}
+       ${sl.closing ? `<p class="sv-note">${esc(sl.closing)}</p>` : ''}`
+    : '';
+
+  const notIn = (m.notInView ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">7.3 &middot; What is deliberately NOT in this view</h3>
+       <ul class="vlist">${(m.notInView ?? []).map((n) => `<li><strong>${esc(n.item ?? '')}</strong> — ${esc(n.reason ?? '')}</li>`).join('')}</ul>`
+    : '';
+
+  const evolution = (m.evolution ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">7.4 &middot; How this view evolves</h3>
+       <table class="sv-table"><thead><tr><th>When</th><th>What is added to this view</th></tr></thead>
+       <tbody>${(m.evolution ?? [])
+         .map((e) => `<tr><td class="sv-td-layer">${esc(e.when ?? '')}</td><td>${esc(e.added ?? '')}</td></tr>`)
+         .join('')}</tbody></table>`
+    : '';
+
+  const gaps = m.gaps?.length
+    ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
+    : '';
+
+  return `<div class="sv-bands">
+    ${m.intro ? `<p class="sv-note">${esc(m.intro)}</p>` : ''}
+    ${meta ? `<p class="sv-sub"><strong>${meta}</strong></p>` : ''}
+    ${m.scopeNote ? `<p class="sv-note">${esc(m.scopeNote)}</p>` : ''}
+    ${bands}
+    ${legend}
+    ${oos}
+    ${mapping}
+    ${serverless}
+    ${notIn}
+    ${evolution}
+    ${gaps}
+  </div>`;
+}
+
 // ─── Project Structure model → HTML (canonical §17) ───────────────────────────
 
 type PsFolderRef = { folder?: string; poc?: boolean; purpose?: string };
@@ -582,6 +698,10 @@ export function generateHldHtml(data: HldHtmlData): string {
       // Band model is the canonical §6 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, STYLE_VIEW_LEGACY_FIELDS) : '';
       inner = renderStyleViewBands(data.styleView as Record<string, unknown>) + rest;
+    } else if (key === 'deploymentView' && data.deploymentView && typeof data.deploymentView === 'object') {
+      // AWS deployment view is the canonical §7 view; legacy free-text fields are dropped.
+      const rest = body && typeof body === 'object' ? renderSectionBody(body, DEPLOYMENT_VIEW_LEGACY_FIELDS) : '';
+      inner = renderDeploymentView(data.deploymentView as Record<string, unknown>) + rest;
     } else if (key === 'projectStructure' && data.structureView && typeof data.structureView === 'object') {
       // Structure model is the canonical §17 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, STRUCTURE_VIEW_LEGACY_FIELDS) : '';
@@ -670,6 +790,21 @@ export function generateHldHtml(data: HldHtmlData): string {
     .sv-td-ref a { color:#4F46B5; text-decoration:none; }
     .cv-pattern { font-size:10px; font-style:italic; color:#64748b; font-weight:400; }
     .ps-tree { font-family:'Consolas','Courier New',monospace; font-size:10.5px; line-height:1.45; white-space:pre; overflow-x:auto; background:#f8fafc; border:1px solid #E5E2DD; border-radius:6px; padding:8px 10px; margin:4px 0; }
+    /* §7 AWS Deployment View — service-catalogue bands with AWS-style icons */
+    .dv-band { margin:0 0 10px 0; padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px; background:#f8fafc; page-break-inside:avoid; }
+    .dv-band-title { font-size:12px; font-weight:700; color:#1e293b; margin:0 0 7px 0; }
+    .dv-group { margin:0 0 6px 0; }
+    .dv-grp-label { font-size:10.5px; font-weight:600; color:#475569; margin:0 0 4px 0; }
+    .dv-row { display:flex; flex-wrap:wrap; gap:7px; }
+    .dv-tile { display:flex; align-items:center; gap:6px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:5px 8px 5px 5px; min-width:118px; }
+    .dv-ico { flex:0 0 auto; line-height:0; }
+    .dv-tx { display:flex; flex-direction:column; line-height:1.2; }
+    .dv-name { font-size:10.5px; font-weight:600; color:#1e293b; }
+    .dv-sub { font-size:9px; color:#64748b; }
+    .dv-oos { font-size:11px; color:#92400e; margin:2px 0; }
+    .dv-legend { display:flex; flex-wrap:wrap; gap:10px; margin:4px 0 6px 0; }
+    .dv-leg { display:flex; align-items:center; gap:4px; font-size:9.5px; color:#475569; }
+    .dv-leg-ico { line-height:0; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }
