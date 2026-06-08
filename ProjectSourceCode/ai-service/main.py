@@ -3156,7 +3156,7 @@ async def hld_project_structure(
                     {"role": "system", "content": PROJECT_STRUCTURE_SYSTEM_PROMPT},
                     {"role": "user", "content": user},
                 ],
-                max_tokens=3000,
+                max_tokens=9000,
                 temperature=0.3,
                 response_format={"type": "json_object"},
             )
@@ -3170,7 +3170,7 @@ async def hld_project_structure(
             model=settings.ANTHROPIC_MODEL,
             system=PROJECT_STRUCTURE_SYSTEM_PROMPT,
             user=user,
-            max_tokens=3000,
+            max_tokens=9000,
             temperature=0.3,
         )
     try:

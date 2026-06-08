@@ -53,6 +53,8 @@ export interface HldHtmlData {
   componentView?: unknown;
   /** Architecture style & patterns view model — canonical §6 representation. */
   styleView?: unknown;
+  /** Project structure model — canonical §17 representation. */
+  structureView?: unknown;
 }
 
 /** Legacy free-text §3 fields superseded by the band model; hidden when it exists. */
@@ -63,6 +65,8 @@ const TECHNICAL_VIEW_LEGACY_FIELDS = new Set(['layers', 'description']);
 const COMPONENT_VIEW_LEGACY_FIELDS = new Set(['components', 'description']);
 /** Legacy free-text §6 fields superseded by the architecture style & patterns view. */
 const STYLE_VIEW_LEGACY_FIELDS = new Set(['tiers', 'description', 'patternsByTier']);
+/** Legacy free-text §17 fields superseded by the project structure view. */
+const STRUCTURE_VIEW_LEGACY_FIELDS = new Set(['aiAgent', 'backend', 'frontend', 'namingConventions']);
 
 // ─── Pastel diagram palette (mirrors the Design System / frontend defaults) ───
 
@@ -460,6 +464,87 @@ function renderStyleViewBands(model: Record<string, unknown>): string {
   </div>`;
 }
 
+// ─── Project Structure model → HTML (canonical §17) ───────────────────────────
+
+type PsFolderRef = { folder?: string; poc?: boolean; purpose?: string };
+
+function renderProjectStructure(model: Record<string, unknown>): string {
+  const m = model as {
+    monorepoLabel?: string;
+    groups?: { key?: string; title?: string; items?: string[] }[];
+    intro?: string;
+    principles?: { principle?: string; how?: string }[];
+    backend?: { stack?: string; intro?: string; rootTree?: string; perModuleTree?: string; folderReference?: PsFolderRef[] };
+    frontend?: { stack?: string; intro?: string; rootTree?: string; componentRule?: { scope?: string; location?: string; rule?: string }[]; promotionRule?: string };
+    aiAgent?: { applicable?: boolean; note?: string; stack?: string; rootTree?: string; folderResponsibilities?: PsFolderRef[]; runtimeInteraction?: string };
+    namingConventions?: { concern?: string; convention?: string; examples?: string }[];
+    gaps?: string[];
+  };
+  const tree = (s?: string) => (s ? `<pre class="ps-tree">${esc(s)}</pre>` : '');
+  const refTable = (rows?: PsFolderRef[]) =>
+    rows?.length
+      ? `<table class="sv-table"><thead><tr><th>Folder</th><th>POC</th><th>Purpose</th></tr></thead><tbody>${rows
+          .map((r) => `<tr><td class="sv-td-layer">${esc(r.folder ?? '')}</td><td>${r.poc ? '★' : ''}</td><td>${esc(r.purpose ?? '')}</td></tr>`)
+          .join('')}</tbody></table>`
+      : '';
+
+  const overview = (m.groups ?? []).length
+    ? `<div class="sv-band">${(m.groups ?? [])
+        .map((g) => `<p class="sv-sub"><strong>${esc(g.title ?? '')}:</strong> ${esc((g.items ?? []).join(' · '))}</p>`)
+        .join('')}${m.aiAgent ? `<p class="sv-sub"><strong>AI Agent:</strong> ${m.aiAgent.applicable === false ? `<em>${esc(m.aiAgent.note ?? 'Not applicable')}</em>` : esc(m.aiAgent.note ?? 'applicable')}</p>` : ''}</div>`
+    : '';
+
+  const principles = (m.principles ?? []).length
+    ? `<table class="sv-table"><thead><tr><th>Principle</th><th>How it shows up in the structure</th></tr></thead><tbody>${(m.principles ?? [])
+        .map((p) => `<tr><td class="sv-td-layer">${esc(p.principle ?? '')}</td><td>${esc(p.how ?? '')}</td></tr>`)
+        .join('')}</tbody></table>`
+    : '';
+
+  const backend = m.backend
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.1 · Backend project structure${m.backend.stack ? ` (${esc(m.backend.stack)})` : ''}</h3>
+       ${m.backend.intro ? `<p class="sv-note">${esc(m.backend.intro)}</p>` : ''}
+       ${tree(m.backend.rootTree)}${tree(m.backend.perModuleTree)}${refTable(m.backend.folderReference)}`
+    : '';
+
+  const frontend = m.frontend
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.2 · Frontend project structure${m.frontend.stack ? ` (${esc(m.frontend.stack)})` : ''}</h3>
+       ${m.frontend.intro ? `<p class="sv-note">${esc(m.frontend.intro)}</p>` : ''}
+       ${tree(m.frontend.rootTree)}
+       ${(m.frontend.componentRule ?? []).length ? `<table class="sv-table"><thead><tr><th>Scope</th><th>Location</th><th>Rule</th></tr></thead><tbody>${(m.frontend.componentRule ?? []).map((c) => `<tr><td class="sv-td-layer">${esc(c.scope ?? '')}</td><td>${esc(c.location ?? '')}</td><td>${esc(c.rule ?? '')}</td></tr>`).join('')}</tbody></table>` : ''}
+       ${m.frontend.promotionRule ? `<p class="sv-note"><strong>Promotion rule —</strong> ${esc(m.frontend.promotionRule)}</p>` : ''}`
+    : '';
+
+  const ai = m.aiAgent
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.3 · AI Agent project structure${m.aiAgent.applicable !== false && m.aiAgent.stack ? ` (${esc(m.aiAgent.stack)})` : ''}</h3>
+       ${m.aiAgent.applicable === false
+         ? `<p class="sv-note"><em>${esc(m.aiAgent.note ?? 'Not applicable — no AI agent required.')}</em></p>`
+         : `${m.aiAgent.note ? `<p class="sv-note">${esc(m.aiAgent.note)}</p>` : ''}${tree(m.aiAgent.rootTree)}${refTable(m.aiAgent.folderResponsibilities)}${tree(m.aiAgent.runtimeInteraction)}`}`
+    : '';
+
+  const naming = (m.namingConventions ?? []).length
+    ? `<h3 class="sv-band-title" style="margin-top:14px;">17.4 · Naming conventions across all stacks</h3>
+       <table class="sv-table"><thead><tr><th>Concern</th><th>Convention</th><th>Examples</th></tr></thead><tbody>${(m.namingConventions ?? [])
+         .map((n) => `<tr><td class="sv-td-layer">${esc(n.concern ?? '')}</td><td>${esc(n.convention ?? '')}</td><td>${esc(n.examples ?? '')}</td></tr>`)
+         .join('')}</tbody></table>`
+    : '';
+
+  const gaps = m.gaps?.length
+    ? `<div class="sv-gaps"><h3 class="sv-band-title">Gaps &amp; assumptions</h3>${svList(m.gaps)}</div>`
+    : '';
+
+  return `<div class="sv-bands">
+    ${m.monorepoLabel ? `<p class="sv-sub" style="text-align:center;font-weight:600;">${esc(m.monorepoLabel)}</p>` : ''}
+    ${overview}
+    ${m.intro ? `<p class="sv-note">${esc(m.intro)}</p>` : ''}
+    ${principles}
+    ${backend}
+    ${frontend}
+    ${ai}
+    ${naming}
+    ${gaps}
+  </div>`;
+}
+
 // ─── Main export ───────────────────────────────────────────────────────────
 
 export function generateHldHtml(data: HldHtmlData): string {
@@ -491,6 +576,10 @@ export function generateHldHtml(data: HldHtmlData): string {
       // Band model is the canonical §6 view; legacy free-text fields are dropped.
       const rest = body && typeof body === 'object' ? renderSectionBody(body, STYLE_VIEW_LEGACY_FIELDS) : '';
       inner = renderStyleViewBands(data.styleView as Record<string, unknown>) + rest;
+    } else if (key === 'projectStructure' && data.structureView && typeof data.structureView === 'object') {
+      // Structure model is the canonical §17 view; legacy free-text fields are dropped.
+      const rest = body && typeof body === 'object' ? renderSectionBody(body, STRUCTURE_VIEW_LEGACY_FIELDS) : '';
+      inner = renderProjectStructure(data.structureView as Record<string, unknown>) + rest;
     } else {
       inner = renderSectionBody(body);
     }
@@ -574,6 +663,7 @@ export function generateHldHtml(data: HldHtmlData): string {
     .sv-td-ref { color:#475569; width:26%; }
     .sv-td-ref a { color:#4F46B5; text-decoration:none; }
     .cv-pattern { font-size:10px; font-style:italic; color:#64748b; font-weight:400; }
+    .ps-tree { font-family:'Consolas','Courier New',monospace; font-size:10.5px; line-height:1.45; white-space:pre; overflow-x:auto; background:#f8fafc; border:1px solid #E5E2DD; border-radius:6px; padding:8px 10px; margin:4px 0; }
     .diagram-block { margin:16px 0; page-break-inside:avoid; }
     .diagram-block h3 { font-size:14px; color:#334155; margin:0 0 8px 0; }
     pre.mermaid { background:#fbfafe; border:1px solid #ece9f7; border-radius:6px; padding:12px; font-size:12px; overflow-x:auto; }

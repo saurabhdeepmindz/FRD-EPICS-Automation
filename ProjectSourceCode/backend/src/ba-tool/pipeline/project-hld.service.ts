@@ -511,6 +511,7 @@ export class HldService {
         ((latest.metadata ?? {}) as Record<string, unknown>).technicalView,
         ((latest.metadata ?? {}) as Record<string, unknown>).componentView,
         ((latest.metadata ?? {}) as Record<string, unknown>).styleView,
+        ((latest.metadata ?? {}) as Record<string, unknown>).structureView,
       ),
     };
   }
@@ -834,6 +835,81 @@ export class HldService {
     return out.join('\n');
   }
 
+  /** Render the project structure (§17) model as readable Markdown. */
+  private projectStructureMarkdown(model: Record<string, unknown>): string {
+    type Ref = { folder?: string; poc?: boolean; purpose?: string };
+    const m = model as {
+      monorepoLabel?: string;
+      groups?: { title?: string; items?: string[] }[];
+      intro?: string;
+      principles?: { principle?: string; how?: string }[];
+      backend?: { stack?: string; intro?: string; rootTree?: string; perModuleTree?: string; folderReference?: Ref[] };
+      frontend?: { stack?: string; intro?: string; rootTree?: string; componentRule?: { scope?: string; location?: string; rule?: string }[]; promotionRule?: string };
+      aiAgent?: { applicable?: boolean; note?: string; stack?: string; rootTree?: string; folderResponsibilities?: Ref[]; runtimeInteraction?: string };
+      namingConventions?: { concern?: string; convention?: string; examples?: string }[];
+      gaps?: string[];
+    };
+    const esc = (s?: string) => (s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim() || '—';
+    const out: string[] = [];
+    if (m.monorepoLabel) out.push(`**${m.monorepoLabel}**`, '');
+    (m.groups ?? []).forEach((g) => out.push(`- **${g.title ?? ''}:** ${(g.items ?? []).join(' · ')}`));
+    if (m.aiAgent) out.push(`- **AI Agent:** ${m.aiAgent.applicable === false ? `_${m.aiAgent.note || 'Not applicable'}_` : m.aiAgent.note || 'applicable'}`);
+    out.push('');
+    if (m.intro) out.push(`_${m.intro}_`, '');
+    if (m.principles?.length) {
+      out.push('| Principle | How it shows up in the structure |', '| --- | --- |');
+      m.principles.forEach((p) => out.push(`| ${esc(p.principle)} | ${esc(p.how)} |`));
+      out.push('');
+    }
+    const refTable = (rows?: Ref[]) => {
+      if (!rows?.length) return;
+      out.push('| Folder | POC | Purpose |', '| --- | --- | --- |');
+      rows.forEach((r) => out.push(`| ${esc(r.folder)} | ${r.poc ? '★' : ''} | ${esc(r.purpose)} |`));
+      out.push('');
+    };
+    const codeBlock = (s?: string) => {
+      if (s?.trim()) out.push('```', s, '```', '');
+    };
+    if (m.backend) {
+      out.push(`### 17.1 — Backend project structure${m.backend.stack ? ` (${m.backend.stack})` : ''}`, '');
+      if (m.backend.intro) out.push(m.backend.intro, '');
+      codeBlock(m.backend.rootTree);
+      codeBlock(m.backend.perModuleTree);
+      refTable(m.backend.folderReference);
+    }
+    if (m.frontend) {
+      out.push(`### 17.2 — Frontend project structure${m.frontend.stack ? ` (${m.frontend.stack})` : ''}`, '');
+      if (m.frontend.intro) out.push(m.frontend.intro, '');
+      codeBlock(m.frontend.rootTree);
+      if (m.frontend.componentRule?.length) {
+        out.push('| Scope | Location | Rule |', '| --- | --- | --- |');
+        m.frontend.componentRule.forEach((c) => out.push(`| ${esc(c.scope)} | ${esc(c.location)} | ${esc(c.rule)} |`));
+        out.push('');
+      }
+      if (m.frontend.promotionRule) out.push(`**Promotion rule —** ${m.frontend.promotionRule}`, '');
+    }
+    out.push(`### 17.3 — AI Agent project structure${m.aiAgent?.applicable !== false && m.aiAgent?.stack ? ` (${m.aiAgent.stack})` : ''}`, '');
+    if (m.aiAgent?.applicable === false) {
+      out.push(`_${m.aiAgent?.note || 'Not applicable — no AI agent required.'}_`, '');
+    } else {
+      if (m.aiAgent?.note) out.push(m.aiAgent.note, '');
+      codeBlock(m.aiAgent?.rootTree);
+      refTable(m.aiAgent?.folderResponsibilities);
+      codeBlock(m.aiAgent?.runtimeInteraction);
+    }
+    if (m.namingConventions?.length) {
+      out.push('### 17.4 — Naming conventions across all stacks', '');
+      out.push('| Concern | Convention | Examples |', '| --- | --- | --- |');
+      m.namingConventions.forEach((n) => out.push(`| ${esc(n.concern)} | ${esc(n.convention)} | ${esc(n.examples)} |`));
+      out.push('');
+    }
+    if (m.gaps?.length) {
+      out.push('### Gaps & assumptions');
+      m.gaps.forEach((g) => out.push(`- ${g}`));
+    }
+    return out.join('\n');
+  }
+
   private renderMarkdown(
     version: number,
     sections: Record<string, unknown>,
@@ -842,6 +918,7 @@ export class HldService {
     technicalView?: unknown,
     componentView?: unknown,
     styleView?: unknown,
+    structureView?: unknown,
   ): string {
     const lines: string[] = [`# High-Level Design (HLD)`, ``, `_Version ${version}_`, ``];
     HLD_SECTION_ORDER.forEach((key, i) => {
@@ -878,6 +955,15 @@ export class HldService {
       if (key === 'architectureStyleView' && styleView && typeof styleView === 'object') {
         lines.push(this.styleViewBandsMarkdown(styleView as Record<string, unknown>), '');
         const rest = this.withoutLegacyFields(body, ['tiers', 'description', 'patternsByTier']);
+        if (rest && Object.keys(rest).length) {
+          lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
+        }
+        return;
+      }
+      // §17 — render the canonical project structure; drop legacy free-text fields.
+      if (key === 'projectStructure' && structureView && typeof structureView === 'object') {
+        lines.push(this.projectStructureMarkdown(structureView as Record<string, unknown>), '');
+        const rest = this.withoutLegacyFields(body, ['aiAgent', 'backend', 'frontend', 'namingConventions']);
         if (rest && Object.keys(rest).length) {
           lines.push('```json', JSON.stringify(flattenValue(rest), null, 2), '```', '');
         }

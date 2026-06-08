@@ -468,6 +468,14 @@ export const STYLE_VIEW_LEGACY_FIELDS = ['tiers', 'description', 'patternsByTier
  */
 export const STRUCTURE_VIEW_LEGACY_FIELDS = ['aiAgent', 'backend', 'frontend', 'namingConventions'];
 
+/** §17 sub-sections — left-menu entries + panel anchor ids (`struct-<id>`). */
+export const STRUCTURE_SUBSECTIONS: { id: string; label: string }[] = [
+  { id: 'backend', label: '17.1 Backend' },
+  { id: 'frontend', label: '17.2 Frontend' },
+  { id: 'aiagent', label: '17.3 AI Agent' },
+  { id: 'naming', label: '17.4 Naming conventions' },
+];
+
 export const HLD_DIAGRAM_LABELS: Record<string, string> = {
   systemView: '50,000-ft System View',
   technicalLayers: 'Layered Technical View',
@@ -712,10 +720,46 @@ export interface ProjectStructureGroup {
   items: string[];
 }
 
+export interface StructureFolderRef {
+  folder: string;
+  poc?: boolean;
+  purpose: string;
+}
+
 export interface ProjectStructureModel {
   monorepoLabel?: string;
   groups: ProjectStructureGroup[];
-  aiAgent?: { applicable?: boolean; note?: string };
+  /** §17 intro paragraph. */
+  intro?: string;
+  /** §17 guiding principles (Principle | How it shows up). */
+  principles?: { principle: string; how: string }[];
+  /** §17.1 Backend project structure. */
+  backend?: {
+    stack?: string;
+    intro?: string;
+    rootTree?: string;
+    perModuleTree?: string;
+    folderReference?: StructureFolderRef[];
+  };
+  /** §17.2 Frontend project structure. */
+  frontend?: {
+    stack?: string;
+    intro?: string;
+    rootTree?: string;
+    componentRule?: { scope: string; location: string; rule: string }[];
+    promotionRule?: string;
+  };
+  /** §17.3 AI Agent project structure (or applicable=false). */
+  aiAgent?: {
+    applicable?: boolean;
+    note?: string;
+    stack?: string;
+    rootTree?: string;
+    folderResponsibilities?: StructureFolderRef[];
+    runtimeInteraction?: string;
+  };
+  /** §17.4 Naming conventions across stacks. */
+  namingConventions?: { concern: string; convention: string; examples: string }[];
   gaps?: string[];
 }
 

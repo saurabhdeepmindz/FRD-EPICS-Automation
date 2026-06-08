@@ -1,14 +1,14 @@
 """
 Project Structure (§17) — structured model.
 
-Phase 1 (this file) produces the monorepo OVERVIEW that replaces the legacy
-project-structure tile diagram: grouped folders/modules (frontend, backend,
-data, shared packages, config) plus AI-agent applicability — grounded in the
-project's PRD/FRD/HLD. (The detailed §17.1–17.4 trees/tables are layered on in a
-later phase.) Anything inferred/missing is reported in `gaps`.
+Produces the full §17: the monorepo OVERVIEW (grouped folders/modules that
+replace the legacy tile diagram) plus the prescriptive Template-v3 detail —
+§17 intro + three principles, §17.1 Backend, §17.2 Frontend, §17.3 AI Agent,
+§17.4 Naming conventions — all adapted to THIS project's stack and modules.
+Grounded in the project's PRD/FRD/HLD; anything inferred/missing → `gaps`.
 """
 
-PROJECT_STRUCTURE_SYSTEM_PROMPT = """You are an expert software architect. From the project's PRD/FRD/HLD, produce a PROJECT STRUCTURE OVERVIEW (§17) as a STRICT JSON object — a monorepo folder/module map grouped by area. Ground everything in the given project (its real modules, stack, datastore, integrations). Do not invent technologies not implied by the context.
+PROJECT_STRUCTURE_SYSTEM_PROMPT = """You are an expert software architect. From the project's PRD/FRD/HLD, produce a PROJECT STRUCTURE (§17) as a STRICT JSON object: a monorepo overview PLUS prescriptive Template-v3 folder structures and conventions, adapted to THIS project's actual stack, modules and datastore. Ground everything in the given project; do not invent technologies not implied by the context. Be honest: if the project has no AI agent, mark that sub-section not-applicable rather than inventing one.
 
 Return EXACTLY this shape:
 {
@@ -20,15 +20,43 @@ Return EXACTLY this shape:
     {"key":"shared",  "title":"packages/ (shared)",           "kind":"shared",  "items":["string"]},
     {"key":"config",  "title":"root config files",            "kind":"config",  "items":["string"]}
   ],
-  "aiAgent": {"applicable": true, "note": "string"},
+  "intro": "string",
+  "principles": [{"principle":"string","how":"string"}],
+  "backend": {
+    "stack": "string",
+    "intro": "string",
+    "rootTree": "string",
+    "perModuleTree": "string",
+    "folderReference": [{"folder":"string","poc":true,"purpose":"string"}]
+  },
+  "frontend": {
+    "stack": "string",
+    "intro": "string",
+    "rootTree": "string",
+    "componentRule": [{"scope":"string","location":"string","rule":"string"}],
+    "promotionRule": "string"
+  },
+  "aiAgent": {
+    "applicable": true,
+    "note": "string",
+    "stack": "string",
+    "rootTree": "string",
+    "folderResponsibilities": [{"folder":"string","poc":true,"purpose":"string"}],
+    "runtimeInteraction": "string"
+  },
+  "namingConventions": [{"concern":"string","convention":"string","examples":"string"}],
   "gaps": ["string"]
 }
 
 Field rules:
-- `groups`: one group per area. Keep each `items` entry short (fits a small tile), e.g. frontend: "app/ · routes", "components/", "app/auth/ · route"; backend: "modules/ · controller + service + model + dto", "modules/auth/", "modules/booking/"; data: the actual table names (e.g. "users", "bookings", "payments", "audit_log"); shared: "shared-types/", "ui-components/", "eslint-config/"; config: "package.json", "turbo.json", "docker-compose.yml", ".env.example", "README.md".
-- Derive `<framework>` and `<db>` from the project's stack (e.g. "Next.js", "NestJS", "PostgreSQL"). Backend module folders and DB tables MUST reflect THIS project's actual modules/entities (one folder/table per business module).
-- `aiAgent`: if the project has an AI/LLM agent component, set `applicable=true` and a one-line `note` (e.g. "apps/ai-agent/ (Python · FastAPI · LangGraph)"). If it has NO AI agent, set `applicable=false` and `note` = "Not applicable — <reason>" (e.g. "no AI agent required"). Do NOT add an AI group when not applicable.
-- If a group has no basis in the project (e.g. no shared packages), return a minimal sensible default and note it in `gaps`.
+- `groups` (the overview tiles): one group per area, short `items` (fit a small tile) reflecting THIS project's real frontend areas, backend modules, DB tables, shared packages and config files. Derive <framework>/<db> from the project's stack.
+- `intro`: 1–2 sentences — that §17 instantiates the architecture as concrete, prescriptive folder layouts so every module looks the same.
+- `principles`: the guiding principles (Principle | How it shows up). Typically: Consistency over cleverness; Convention over configuration; POC velocity / scale-ready; Must-have asterisk convention. Adapt wording to the project.
+- TREES (`rootTree`, `perModuleTree`, frontend `rootTree`, aiAgent `rootTree`): multi-line plain-text folder trees using tree characters. Each line: tree prefix (├──, │, └──) + path, optionally followed by '  # short note'. Follow the reference HLD Template-v3 layout (apps/[module]-api · config/ · database/ · lib/ · per-module src/ with interface/controller/service/workflow/policy/repository/entity/dto/mapper/event/guard/test; frontend feature-first with app/ thin routes + features/[module]/ + components/ui|shared|layout) BUT substitute the project's real module names (e.g. auth, kyc, listing, booking, payment for Luggage Room) and adapt the stack. Keep trees focused (~25–45 lines each); use the project's actual modules as examples.
+- `backend.folderReference` (§ Folder reference table): one row per backend per-module folder (interface/, controller/, service/, workflow/, policy/, repository/, entity/, dto/, mapper/, event/, exception/, guard/, test/) with `poc` (true = POC must-have) and a `purpose` line.
+- `frontend.componentRule` (3-tier shared-component rule): rows for App-wide primitive (components/ui/), Cross-feature shared (components/shared/), Feature-specific (features/[module]/components/). `frontend.promotionRule`: 1–2 sentences on how a component is promoted from feature to shared.
+- `aiAgent`: if the project HAS an AI/LLM agent, set applicable=true and fill `stack` (e.g. Python · FastAPI · LangGraph), `rootTree` (tool/ graph/ prompt/ client/ schema/ guard/ exception/ test/), `folderResponsibilities` (one row per folder with poc + purpose), and `runtimeInteraction` (a short plain-text flow, e.g. "Frontend ─WS→ Orchestrator ─intent→ [module]-ai-agent → tool/* ─HTTP→ Domain Service"). If NO AI agent, set applicable=false, note="Not applicable — <reason>", and leave stack/rootTree/runtimeInteraction empty strings and folderResponsibilities [].
+- `namingConventions`: the cross-stack conventions (Concern | Convention | Examples) — module names (kebab-case), backend service folders, backend file naming, class names, interfaces, DI tokens, frontend folders/components/hooks/api/pages, AI-agent files/graphs/classes/prompts. Adapt examples to the project's modules.
 - `gaps`: anything inferred, defaulted, or missing from the docs."""
 
 
@@ -38,5 +66,5 @@ def build_project_structure_user_message(product_name: str, prd_context: str, hl
         parts.append(f"\n## PRD / FRD context\n{prd_context.strip()[:8000]}")
     if hld_context.strip():
         parts.append(f"\n## HLD context\n{hld_context.strip()[:5000]}")
-    parts.append("\n## Task\nReturn the Project Structure overview JSON described above, grounded in this project.")
+    parts.append("\n## Task\nReturn the Project Structure JSON described above, grounded in this project.")
     return "\n".join(parts)

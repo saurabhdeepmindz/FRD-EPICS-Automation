@@ -36,6 +36,7 @@ import {
   COMPONENT_VIEW_LEGACY_FIELDS,
   STYLE_VIEW_LEGACY_FIELDS,
   STRUCTURE_VIEW_LEGACY_FIELDS,
+  STRUCTURE_SUBSECTIONS,
   type Hld,
   type PrdGap,
   type ProjectStructure,
@@ -169,6 +170,12 @@ export default function HldPage() {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+
+  // §17 sub-section nav: select Project Structure, then scroll to the sub-anchor.
+  const scrollToStruct = (id: string) => {
+    selectSection('projectStructure');
+    setTimeout(() => document.getElementById(`struct-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  };
 
   // The focused sub-heading's content (string/JSON) for grounding the Copilot.
   const activeFieldContent: string | null = (() => {
@@ -362,7 +369,7 @@ export default function HldPage() {
                               <span className="min-w-0">{s.name}</span>
                               {!has && <span className="ml-auto text-[10px] text-gray-300 shrink-0">—</span>}
                             </button>
-                            {subFields.length > 0 && (
+                            {(subFields.length > 0 || s.key === 'projectStructure') && (
                               <button
                                 onClick={() => toggleExpand(s.key)}
                                 className="px-1.5 text-gray-400 hover:text-gray-700 shrink-0"
@@ -373,7 +380,21 @@ export default function HldPage() {
                               </button>
                             )}
                           </div>
-                          {isExpanded && subFields.length > 0 && (
+                          {/* §17 — fixed sub-section nav (17.1–17.4) scrolling to the panel anchors */}
+                          {isExpanded && s.key === 'projectStructure' && (
+                            <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
+                              {STRUCTURE_SUBSECTIONS.map((ss) => (
+                                <button
+                                  key={ss.id}
+                                  onClick={() => scrollToStruct(ss.id)}
+                                  className="w-full text-left rounded-md px-2.5 py-1.5 text-xs border border-transparent text-gray-500 hover:bg-white hover:border-gray-200"
+                                >
+                                  {ss.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {isExpanded && s.key !== 'projectStructure' && subFields.length > 0 && (
                             <div className="ml-7 mt-0.5 mb-1 border-l border-gray-200 pl-1.5 space-y-0.5">
                               {subFields.map((fk) => {
                                 const fieldActive = isActive && activeField === fk;

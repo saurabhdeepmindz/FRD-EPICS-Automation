@@ -115,6 +115,92 @@ export function HldProjectStructureView({
           })}
         </div>
 
+        {/* §17 intro + Three principles */}
+        {(model.intro || (model.principles ?? []).length > 0) && (
+          <div className="pt-3 mt-1 border-t">
+            {model.intro && <p className="text-[12px] leading-snug mb-2" style={{ color: T.caption }}>{model.intro}</p>}
+            {(model.principles ?? []).length > 0 && (
+              <Table head={['Principle', 'How it shows up in the structure']} widths={['28%']}>
+                {model.principles!.map((p, i) => (
+                  <Row key={i} cells={[p.principle, p.how]} bold={[true, false]} />
+                ))}
+              </Table>
+            )}
+          </div>
+        )}
+
+        {/* §17.1 Backend */}
+        {model.backend && (
+          <SubSection id="struct-backend" title={`17.1 · Backend project structure${model.backend.stack ? ` (${model.backend.stack})` : ''}`}>
+            {model.backend.intro && <p className="text-[12px] leading-snug mb-2" style={{ color: T.caption }}>{model.backend.intro}</p>}
+            {model.backend.rootTree && <><p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Root layout</p><Tree>{model.backend.rootTree}</Tree></>}
+            {model.backend.perModuleTree && <><p className="text-[11px] font-medium mt-2 mb-1" style={{ color: T.bandTitle }}>Per-module structure — apps/[module]-api/</p><Tree>{model.backend.perModuleTree}</Tree></>}
+            {(model.backend.folderReference ?? []).length > 0 && (
+              <div className="mt-2">
+                <p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Folder reference</p>
+                <Table head={['Folder', 'POC', 'Purpose']} widths={['16%', '6%']}>
+                  {model.backend.folderReference!.map((f, i) => (
+                    <Row key={i} cells={[f.folder, f.poc ? '★' : '', f.purpose]} bold={[true, false, false]} mono={[true, false, false]} />
+                  ))}
+                </Table>
+              </div>
+            )}
+          </SubSection>
+        )}
+
+        {/* §17.2 Frontend */}
+        {model.frontend && (
+          <SubSection id="struct-frontend" title={`17.2 · Frontend project structure${model.frontend.stack ? ` (${model.frontend.stack})` : ''}`}>
+            {model.frontend.intro && <p className="text-[12px] leading-snug mb-2" style={{ color: T.caption }}>{model.frontend.intro}</p>}
+            {model.frontend.rootTree && <><p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Root layout</p><Tree>{model.frontend.rootTree}</Tree></>}
+            {(model.frontend.componentRule ?? []).length > 0 && (
+              <div className="mt-2">
+                <p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>The 3-tier shared-component rule</p>
+                <Table head={['Scope', 'Location', 'Rule']} widths={['28%', '22%']}>
+                  {model.frontend.componentRule!.map((c, i) => (
+                    <Row key={i} cells={[c.scope, c.location, c.rule]} bold={[true, false, false]} mono={[false, true, false]} />
+                  ))}
+                </Table>
+              </div>
+            )}
+            {model.frontend.promotionRule && <p className="text-[12px] leading-snug mt-2" style={{ color: T.caption }}><span className="font-medium" style={{ color: T.bandTitle }}>Promotion rule — </span>{model.frontend.promotionRule}</p>}
+          </SubSection>
+        )}
+
+        {/* §17.3 AI Agent */}
+        <SubSection id="struct-aiagent" title={`17.3 · AI Agent project structure${model.aiAgent?.applicable !== false && model.aiAgent?.stack ? ` (${model.aiAgent.stack})` : ''}`}>
+          {model.aiAgent?.applicable === false ? (
+            <p className="text-[12px] italic" style={{ color: '#9A968F' }}>{model.aiAgent?.note || 'Not applicable — no AI agent required for this project.'}</p>
+          ) : (
+            <>
+              {model.aiAgent?.note && <p className="text-[12px] leading-snug mb-2" style={{ color: T.caption }}>{model.aiAgent.note}</p>}
+              {model.aiAgent?.rootTree && <><p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Root layout — apps/[module]-ai-agent/</p><Tree>{model.aiAgent.rootTree}</Tree></>}
+              {(model.aiAgent?.folderResponsibilities ?? []).length > 0 && (
+                <div className="mt-2">
+                  <p className="text-[11px] font-medium mb-1" style={{ color: T.bandTitle }}>Folder responsibilities</p>
+                  <Table head={['Folder', 'POC', 'Purpose']} widths={['16%', '6%']}>
+                    {model.aiAgent!.folderResponsibilities!.map((f, i) => (
+                      <Row key={i} cells={[f.folder, f.poc ? '★' : '', f.purpose]} bold={[true, false, false]} mono={[true, false, false]} />
+                    ))}
+                  </Table>
+                </div>
+              )}
+              {model.aiAgent?.runtimeInteraction && <><p className="text-[11px] font-medium mt-2 mb-1" style={{ color: T.bandTitle }}>How the platform pieces interact at runtime</p><Tree>{model.aiAgent.runtimeInteraction}</Tree></>}
+            </>
+          )}
+        </SubSection>
+
+        {/* §17.4 Naming conventions */}
+        {(model.namingConventions ?? []).length > 0 && (
+          <SubSection id="struct-naming" title="17.4 · Naming conventions across all stacks">
+            <Table head={['Concern', 'Convention', 'Examples']} widths={['24%', '30%']}>
+              {model.namingConventions!.map((n, i) => (
+                <Row key={i} cells={[n.concern, n.convention, n.examples]} bold={[true, false, false]} mono={[false, false, true]} />
+              ))}
+            </Table>
+          </SubSection>
+        )}
+
         {/* Gaps & assumptions */}
         {(model.gaps ?? []).length > 0 && (
           <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50/50 p-2.5">
@@ -130,5 +216,62 @@ export function HldProjectStructureView({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function SubSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+  return (
+    <div id={id} className="scroll-mt-6 pt-3 mt-1 border-t">
+      <p className="text-[13px] font-semibold mb-2" style={{ color: T.bandTitle }}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function Tree({ children }: { children: string }) {
+  return (
+    <pre
+      className="text-[11px] leading-snug overflow-x-auto rounded-md border bg-gray-50 p-2.5 whitespace-pre"
+      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', color: '#3D3D3A' }}
+    >
+      {children}
+    </pre>
+  );
+}
+
+function Table({ head, widths, children }: { head: string[]; widths?: string[]; children: React.ReactNode }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left border-collapse text-[12px]">
+        <thead>
+          <tr style={{ background: '#7C4A1E' }}>
+            {head.map((h, i) => (
+              <th key={i} className="border px-2.5 py-1.5 font-semibold text-white" style={{ borderColor: '#E5E2DD', width: widths?.[i] }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function Row({ cells, bold, mono }: { cells: string[]; bold?: boolean[]; mono?: boolean[] }) {
+  return (
+    <tr className="align-top">
+      {cells.map((c, i) => (
+        <td
+          key={i}
+          className={`border px-2.5 py-1.5 leading-snug ${bold?.[i] ? 'font-medium' : ''}`}
+          style={{
+            borderColor: '#E5E2DD',
+            color: bold?.[i] ? T.bandTitle : '#3D3D3A',
+            fontFamily: mono?.[i] ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : undefined,
+          }}
+        >
+          {c || ''}
+        </td>
+      ))}
+    </tr>
   );
 }
