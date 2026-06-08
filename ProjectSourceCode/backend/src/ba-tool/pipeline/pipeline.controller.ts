@@ -611,6 +611,18 @@ export class PipelineController {
     return { success: true, data };
   }
 
+  @Get('hld/:hldId/deployment-flows')
+  async getHldDeploymentFlows(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getDeploymentFlows(hldId);
+    return { success: true, data };
+  }
+
+  @Post('hld/:hldId/deployment-flows/regenerate')
+  async regenerateHldDeploymentFlows(@Param('hldId', ParseUUIDPipe) hldId: string) {
+    const data = await this.hld.getDeploymentFlows(hldId, true);
+    return { success: true, data };
+  }
+
   @Get('hld/:hldId/project-structure')
   async getHldProjectStructure(@Param('hldId', ParseUUIDPipe) hldId: string) {
     const data = await this.hld.getProjectStructureView(hldId);

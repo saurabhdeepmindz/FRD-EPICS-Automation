@@ -63,6 +63,10 @@ from prompts.deployment_view_prompts import (
     DEPLOYMENT_VIEW_SYSTEM_PROMPT,
     build_deployment_view_user_message,
 )
+from prompts.deployment_flow_prompts import (
+    DEPLOYMENT_FLOW_SYSTEM_PROMPT,
+    build_deployment_flow_user_message,
+)
 from prompts.system_view_prompts import (
     SYSTEM_VIEW_SYSTEM_PROMPT,
     build_system_view_user_message,
@@ -3236,4 +3240,58 @@ async def hld_deployment_view(
         logger.error("Deployment view JSON parse failed: %s", exc)
         raise HTTPException(status_code=502, detail="AI returned malformed deployment-view JSON") from exc
     logger.info("Deployment view generated for '%s' (%d layers)", body.product_name, len(model.get("layers", [])))
+    return model
+
+
+# ─── AWS Flow Diagrams (§7.5) — structured model ──────────────────────────────
+
+class DeploymentFlowRequest(BaseModel):
+    provider: str = "anthropic"
+    product_name: str = ""
+    prd_context: str = ""
+    hld_context: str = ""
+    deployment_view: str = ""
+
+
+@app.post("/hld-deployment-flows", tags=["copilot"])
+async def hld_deployment_flows(
+    body: DeploymentFlowRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """Return the AWS flow diagrams (§7.5) as a structured JSON model."""
+    user = build_deployment_flow_user_message(body.product_name, body.prd_context, body.hld_context, body.deployment_view)
+    provider = body.provider or "anthropic"
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": DEPLOYMENT_FLOW_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=9000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except openai.OpenAIError as exc:
+            logger.error("Deployment flows (openai) error: %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=DEPLOYMENT_FLOW_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=9000,
+            temperature=0.3,
+        )
+    try:
+        model = _parse_ai_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Deployment flows JSON parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI returned malformed deployment-flows JSON") from exc
+    logger.info("Deployment flows generated for '%s' (%d diagrams)", body.product_name, len(model.get("diagrams", [])))
     return model
