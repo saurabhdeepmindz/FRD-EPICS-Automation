@@ -1,6 +1,6 @@
 # Sprint v12 — Tasks: Wireframe Copilot — conversational AI + change register — Track WC
 
-## Status: 🟡 PLANNED (2026-06-11) — tasks defined; **wireframe-first**: WC-00 mockups → user approval → implementation. No product code until mockups approved.
+## Status: 🟢 IN PROGRESS (2026-06-11) — WC-00 mockups approved. **PR 1 (backend) COMPLETE**: WC-01 (models+migration) ✅, WC-02/03/04 (ai-service) ✅, WC-05/06/07/08/09/16/17/19/21 (services, routes, SSE, export, re-apply hook, safety, feedback ingest) ✅ — tsc green, backend boots, 34 tests pass, verified e2e on TestDemoProject then cleaned. **Next: PR 2 (frontend) — WC-10/11/12/13/14/22/18; PR 3 — WC-15 + WC-20.**
 
 > **PRD:** `sprints/v12/PRD.md`. **Decisions:** (A) project-level thread + per-message scope · (B) auto-apply to non-destructive `edited` variant + Accept/Revert · (C) hi-fi primary, lo-fi optional · (D) dedicated wireframe models · (E) Claude for HTML edits · (F) capture requestor + source + **optional** requested-on date · (G) all extra features in.
 >
