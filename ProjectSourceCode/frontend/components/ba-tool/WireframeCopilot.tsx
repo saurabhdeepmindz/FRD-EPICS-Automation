@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   wireframeChat,
   ingestWireframeFeedback,
@@ -51,14 +51,24 @@ export function WireframeCopilot({ projectId, open, onClose, selectedSlugs, avai
   const [requestedBy, setRequestedBy] = useState('');
   const [source, setSource] = useState<'CUSTOMER' | 'INTERNAL'>('CUSTOMER');
   const [requestedOn, setRequestedOn] = useState('');
+  const [scopeSlugs, setScopeSlugs] = useState<string[]>(selectedSlugs);
+  const [scopeOpen, setScopeOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Seed scope from the gallery's ticked screens each time the drawer opens.
+  useEffect(() => { if (open) setScopeSlugs(selectedSlugs); }, [open, selectedSlugs]);
 
   if (!open) return null;
 
-  const scope = selectedSlugs.length
-    ? { kind: 'SELECTED' as const, slugs: selectedSlugs }
+  const scope = scopeSlugs.length
+    ? { kind: 'SELECTED' as const, slugs: scopeSlugs }
     : { kind: 'ALL' as const };
-  const scopeLabel = selectedSlugs.length ? `${selectedSlugs.length} selected` : `All ${availableSlugs.length} screens`;
+  const scopeLabel = scopeSlugs.length
+    ? scopeSlugs.length === 1 ? scopeSlugs[0] : `${scopeSlugs.length} screens`
+    : `All ${availableSlugs.length} screens`;
+
+  const toggleScope = (slug: string) =>
+    setScopeSlugs((prev) => (prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]));
 
   const toggleRef = (slug: string) =>
     setRefSlugs((prev) => (prev.includes(slug) ? prev.filter((s) => s !== slug) : prev.length >= 2 ? prev : [...prev, slug]));
@@ -142,11 +152,34 @@ export function WireframeCopilot({ projectId, open, onClose, selectedSlugs, avai
     <div className="fixed inset-y-0 right-0 z-40 w-[440px] bg-white border-l shadow-xl flex flex-col">
       <div className="flex items-center gap-2 px-4 py-3 border-b">
         <b className="text-sm">💬 Wireframe Copilot</b>
-        <span className="ml-auto text-[11px] bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-full px-2.5 py-0.5 font-semibold">Scope: {scopeLabel}</span>
+        <button
+          onClick={() => setScopeOpen((o) => !o)}
+          title="Choose which screen(s) this feedback is for"
+          className="ml-auto text-[11px] bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-full px-2.5 py-0.5 font-semibold hover:bg-indigo-100"
+        >Scope: {scopeLabel} ▾</button>
         <button onClick={onClose} className="text-gray-400 px-1">✕</button>
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-3">
+        {/* Scope picker — pick which screen(s) the chat/feedback applies to */}
+        {scopeOpen && (
+          <div className="border border-indigo-200 bg-indigo-50/40 rounded-lg p-2.5 text-[11px] space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-indigo-900">Feedback is for…</span>
+              <button onClick={() => setScopeSlugs([])} className={`rounded px-2 py-0.5 ${scopeSlugs.length === 0 ? 'bg-indigo-600 text-white' : 'border border-indigo-200 text-indigo-700'}`}>All screens</button>
+            </div>
+            <div className="max-h-40 overflow-auto grid grid-cols-1 gap-0.5">
+              {availableSlugs.map((s) => (
+                <label key={s} className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-white cursor-pointer">
+                  <input type="checkbox" checked={scopeSlugs.includes(s)} onChange={() => toggleScope(s)} />
+                  <span className="font-mono">{s}</span>
+                </label>
+              ))}
+              {availableSlugs.length === 0 && <span className="text-gray-400">No {targetKind.toLowerCase()} screens yet.</span>}
+            </div>
+            <p className="text-[10px] text-indigo-700/80">Tip: pasting a block that starts with “Screen 01 — …” auto-routes to that screen — no need to pick here.</p>
+          </div>
+        )}
         {/* Prominent feedback upload */}
         <button onClick={() => fileRef.current?.click()} disabled={busy} className="w-full h-10 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">📄 Upload feedback document</button>
         <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.md,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void ingest(f); e.target.value = ''; }} />
