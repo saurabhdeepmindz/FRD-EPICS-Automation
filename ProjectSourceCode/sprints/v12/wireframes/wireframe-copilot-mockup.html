@@ -207,12 +207,16 @@
             <div class="addbar"><span class="btn primary">+ Add 2 to register</span><span class="btn">Discard</span></div>
           </div>
         </div>
-        <div class="composer"><textarea placeholder="Describe a change… (e.g. 'match screen-03 header on all Module B screens')"></textarea><span class="iconbtn" title="Voice">🎙️</span><span class="iconbtn" style="background:var(--cta);color:#fff" title="Send">➤</span></div>
+        <div style="padding:6px 12px 0;display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted)">
+          <span class="iconbtn" title="Upload feedback document (PDF/DOCX/MD/TXT) → opens the review table (Frame 4)" style="width:auto;padding:0 9px;gap:5px;font-size:11px">📄 Upload feedback</span>
+          <span>or paste a whole review / one screen's block below → opens the <b>staging table (Frame 4)</b></span>
+        </div>
+        <div class="composer"><textarea placeholder="Describe a change, or paste screen-wise feedback… (e.g. 'Screen 02 — (3) phone field with country selector')"></textarea><span class="iconbtn" title="Voice">🎙️</span><span class="iconbtn" style="background:var(--cta);color:#fff" title="Send">➤</span></div>
       </div>
     </div>
   </div>
 </div>
-<div class="anno"><b>Notes:</b> The <b>scope chip</b> follows the gallery checkboxes (All / N selected). The <b>Design System chip</b> is read-only ("Edit ↗" deep-links to the existing editor). The <b>reference picker</b> is capped at 2. Each proposed change captures <b>requestor · source · optional date · priority</b> before it enters the register.</div>
+<div class="anno"><b>Notes:</b> The <b>scope chip</b> follows the gallery checkboxes (All / N selected). The <b>Design System chip</b> is read-only ("Edit ↗" deep-links to the existing editor). The <b>reference picker</b> is capped at 2. Each proposed change captures <b>requestor · source · optional date · priority</b> before it enters the register. <b>Entry to Frame 4:</b> the <b>“📄 Upload feedback”</b> button (or pasting a multi-screen review into the composer) opens the parsed <b>staging table (Frame 4)</b>.</div>
 
 <!-- FRAME 2 -->
 <div class="frame">
@@ -293,7 +297,7 @@
 
 <!-- FRAME 4 -->
 <div class="frame">
-  <div class="cap"><span class="pill">Frame 4</span> Ingest a feedback document → parsed, screen-routed staging table (review before applying)</div>
+  <div class="cap"><span class="pill">Frame 4</span> Ingest a feedback document → parsed, screen-routed staging table &nbsp;·&nbsp; opened from the Copilot composer (Frame 1 → “📄 Upload feedback” / paste)</div>
   <div class="body">
     <div class="reg">
       <div class="toolbar">
