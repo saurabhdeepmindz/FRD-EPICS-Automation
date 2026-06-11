@@ -291,5 +291,108 @@
 </div>
 <div class="anno"><b>Notes:</b> The edit is written to a <b>non-destructive <code>edited</code> variant</b> — the original is never lost. <b>Accept</b> keeps it active (drives navigator/export); <b>Revert</b> flips the active variant back. Numbered callouts are preserved (parity guard).</div>
 
+<!-- FRAME 4 -->
+<div class="frame">
+  <div class="cap"><span class="pill">Frame 4</span> Ingest a feedback document → parsed, screen-routed staging table (review before applying)</div>
+  <div class="body">
+    <div class="reg">
+      <div class="toolbar">
+        <span class="btn dark">📄 Upload feedback doc</span>
+        <span class="btn">📋 Paste text</span>
+        <span style="font-size:12px;color:var(--muted)">Parsed <b>“Updated wireframe review.pdf”</b> → 14 changes · 3 project-wide · 1 design-system · 2 unmatched</span>
+        <span class="spacer"></span>
+        <span style="font-size:11px;color:var(--muted)">Batch:</span>
+        <input class="filter" style="width:120px" value="Priya (Client)" title="Requestor">
+        <select class="filter"><option>Customer</option><option>Internal</option></select>
+        <input class="filter" type="date" value="2026-06-09" title="Requested on (optional)">
+      </div>
+
+      <table>
+        <thead><tr><th>✓</th><th>Change</th><th>Target</th><th>Callout</th><th>Scope</th><th>Phase</th><th></th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="7">⌖ General — project-wide &amp; Design System</td></tr>
+          <tr>
+            <td><input type="checkbox" class="chk" checked></td>
+            <td contenteditable="true">Adopt <b>Cyan #22d3ee</b> as primary brand color (replace orange); ensure readable contrast.</td>
+            <td><span style="font-size:11px;color:var(--muted)">all screens</span></td><td>—</td>
+            <td><span class="src" style="background:#FCE7F3;color:#9D174D">DESIGN SYSTEM</span></td>
+            <td><span class="badge b-pending">Now</span></td>
+            <td><div class="rowact"><span class="mini go">Update token</span><span class="mini">+ Recolor screens</span></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" class="chk" checked></td>
+            <td contenteditable="true">Make the app fully responsive (hide/reorganize for phone).</td>
+            <td><span style="font-size:11px;color:var(--muted)">all screens</span></td><td>—</td>
+            <td><span class="src" style="background:#E0E7FF;color:#3730A3">ALL</span></td>
+            <td><span class="badge b-pending">Now</span></td>
+            <td><div class="rowact"><span class="mini">Re-route ▾</span></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" class="chk" checked></td>
+            <td contenteditable="true">Fold T&amp;C + Privacy consent into a disclaimer beneath the primary button (no checkboxes).</td>
+            <td><span style="font-size:11px;color:var(--muted)">all screens</span></td><td>—</td>
+            <td><span class="src" style="background:#E0E7FF;color:#3730A3">ALL</span></td>
+            <td><span class="badge b-pending">Now</span></td>
+            <td><div class="rowact"><span class="mini">Re-route ▾</span></div></td>
+          </tr>
+
+          <tr class="grp"><td colspan="7">● Module A — Auth &amp; Entry</td></tr>
+          <tr>
+            <td><input type="checkbox" class="chk" checked></td>
+            <td contenteditable="true">When logged in, show profile photo + hamburger menu (dropdown).</td>
+            <td>screen-01-landing</td><td><b>(1)</b></td>
+            <td><span class="src int">SCREEN</span></td><td><span class="badge b-pending">Now</span></td>
+            <td><div class="rowact"><span class="mini">Re-route ▾</span></div></td>
+          </tr>
+          <tr style="opacity:.7">
+            <td><input type="checkbox" class="chk"></td>
+            <td contenteditable="true">Add a user-stories video section below “How It Works”.</td>
+            <td>screen-01-landing</td><td>—</td>
+            <td><span class="src int">SCREEN</span></td><td><span class="badge b-revert">Later</span></td>
+            <td><div class="rowact"><span class="mini">Defer</span></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" class="chk" checked></td>
+            <td contenteditable="true">Google + Apple social login; omit Facebook. Label CTA “Create Your Account”.</td>
+            <td>screen-02-guest-registration</td><td><b>(1)</b></td>
+            <td><span class="src int">SCREEN</span></td><td><span class="badge b-pending">Now</span></td>
+            <td><div class="rowact"><span class="mini">Re-route ▾</span></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" class="chk" checked></td>
+            <td contenteditable="true">Phone field with country selector + search; OTP verify; drop email here.</td>
+            <td>screen-02-guest-registration</td><td><b>(3)</b></td>
+            <td><span class="src int">SCREEN</span></td><td><span class="badge b-pending">Now</span></td>
+            <td><div class="rowact"><span class="mini">Re-route ▾</span></div></td>
+          </tr>
+
+          <tr class="grp" style="background:#FFF7ED"><td colspan="7">⚠ Unmatched — not in current set (map or mark future)</td></tr>
+          <tr>
+            <td><input type="checkbox" class="chk"></td>
+            <td contenteditable="true">Screen 12 — Booking Detail: remove “Reduce Booking”; hide phone; add damage disclaimer.</td>
+            <td><span class="src" style="background:#FEE2E2;color:#991B1B">no match</span></td><td>(4)(6)(9)</td>
+            <td><span class="src int">SCREEN</span></td><td>—</td>
+            <td><div class="rowact"><span class="mini go">Map to screen ▾</span><span class="mini">Mark future</span></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" class="chk"></td>
+            <td contenteditable="true">Module C — Host Flow (Screens 15–19): dashboard stepper, multi-page create-listing, …</td>
+            <td><span class="src" style="background:#FEE2E2;color:#991B1B">no match</span></td><td>—</td>
+            <td><span class="src int">SCREEN</span></td><td><span class="badge b-revert">Later</span></td>
+            <td><div class="rowact"><span class="mini">Mark future</span></div></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="addbar" style="margin-top:12px">
+        <span class="btn primary">+ Add 6 to register (Now)</span>
+        <span class="btn">Defer 2 later-phase</span>
+        <span class="btn">Leave 2 unmatched for mapping</span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="anno"><b>Notes:</b> One upload → a screen-routed, reviewable table. <b>General</b> items scope to <b>all screens</b>; the <b>Cyan #22d3ee</b> brand change is detected as <b>Design-System-level</b> → "Update token" (cascades) and/or "Recolor screens". <b>"(n)"</b> are mapped to each screen's <b>callouts</b>; <b>"later phase"</b> auto-tags <b>Deferred</b>; feedback for screens not in the set lands in <b>Unmatched</b>. Batch-set requestor + <b>Customer</b> source + optional date once for the whole import. Nothing persists until <b>Add to register</b>.</div>
+
 </body>
 </html>

@@ -4,7 +4,7 @@
 
 > **PRD:** `sprints/v12/PRD.md`. **Decisions:** (A) project-level thread + per-message scope · (B) auto-apply to non-destructive `edited` variant + Accept/Revert · (C) hi-fi primary, lo-fi optional · (D) dedicated wireframe models · (E) Claude for HTML edits · (F) capture requestor + source + **optional** requested-on date · (G) all extra features in.
 >
-> **Sequencing:** **WC-00 (UI mockups + APPROVAL GATE)** → WC-01 (models+migration) → WC-02 (ai chat) ∥ WC-03 (ai extract) ∥ WC-04 (ai edit-screen) → WC-05 (copilot service) → WC-06 (edit-screen service + parity) → WC-07 (change service: CRUD/apply/runAll/accept/revert) → WC-08 (SSE stream) → WC-09 (controller routes) → WC-10 (api helpers) → WC-11 (Copilot drawer) ∥ WC-12 (Change Register panel) → WC-13 (before/after diff) ∥ WC-14 (screenshot attach) ∥ WC-15 (references tab) → WC-16 (export + changelog) → WC-17 (re-apply hook) → WC-18 (comments/reopen) → WC-19 (security/validation) → WC-20 (tests + verify). **No code (WC-01+) starts until WC-00 is approved.**
+> **Sequencing:** **WC-00 (UI mockups + APPROVAL GATE)** → WC-01 (models+migration) → WC-02 (ai chat) ∥ WC-03 (ai extract) ∥ WC-04 (ai edit-screen) → WC-05 (copilot service) → WC-06 (edit-screen service + parity) → WC-07 (change service: CRUD/apply/runAll/accept/revert) ∥ WC-21 (feedback ingest + route) → WC-08 (SSE stream) → WC-09 (controller routes) → WC-10 (api helpers) → WC-11 (Copilot drawer) ∥ WC-12 (Change Register panel) ∥ WC-22 (feedback staging table) → WC-13 (before/after diff) ∥ WC-14 (screenshot attach) ∥ WC-15 (references tab) → WC-16 (export + changelog) → WC-17 (re-apply hook) → WC-18 (comments/reopen) → WC-19 (security/validation) → WC-20 (tests + verify). **No code (WC-01+) starts until WC-00 is approved.**
 >
 > **Reuse:** HLD Copilot (`HldCopilot.tsx`, `hld-copilot.service.ts`, `/hld-chat[-stream]`, MicButton, references); wireframe variant system (`meta.aiHtml`/`activeVariant`, callout-parity validator in `hifi.service.ts`); `CodeTasksPanel` + `RunManager` SSE; `UpstreamSyncPanel` review gate; `appendChangelog`; the module-grouped gallery + checkbox `selected` Set.
 >
@@ -34,7 +34,7 @@
   - Mirror `/hld-chat[-stream]`. System prompt = "senior UX/UI architect reviewing wireframes." User message grounds on: target screen(s) HTML/title/callouts/module, **full Design Tokens (fonts/colors/radius/spacing/weights) + logo**, PRD/BRD context, included references, optional **≤2 reference screens**, chat history. SSE delta stream + non-streaming fallback. Provider-routed (Claude default).
 
 - [ ] **WC-03 (AI): `/wireframe-extract-changes`** (P0, M)
-  - Input: the latest user turn + assistant reply + scope (all/selected slugs) + screen list. Output: `{ items: [{ description, targetScreens: string[], rationale, actionable: bool, priority }] }`. **Classifies** discussion vs actionable; only actionable items become register candidates. Deterministic JSON (schema-validated).
+  - Input: the latest user turn + assistant reply + scope (all/selected slugs) + screen list. Output: `{ items: [{ description, targetScreens: string[], rationale, actionable: bool, priority }] }`. **Classifies** discussion vs actionable; only actionable items become register candidates. Deterministic JSON (schema-validated). Shares the item schema with WC-21's `/wireframe-parse-feedback` (chat-turn extraction is the single-block case of document parsing).
 
 - [ ] **WC-04 (AI): `/wireframe-edit-screen`** (P0, L)
   - Input: `{ htmlContent, changeRequest, designTokens (full), referenceScreens?: [{slug, html}] (≤2), callouts, fidelity }`. Output: `{ editedHtml, rationale, calloutsPreserved: bool }`. System prompt: surgical, **on-brand** edit (use the design tokens; match any reference screens' patterns); **never renumber/drop numbered callouts** (new annotations use letter suffixes); return full HTML only. Low temperature. Backend enforces the ≤2 reference-screen cap before calling.
@@ -59,16 +59,23 @@
 - [ ] **WC-09 (BE): controller routes** (P0, M)
   - Under the wireframes namespace: `POST .../copilot/chat`, `POST .../copilot/chat-stream` (SSE), `POST .../copilot/extract`, `GET/POST .../changes`, `GET .../changes/:id`, `POST .../changes/:id/apply`, `POST .../changes/run-all`, `POST .../changes/:id/accept`, `POST .../changes/:id/revert`, `POST .../changes/:id/comment`, `POST .../changes/:id/reopen`, `GET .../changes/export`, `GET .../changes/stream` (SSE), plus references routes (WC-15).
 
+- [ ] **WC-21 (BE+AI): feedback-document ingestion + screen-wise routing** (P0, L)
+  - New ai-service **`/wireframe-parse-feedback`**: extracted text → structured `{ general[], designSystem[], screens: [{ moduleRef, screenRef, items: [{ description, calloutRef?, phase: NOW|LATER, kind: SCREEN|ALL|DESIGN_SYSTEM|QUESTION }] }], unmatched[] }`. Recognizes **General/project-wide** vs **Design-System-level** (brand color/typography/spacing) vs **per-screen** blocks; preserves **callout refs "(n)"** and **"later phase"** markers.
+  - `WireframeFeedbackService` (BE): accept an **uploaded document** (`TextExtractionService` — PDF/DOCX/MD/TXT, reused from RR) **or pasted text**; call the parser; **resolve `screenRef` → slug** (fuzzy match vs the current lo-fi/hi-fi set; e.g. "Screen 01 — Landing" → `screen-01-landing`); classify scope + phase; return a **staging payload** (nothing persisted). Single-screen paste = one block, same path. Endpoint: `POST .../copilot/feedback` (multipart or text).
+
 ### Track D — Frontend
 
 - [ ] **WC-10 (FE): `pipeline-api` helpers + types** (P0, S)
   - `wireframeChat`, `wireframeChatStreamUrl`, `wireframeExtractChanges`, `listWireframeChanges`, `createWireframeChanges`, `applyWireframeChange`, `runAllWireframeChanges`, `acceptWireframeChange`, `revertWireframeChange`, `commentWireframeChange`, `reopenWireframeChange`, `wireframeChangeStreamUrl`, `exportWireframeChangesUrl` + types.
 
 - [ ] **WC-11 (FE): `WireframeCopilot` drawer** (P0, L)
-  - Clone `HldCopilot`: streaming chat, MicButton voice, provider select, Q&A accordion. **Scope chip** wired to the gallery's `selected` Set ("All N screens" / "M selected"). **Read-only Design System chip/tab** (active fonts/colors/tokens; "Edit" deep-links to the existing `/design-system` page). **Reference-screen picker** — choose **≤2** screens (reuse the gallery selection) as style exemplars. On a turn → show proposed change items with **checkboxes + editable description + requestor + source + optional date** → "Add to register" persists them. Mounted on the wireframes page via a header **"Copilot"** button.
+  - Clone `HldCopilot`: streaming chat, MicButton voice, provider select, Q&A accordion. **Scope chip** wired to the gallery's `selected` Set ("All N screens" / "M selected"). **Read-only Design System chip/tab** (active fonts/colors/tokens; "Edit" deep-links to the existing `/design-system` page). **Reference-screen picker** — choose **≤2** screens (reuse the gallery selection) as style exemplars. **"Upload feedback document" + paste** entry points (→ WC-22 staging table). On a turn → show proposed change items with **checkboxes + editable description + requestor + source + optional date** → "Add to register" persists them. Mounted on the wireframes page via a header **"Copilot"** button.
 
 - [ ] **WC-12 (FE): `WireframeChangeRegister` panel** (P0, L)
   - Clone `CodeTasksPanel`: list grouped by screen/module, **status badges**, columns for **requestor · source · requested-on (optional) · created**, per-change **Run** + **Run all** (stop-on-failure toggle), **Accept/Revert**, **filters** (status, source CUSTOMER/INTERNAL). Live SSE status flips. Empty/loaded/error states.
+
+- [ ] **WC-22 (FE): feedback upload + parsed staging table** (P0, L)
+  - In the Copilot: **"Upload feedback document"** (PDF/DOCX/MD/TXT) + **paste** box. Render the returned staging payload as a **review table** grouped: **General / project-wide**, **Design System**, **per screen** (with callout ref + phase), and **Unmatched**. Per-row: include ✓ · editable description · **re-route target screen** dropdown · phase (Now/Later). **Batch controls**: set requestor + source (default **Customer**) + optional date for the whole import. **Design-System rows** show "Update token / Recolor screens"; **Unmatched rows** show "Map to screen / Mark future". Actions: **"Add N to register"** · **"Defer later-phase"**. Nothing persists until confirmed.
 
 - [ ] **WC-13 (FE): before/after diff** (P0, M)
   - Reuse the existing deterministic-vs-AI side-by-side compare modal to show **original vs edited** HTML per change (iframes), with **Accept/Revert** in the modal header.
@@ -125,6 +132,8 @@
 | 18 | BE+FE | WC-18 | P1 | S | Threaded comments + reopen |
 | 19 | Sec | WC-19 | P0 | S | Validation + safety (additive, non-destructive) |
 | 20 | Test | WC-20 | P0 | M | unit + smoke + Playwright + tsc + regression |
+| 21 | BE+AI | WC-21 | P0 | L | Feedback-document ingestion + screen-wise parse/route (general·design-system·per-screen·unmatched·phase) |
+| 22 | FE | WC-22 | P0 | L | Feedback upload + parsed **staging table** (review/re-route/batch requestor+date before adding) |
 
 ---
 
@@ -135,8 +144,8 @@ New **Track WC (Wireframe Copilot)**. Complements Track DD (Wireframe Navigator)
 ## Delivery plan (PRs)
 
 0. **Phase 0 — wireframe-first gate:** WC-00 static HTML mockups under `sprints/v12/wireframes/`. **User approval required before any code below.** No backend/frontend product code is written until this is signed off.
-1. **PR 1 — backend foundation:** WC-01..09 + WC-16/17/19 (models, ai endpoints, services, controller, SSE, export, safety) with unit tests.
-2. **PR 2 — frontend:** WC-10..14 + WC-18 (api, Copilot drawer, register panel, diff, screenshot, comments).
+1. **PR 1 — backend foundation:** WC-01..09 + WC-21 + WC-16/17/19 (models, ai endpoints, feedback ingest/route, services, controller, SSE, export, safety) with unit tests.
+2. **PR 2 — frontend:** WC-10..14 + WC-22 + WC-18 (api, Copilot drawer, register panel, feedback staging table, diff, screenshot, comments).
 3. **PR 3 — references + full verify:** WC-15 + WC-20 (references tab, Playwright, regression sweep).
 
 Each PR: `tsc` clean both apps, smoke green, **no regression** in existing wireframe/HLD features, then `code-reviewer` + `security-reviewer` before merge.
