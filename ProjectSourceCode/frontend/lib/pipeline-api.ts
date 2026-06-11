@@ -2128,6 +2128,224 @@ export async function setWireframeScreenModule(
   return data.data;
 }
 
+// ─── v12 · Track WC — Wireframe Copilot ──────────────────────────────────────
+
+export interface WfProposedItem {
+  description: string;
+  targetScreens?: string[];
+  scopeAll?: boolean;
+  kind?: string; // SCREEN | ALL | DESIGN_SYSTEM | QUESTION
+  changeKind?: string;
+  phase?: string; // NOW | LATER
+  priority?: string;
+  calloutRef?: string | null;
+  actionable?: boolean;
+  rationale?: string;
+  targetKind?: 'LOFI' | 'HIFI';
+}
+
+export interface WfChatResponse {
+  threadId: string;
+  messageId: string;
+  reply: string;
+  model: string;
+  proposed: WfProposedItem[];
+}
+
+export interface WfChange {
+  id: string;
+  changeCode: string;
+  description: string;
+  status: string;
+  source: string;
+  changeKind: string;
+  targetKind: string;
+  targetScreens: string[];
+  scopeAll: boolean;
+  calloutRef: string | null;
+  requestedBy: string | null;
+  requestedOn: string | null;
+  priority: string;
+  createdAt: string;
+  appliedAt: string | null;
+}
+
+export interface WfActivity {
+  id: string;
+  type: string;
+  actor: string | null;
+  message: string | null;
+  createdAt: string;
+}
+
+export interface WfStagingItem {
+  description: string;
+  calloutRef?: string | null;
+  phase?: string;
+  priority?: string;
+}
+export interface WfStagingScreen {
+  moduleRef?: string;
+  screenRef?: string;
+  slug: string | null;
+  items: WfStagingItem[];
+}
+export interface WfStaging {
+  importId: string;
+  fileName: string | null;
+  uploadedBy: string | null;
+  uploadedAt: string | null;
+  general: WfStagingItem[];
+  designSystem: WfStagingItem[];
+  screens: WfStagingScreen[];
+  unmatched: { screenRef?: string; items: WfStagingItem[] }[];
+  targetKind: 'LOFI' | 'HIFI';
+}
+
+export interface WfChatBody {
+  userMessage: string;
+  scope?: { kind: 'ALL' | 'SELECTED'; slugs?: string[] };
+  targetKind?: 'LOFI' | 'HIFI';
+  referenceSlugs?: string[];
+}
+
+export async function wireframeChat(projectId: string, body: WfChatBody): Promise<WfChatResponse> {
+  const { data } = await api.post<ApiEnvelope<WfChatResponse>>(
+    `/ba/projects/${projectId}/wireframes/copilot/chat`,
+    body,
+    { timeout: 120_000 },
+  );
+  return data.data;
+}
+
+export async function ingestWireframeFeedback(
+  projectId: string,
+  opts: { rawText?: string; file?: File; uploadedBy?: string; source?: string; targetKind?: 'LOFI' | 'HIFI' },
+): Promise<WfStaging> {
+  if (opts.file) {
+    const form = new FormData();
+    form.append('file', opts.file);
+    if (opts.uploadedBy) form.append('uploadedBy', opts.uploadedBy);
+    if (opts.source) form.append('source', opts.source);
+    if (opts.targetKind) form.append('targetKind', opts.targetKind);
+    const { data } = await api.post<ApiEnvelope<WfStaging>>(
+      `/ba/projects/${projectId}/wireframes/copilot/feedback`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 180_000 },
+    );
+    return data.data;
+  }
+  const { data } = await api.post<ApiEnvelope<WfStaging>>(
+    `/ba/projects/${projectId}/wireframes/copilot/feedback`,
+    { rawText: opts.rawText, uploadedBy: opts.uploadedBy, source: opts.source, targetKind: opts.targetKind },
+    { timeout: 180_000 },
+  );
+  return data.data;
+}
+
+export async function listWireframeChanges(
+  projectId: string,
+  filters: { status?: string; source?: string } = {},
+): Promise<WfChange[]> {
+  const qs = new URLSearchParams();
+  if (filters.status) qs.set('status', filters.status);
+  if (filters.source) qs.set('source', filters.source);
+  const suffix = qs.toString() ? `?${qs}` : '';
+  const { data } = await api.get<ApiEnvelope<WfChange[]>>(`/ba/projects/${projectId}/wireframes/changes${suffix}`);
+  return data.data;
+}
+
+export async function getWireframeChange(projectId: string, cid: string): Promise<WfChange & { activities: WfActivity[] }> {
+  const { data } = await api.get<ApiEnvelope<WfChange & { activities: WfActivity[] }>>(
+    `/ba/projects/${projectId}/wireframes/changes/${cid}`,
+  );
+  return data.data;
+}
+
+export async function getWireframeChangeDiff(
+  projectId: string,
+  cid: string,
+): Promise<{ slug: string; before: string; after: string }[]> {
+  const { data } = await api.get<ApiEnvelope<{ slug: string; before: string; after: string }[]>>(
+    `/ba/projects/${projectId}/wireframes/changes/${cid}/diff`,
+  );
+  return data.data;
+}
+
+export interface WfStagedChangeInput {
+  description: string;
+  targetScreens?: string[];
+  scopeAll?: boolean;
+  changeKind?: string;
+  calloutRef?: string | null;
+  targetKind?: string;
+  priority?: string;
+  phase?: string;
+  rationale?: string;
+}
+
+export async function createWireframeChanges(
+  projectId: string,
+  body: {
+    items: WfStagedChangeInput[];
+    requestedBy?: string;
+    source?: string;
+    requestedOn?: string;
+    importId?: string;
+    threadId?: string;
+  },
+): Promise<WfChange[]> {
+  const { data } = await api.post<ApiEnvelope<WfChange[]>>(
+    `/ba/projects/${projectId}/wireframes/changes`,
+    body,
+  );
+  return data.data;
+}
+
+export async function applyWireframeChange(projectId: string, cid: string): Promise<WfChange> {
+  const { data } = await api.post<ApiEnvelope<WfChange>>(
+    `/ba/projects/${projectId}/wireframes/changes/${cid}/apply`,
+    {},
+    { timeout: 300_000 },
+  );
+  return data.data;
+}
+
+export async function runAllWireframeChanges(
+  projectId: string,
+  body: { ids?: string[]; stopOnFailure?: boolean },
+): Promise<{ ran: number; failed: number }> {
+  const { data } = await api.post<ApiEnvelope<{ ran: number; failed: number }>>(
+    `/ba/projects/${projectId}/wireframes/changes/run-all`,
+    body,
+    { timeout: 600_000 },
+  );
+  return data.data;
+}
+
+export async function acceptWireframeChange(projectId: string, cid: string): Promise<WfChange> {
+  const { data } = await api.post<ApiEnvelope<WfChange>>(`/ba/projects/${projectId}/wireframes/changes/${cid}/accept`, {});
+  return data.data;
+}
+export async function revertWireframeChange(projectId: string, cid: string): Promise<WfChange> {
+  const { data } = await api.post<ApiEnvelope<WfChange>>(`/ba/projects/${projectId}/wireframes/changes/${cid}/revert`, {});
+  return data.data;
+}
+export async function reopenWireframeChange(projectId: string, cid: string): Promise<WfChange> {
+  const { data } = await api.post<ApiEnvelope<WfChange>>(`/ba/projects/${projectId}/wireframes/changes/${cid}/reopen`, {});
+  return data.data;
+}
+export async function commentWireframeChange(projectId: string, cid: string, message: string, actor?: string): Promise<void> {
+  await api.post(`/ba/projects/${projectId}/wireframes/changes/${cid}/comment`, { message, actor });
+}
+
+export function wireframeChangeStreamUrl(projectId: string): string {
+  return `${API_BASE}/api/ba/projects/${projectId}/wireframes/changes/stream`;
+}
+export function wireframeChangeExportUrl(projectId: string): string {
+  return `${API_BASE}/api/ba/projects/${projectId}/wireframes/changes/export`;
+}
+
 // ─── Design System / Look & Feel Studio (Track CC) ───────────────────────────
 
 export interface DiagramLayer { fill: string; border: string; text: string }

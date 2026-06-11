@@ -73,6 +73,12 @@ export class WireframeCopilotController {
     return { success: true, data };
   }
 
+  @Get('wireframes/changes/:cid/diff')
+  async diff(@Param('id', ParseUUIDPipe) _id: string, @Param('cid', ParseUUIDPipe) cid: string) {
+    const data = await this.changes.diff(cid);
+    return { success: true, data };
+  }
+
   @Post('wireframes/changes')
   async createChanges(
     @Param('id', ParseUUIDPipe) id: string,

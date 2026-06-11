@@ -111,6 +111,21 @@ export class WireframeChangeService {
     return change;
   }
 
+  /** WC-13 — before/after HTML per edited screen (for the review modal). */
+  async diff(changeId: string): Promise<{ slug: string; before: string; after: string }[]> {
+    const change = await this.requireChange(changeId);
+    const kind = (change.targetKind === 'LOFI' ? 'LOFI' : 'HIFI') as 'LOFI' | 'HIFI';
+    const screens = await this.context.screensFor(change.projectId, kind);
+    return this.editedSlugs(change).map((slug) => {
+      const s = screens.find((x) => x.slug === slug);
+      return {
+        slug,
+        before: (s?.meta?.editBaseHtml as string) ?? s?.html ?? '',
+        after: (s?.meta?.editedHtml as string) ?? s?.html ?? '',
+      };
+    });
+  }
+
   /** Apply a change: run the AI edit on its target screen(s), flip status live. */
   async apply(changeId: string): Promise<BaWireframeChange> {
     const change = await this.requireChange(changeId);

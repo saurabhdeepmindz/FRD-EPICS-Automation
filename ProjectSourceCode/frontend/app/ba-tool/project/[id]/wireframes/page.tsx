@@ -41,6 +41,8 @@ import {
   type PipelineWireframeScreen,
   type CustomerWireframeRef,
 } from '@/lib/pipeline-api';
+import { WireframeCopilot } from '@/components/ba-tool/WireframeCopilot';
+import { WireframeChangeRegister } from '@/components/ba-tool/WireframeChangeRegister';
 
 const UPLOAD_ACCEPT = '.html,.htm,.png,.jpg,.jpeg,.svg,.pdf';
 
@@ -66,6 +68,8 @@ export default function WireframesPage() {
   const [modalScreen, setModalScreen] = useState<PipelineWireframeScreen | null>(null);
   const [activeStage, setActiveStage] = useState<'mapping' | 'lofi' | 'hifi'>('mapping');
   const initedStage = useRef(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [registerRefresh, setRegisterRefresh] = useState(0);
 
   const toggleSelected = (slug: string) =>
     setSelected((prev) => {
@@ -216,6 +220,7 @@ export default function WireframesPage() {
           <Link href={`/ba-tool/project/${projectId}/design-system`}>
             <Button variant="outline" size="sm"><Palette className="h-4 w-4 mr-1" /> Design System</Button>
           </Link>
+          <Button variant="default" size="sm" onClick={() => setCopilotOpen(true)}>💬 Copilot</Button>
           {(wf.lofi.length > 0 || wf.hifi.length > 0) && (
             <>
               <Button variant="outline" size="sm" onClick={() => openNavigator(wf.hifi.length > 0 ? 'hifi' : 'lofi')}>
@@ -349,6 +354,12 @@ export default function WireframesPage() {
                 <FolderOpen className="h-4 w-4 shrink-0" />
                 Mapping → <code className="text-xs">02b-ScreenMap/</code> · lo-fi → <code className="text-xs">03-Wireframes-LoFi/</code> · hi-fi → <code className="text-xs">04-Wireframes-HiFi/</code>
               </div>
+
+              {(wf.lofi.length > 0 || wf.hifi.length > 0) && (
+                <div className="pt-2">
+                  <WireframeChangeRegister projectId={projectId} refreshSignal={registerRefresh} />
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -417,6 +428,16 @@ export default function WireframesPage() {
           </div>
         </div>
       )}
+
+      <WireframeCopilot
+        projectId={projectId}
+        open={copilotOpen}
+        onClose={() => setCopilotOpen(false)}
+        selectedSlugs={[...selected]}
+        availableSlugs={(activeStage === 'hifi' ? wf.hifi : wf.lofi).map((s) => s.slug)}
+        targetKind={activeStage === 'hifi' ? 'HIFI' : 'LOFI'}
+        onChangesAdded={() => setRegisterRefresh((n) => n + 1)}
+      />
     </div>
   );
 }
