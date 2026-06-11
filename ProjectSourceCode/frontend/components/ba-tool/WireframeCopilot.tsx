@@ -51,6 +51,7 @@ export function WireframeCopilot({ projectId, open, onClose, selectedSlugs, avai
   const [requestedBy, setRequestedBy] = useState('');
   const [source, setSource] = useState<'CUSTOMER' | 'INTERNAL'>('CUSTOMER');
   const [requestedOn, setRequestedOn] = useState('');
+  const [referenceNotes, setReferenceNotes] = useState('');
   const [scopeSlugs, setScopeSlugs] = useState<string[]>(selectedSlugs);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -80,7 +81,7 @@ export function WireframeCopilot({ projectId, open, onClose, selectedSlugs, avai
     setMessages((m) => [...m, { role: 'user', content: msg }]);
     setInput('');
     try {
-      const res = await wireframeChat(projectId, { userMessage: msg, scope, targetKind, referenceSlugs: refSlugs });
+      const res = await wireframeChat(projectId, { userMessage: msg, scope, targetKind, referenceSlugs: refSlugs, referenceNotes: referenceNotes.trim() || undefined });
       setThreadId(res.threadId);
       setMessages((m) => [...m, { role: 'assistant', content: res.reply }]);
       setProposed(
@@ -188,6 +189,16 @@ export function WireframeCopilot({ projectId, open, onClose, selectedSlugs, avai
           <span className="text-orange-700">auto-applied to edits</span>
           <a href={`/ba-tool/project/${projectId}/design-system`} className="ml-auto text-blue-600 underline">Edit ↗</a>
         </div>
+        <details className="text-[11px]">
+          <summary className="cursor-pointer text-gray-500">References (optional) — guidelines / brand notes to ground the AI</summary>
+          <textarea
+            value={referenceNotes}
+            onChange={(e) => setReferenceNotes(e.target.value)}
+            placeholder="e.g. Follow WCAG AA contrast; CTAs use the brand cyan; match the marketing site's nav…"
+            rows={3}
+            className="mt-1 w-full border rounded p-2 text-[11px] resize-none"
+          />
+        </details>
         {availableSlugs.length > 0 && (
           <div className="text-[11px] text-gray-500">
             <span className="mr-1">Style reference (≤2):</span>

@@ -2207,6 +2207,7 @@ export interface WfChatBody {
   scope?: { kind: 'ALL' | 'SELECTED'; slugs?: string[] };
   targetKind?: 'LOFI' | 'HIFI';
   referenceSlugs?: string[];
+  referenceNotes?: string;
 }
 
 export async function wireframeChat(projectId: string, body: WfChatBody): Promise<WfChatResponse> {

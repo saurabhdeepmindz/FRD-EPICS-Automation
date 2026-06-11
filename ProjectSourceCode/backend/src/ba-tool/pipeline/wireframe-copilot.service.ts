@@ -11,6 +11,7 @@ export interface WireframeChatDto {
   targetKind?: 'LOFI' | 'HIFI';
   provider?: string;
   referenceSlugs?: string[];
+  referenceNotes?: string; // WC-15 — free-text references/guidelines injected as context
   history?: { role: string; content: string }[];
 }
 
@@ -62,7 +63,7 @@ export class WireframeCopilotService {
 
     const chat = await this.ai.wireframeChat({
       provider: dto.provider, scope_label: scopeLabel, screens: screensFull,
-      design_tokens: tokens, reference_screens: referenceScreens, prd_context: '',
+      design_tokens: tokens, reference_screens: referenceScreens, prd_context: dto.referenceNotes ?? '',
       history: dto.history ?? [], user_message: dto.userMessage,
     });
 
