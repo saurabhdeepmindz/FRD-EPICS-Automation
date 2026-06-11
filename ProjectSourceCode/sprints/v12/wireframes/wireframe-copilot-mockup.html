@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1280" />
+<title>v12 · Wireframe Copilot — UI Mockups (WC-00)</title>
+<style>
+  :root{
+    --primary:#0B1B2E; --cta:#F97316; --surface:#FFFFFF; --page:#F3F4F6;
+    --ink:#111827; --muted:#6B7280; --subtle:#9CA3AF; --border:#E5E7EB;
+    --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --ok:#10B981; --warn:#D97706; --info:#2563EB; --danger:#DC2626; --purple:#7C3AED;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:var(--ui-font)}
+  body{background:var(--page);color:var(--ink);padding:28px 18px 80px}
+  .doc-head{max-width:1180px;margin:0 auto 22px}
+  .doc-head h1{font-size:20px}
+  .doc-head p{color:var(--muted);font-size:13px;margin-top:4px}
+  .note{max-width:1180px;margin:0 auto 26px;background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;border-radius:10px;padding:10px 14px;font-size:12.5px}
+  .frame{max-width:1180px;margin:0 auto 34px;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .frame > .cap{background:#0f172a;color:#fff;font-size:12px;font-weight:600;padding:8px 14px;display:flex;gap:8px;align-items:center}
+  .frame > .cap .pill{background:var(--cta);color:#fff;border-radius:20px;padding:1px 8px;font-size:10px;font-weight:700}
+  .frame > .body{padding:0}
+
+  /* app header */
+  .appbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:#fff}
+  .appbar .title{font-weight:600;font-size:15px}
+  .appbar .sub{color:var(--muted);font-size:12px}
+  .spacer{flex:1}
+  .btn{height:32px;border:1px solid var(--border);background:#fff;border-radius:8px;padding:0 12px;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#374151}
+  .btn.primary{background:var(--cta);border-color:var(--cta);color:#fff;font-weight:600}
+  .btn.dark{background:var(--primary);border-color:var(--primary);color:#fff}
+
+  /* split: gallery placeholder + drawer */
+  .split{display:grid;grid-template-columns:1fr 430px;min-height:560px}
+  .gallery{padding:16px;background:var(--page);border-right:1px solid var(--border)}
+  .ghint{color:var(--subtle);font-size:12px;margin-bottom:10px}
+  .gcardrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+  .gsec{font-size:12px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:7px;margin:6px 0 8px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .gcard{background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .gcard .gh{font-size:11px;padding:6px 8px;border-bottom:1px solid var(--border);background:#fafafa;display:flex;justify-content:space-between}
+  .gcard .gph{height:88px;background:linear-gradient(135deg,#0B1B2E,#1e3a5f)}
+  .gcard.sel{outline:2px solid var(--primary)}
+  .chk{accent-color:var(--primary)}
+
+  /* drawer */
+  .drawer{display:flex;flex-direction:column;background:#fff}
+  .dwbar{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border)}
+  .dwbar b{font-size:13.5px}
+  .scope{margin-left:auto;font-size:11px;background:#EEF2FF;color:#3730A3;border:1px solid #C7D2FE;border-radius:20px;padding:2px 9px;font-weight:600}
+  .tabs{display:flex;gap:2px;padding:8px 12px 0;border-bottom:1px solid var(--border)}
+  .tab{font-size:12px;padding:7px 11px;border-radius:8px 8px 0 0;color:var(--muted);cursor:pointer;border:1px solid transparent;border-bottom:none}
+  .tab.on{color:var(--ink);font-weight:600;background:#fff;border-color:var(--border)}
+  .dwbody{flex:1;padding:14px;overflow:auto;background:#fff}
+  .msg{margin-bottom:12px}
+  .msg .who{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--subtle);margin-bottom:3px}
+  .bubble{border-radius:10px;padding:9px 11px;font-size:12.5px;line-height:1.5}
+  .bubble.u{background:#0B1B2E;color:#fff}
+  .bubble.a{background:#F9FAFB;border:1px solid var(--border)}
+  .ds-chip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:8px 10px;font-size:11px;margin-bottom:12px}
+  .ds-chip .k{color:#9A3412;font-weight:700}
+  .ds-chip .sw{width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.15);display:inline-block;vertical-align:-2px;margin-right:3px}
+  .ds-chip .edit{margin-left:auto;color:var(--info);text-decoration:underline;cursor:pointer}
+  .refpick{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-bottom:12px}
+  .reftag{background:#EDE9FE;color:#5B21B6;border:1px solid #DDD6FE;border-radius:16px;padding:2px 8px;font-weight:600}
+  .composer{border-top:1px solid var(--border);padding:10px 12px;display:flex;gap:8px;align-items:flex-end}
+  .composer textarea{flex:1;resize:none;height:46px;border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:12.5px;font-family:inherit}
+  .iconbtn{width:36px;height:36px;border-radius:9px;border:1px solid var(--border);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+
+  /* proposed changes confirmation */
+  .propose{border:1px dashed var(--cta);background:#FFFBF5;border-radius:12px;padding:12px;margin-top:4px}
+  .propose h4{font-size:12px;color:#9A3412;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .pitem{background:#fff;border:1px solid var(--border);border-radius:9px;padding:9px;margin-bottom:8px}
+  .pitem .top{display:flex;gap:7px;align-items:flex-start}
+  .pitem .desc{font-size:12px;flex:1}
+  .pitem .scr{font-size:10px;color:var(--muted);margin-top:3px}
+  .fields{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+  .fields label{font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--subtle);display:block;margin-bottom:2px}
+  .fields input,.fields select{width:100%;height:28px;border:1px solid var(--border);border-radius:7px;font-size:11.5px;padding:0 7px;font-family:inherit}
+  .fields .opt{font-size:9px;color:var(--subtle);font-weight:400;text-transform:none}
+  .addbar{display:flex;gap:8px;margin-top:4px}
+
+  /* change register */
+  .reg{padding:16px}
+  .reg .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .reg h3{font-size:14px}
+  .filter{font-size:11.5px;border:1px solid var(--border);border-radius:8px;padding:4px 8px;color:#374151;background:#fff}
+  .reg table{width:100%;border-collapse:collapse;font-size:12px}
+  .reg th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--subtle);border-bottom:2px solid var(--border);padding:7px 8px}
+  .reg td{border-bottom:1px solid var(--border);padding:9px 8px;vertical-align:top}
+  .reg .grp td{background:#F9FAFB;font-weight:700;color:var(--primary);font-size:11px}
+  .badge{font-size:10px;font-weight:700;border-radius:20px;padding:2px 9px;white-space:nowrap}
+  .b-pending{background:#F3F4F6;color:#374151}
+  .b-prog{background:#DBEAFE;color:#1E40AF}
+  .b-done{background:#D1FAE5;color:#065F46}
+  .b-review{background:#FEF3C7;color:#92400E}
+  .b-fail{background:#FEE2E2;color:#991B1B}
+  .b-revert{background:#EDE9FE;color:#5B21B6}
+  .src{font-size:10px;font-weight:700;border-radius:5px;padding:1px 6px}
+  .src.cust{background:#E0F2FE;color:#075985}
+  .src.int{background:#F1F5F9;color:#334155}
+  .rowact{display:flex;gap:5px;flex-wrap:wrap}
+  .mini{font-size:10.5px;border:1px solid var(--border);background:#fff;border-radius:6px;padding:2px 7px;cursor:pointer}
+  .mini.go{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .mini.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+  .mini.rv{background:#fff;color:#5B21B6;border-color:#DDD6FE}
+  .opt-date{color:var(--subtle)}
+
+  /* before/after modal */
+  .modal{background:#0008;padding:22px;display:flex;align-items:center;justify-content:center}
+  .mcard{background:#fff;border-radius:12px;width:100%;max-width:920px;overflow:hidden;border:1px solid #00000010}
+  .mhead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+  .mhead .t{font-weight:600;font-size:13px}
+  .mhead .slug{font-size:11px;color:var(--subtle);font-family:ui-monospace,monospace}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)}
+  .cmp .pane{background:#fff;min-height:200px}
+  .cmp .ph{font-size:10.5px;font-weight:700;padding:6px 10px;border-bottom:1px solid var(--border);background:#fafafa;display:flex;justify-content:space-between}
+  .cmp .shot{height:200px;background:linear-gradient(135deg,#0B1B2E,#1e3a5f);position:relative}
+  .cmp .shot.after .cta-demo{position:absolute;left:50%;top:60%;transform:translateX(-50%);background:var(--cta);color:#fff;font-size:11px;font-weight:700;padding:6px 16px;border-radius:8px}
+  .cmp .shot.before .cta-demo{position:absolute;left:50%;top:60%;transform:translateX(-50%);background:#374151;color:#fff;font-size:11px;font-weight:700;padding:6px 16px;border-radius:8px}
+  .anno{max-width:1180px;margin:-22px auto 30px;font-size:12px;color:var(--muted)}
+  .anno b{color:var(--ink)}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+
+<div class="doc-head">
+  <h1>Sprint v12 · Wireframe Copilot — UI Mockups <span style="font-size:12px;color:#6B7280">(WC-00, throwaway design artifact)</span></h1>
+  <p>Static, non-functional mockups for approval. Brand tokens shown are the project's active Design System (auto-injected into the AI). Nothing here is wired to a backend.</p>
+</div>
+
+<div class="note">⚠️ <b>Wireframe-first gate.</b> These frames represent the intended UX. Please review &amp; mark changes; <b>no product code is written until you approve.</b></div>
+
+<!-- FRAME 1 -->
+<div class="frame">
+  <div class="cap"><span class="pill">Frame 1</span> Wireframes page with the Copilot drawer open (Chat tab)</div>
+  <div class="body">
+    <div class="appbar">
+      <span class="title">Wireframes</span>
+      <span class="sub">PRD-sourced · lo-fi → hi-fi</span>
+      <span class="spacer"></span>
+      <span class="btn">🎨 Design System</span>
+      <span class="btn">▦ Open navigator</span>
+      <span class="btn dark">💬 Copilot</span>
+    </div>
+    <div class="split">
+      <!-- gallery placeholder -->
+      <div class="gallery">
+        <div class="ghint">Module-grouped gallery (existing). Tick screens to scope the Copilot / pick references.</div>
+        <div class="gsec"><span class="dot" style="background:#2563eb"></span> Module A — Auth &amp; Entry <span style="color:var(--subtle);font-weight:400">· 5 screens</span></div>
+        <div class="gcardrow">
+          <div class="gcard sel"><div class="gh"><span><input type="checkbox" class="chk" checked> screen-01-landing</span><span>HIFI</span></div><div class="gph"></div></div>
+          <div class="gcard"><div class="gh"><span><input type="checkbox" class="chk"> screen-02-guest-reg</span><span>HIFI</span></div><div class="gph"></div></div>
+        </div>
+        <div class="gsec"><span class="dot" style="background:#db2777"></span> Module B — Guest Flow <span style="color:var(--subtle);font-weight:400">· 5 screens</span></div>
+        <div class="gcardrow">
+          <div class="gcard"><div class="gh"><span><input type="checkbox" class="chk"> screen-06-search</span><span>HIFI</span></div><div class="gph"></div></div>
+          <div class="gcard"><div class="gh"><span><input type="checkbox" class="chk"> screen-08-checkout</span><span>HIFI</span></div><div class="gph"></div></div>
+        </div>
+      </div>
+      <!-- drawer -->
+      <div class="drawer">
+        <div class="dwbar"><b>💬 Wireframe Copilot</b><span class="scope">Scope: 1 selected (screen-01)</span></div>
+        <div class="tabs"><span class="tab on">Chat</span><span class="tab">Changes</span><span class="tab">References</span><span class="tab">Design System</span></div>
+        <div class="dwbody">
+          <div class="ds-chip">
+            <span class="k">Design System</span>
+            <span><span class="sw" style="background:#0B1B2E"></span>Primary</span>
+            <span><span class="sw" style="background:#F97316"></span>CTA</span>
+            <span>Font: Inter</span>
+            <span class="edit">Edit ↗</span>
+          </div>
+          <div class="refpick">Style reference (≤2): <span class="reftag">screen-03 ✕</span> <span class="mini">+ Add reference</span></div>
+
+          <div class="msg"><div class="who">You · Customer feedback</div><div class="bubble u">On the landing screen the "Book Now" CTA is hard to spot. Make it the brand orange and add a back button to the checkout screen.</div></div>
+          <div class="msg"><div class="who">Copilot</div><div class="bubble a">Got it. I read these as <b>2 actionable changes</b> (your other line was a comment). Both stay on-brand using your Design System tokens. Review and add them to the register:</div></div>
+
+          <div class="propose">
+            <h4>✨ Proposed changes (confirm before adding)</h4>
+            <div class="pitem">
+              <div class="top"><input type="checkbox" class="chk" checked>
+                <div><div class="desc" contenteditable="true">Recolor the “Book Now” CTA to brand orange (CTA token) with stronger contrast.</div>
+                <div class="scr">🎯 screen-01-landing · hi-fi</div></div>
+              </div>
+              <div class="fields">
+                <div><label>Requestor</label><input value="Priya (Client)"></div>
+                <div><label>Source</label><select><option>Customer</option><option>Internal</option></select></div>
+                <div><label>Requested on <span class="opt">(optional)</span></label><input type="date" value="2026-06-09"></div>
+                <div><label>Priority</label><select><option>High</option><option selected>Medium</option><option>Low</option></select></div>
+              </div>
+            </div>
+            <div class="pitem">
+              <div class="top"><input type="checkbox" class="chk" checked>
+                <div><div class="desc" contenteditable="true">Add a “Back” button to the checkout header.</div>
+                <div class="scr">🎯 screen-08-checkout · hi-fi</div></div>
+              </div>
+              <div class="fields">
+                <div><label>Requestor</label><input value="Priya (Client)"></div>
+                <div><label>Source</label><select><option>Customer</option><option>Internal</option></select></div>
+                <div><label>Requested on <span class="opt">(optional)</span></label><input type="date" placeholder="—"></div>
+                <div><label>Priority</label><select><option>High</option><option selected>Medium</option><option>Low</option></select></div>
+              </div>
+            </div>
+            <div class="addbar"><span class="btn primary">+ Add 2 to register</span><span class="btn">Discard</span></div>
+          </div>
+        </div>
+        <div class="composer"><textarea placeholder="Describe a change… (e.g. 'match screen-03 header on all Module B screens')"></textarea><span class="iconbtn" title="Voice">🎙️</span><span class="iconbtn" style="background:var(--cta);color:#fff" title="Send">➤</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="anno"><b>Notes:</b> The <b>scope chip</b> follows the gallery checkboxes (All / N selected). The <b>Design System chip</b> is read-only ("Edit ↗" deep-links to the existing editor). The <b>reference picker</b> is capped at 2. Each proposed change captures <b>requestor · source · optional date · priority</b> before it enters the register.</div>
+
+<!-- FRAME 2 -->
+<div class="frame">
+  <div class="cap"><span class="pill">Frame 2</span> Change Register panel (below the gallery)</div>
+  <div class="body">
+    <div class="reg">
+      <div class="toolbar">
+        <h3>Change Register</h3>
+        <span class="badge b-pending">2 pending</span><span class="badge b-prog">1 in progress</span><span class="badge b-done">3 implemented</span>
+        <span class="spacer"></span>
+        <select class="filter"><option>Status: All</option></select>
+        <select class="filter"><option>Source: All</option><option>Customer</option><option>Internal</option></select>
+        <span class="btn">⬇ Export CSV/MD</span>
+        <span class="btn dark">▶ Run all</span>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>Change</th><th>Screen</th><th>Requestor</th><th>Source</th><th>Requested on</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="9">● Module A — Auth &amp; Entry</td></tr>
+          <tr>
+            <td>WFC-001</td><td>Recolor “Book Now” CTA to brand orange</td><td>screen-01-landing</td>
+            <td>Priya</td><td><span class="src cust">CUSTOMER</span></td><td>2026-06-09</td><td>Jun 11</td>
+            <td><span class="badge b-prog">IN PROGRESS</span></td>
+            <td><div class="rowact"><span class="mini">Run</span></div></td>
+          </tr>
+          <tr>
+            <td>WFC-002</td><td>Increase form label contrast</td><td>screen-04-login</td>
+            <td>Arun (BA)</td><td><span class="src int">INTERNAL</span></td><td class="opt-date">—</td><td>Jun 11</td>
+            <td><span class="badge b-pending">PENDING</span></td>
+            <td><div class="rowact"><span class="mini go">Run</span></div></td>
+          </tr>
+          <tr class="grp"><td colspan="9">● Module B — Guest Flow</td></tr>
+          <tr>
+            <td>WFC-003</td><td>Add “Back” button to checkout header</td><td>screen-08-checkout</td>
+            <td>Priya</td><td><span class="src cust">CUSTOMER</span></td><td>2026-06-09</td><td>Jun 11</td>
+            <td><span class="badge b-done">IMPLEMENTED</span></td>
+            <td><div class="rowact"><span class="mini">Before/After</span><span class="mini ok">Accept</span><span class="mini rv">Revert</span></div></td>
+          </tr>
+          <tr>
+            <td>WFC-004</td><td>Use brand font on confirmation banner</td><td>screen-10-confirmation</td>
+            <td>Arun (BA)</td><td><span class="src int">INTERNAL</span></td><td class="opt-date">—</td><td>Jun 10</td>
+            <td><span class="badge b-review">NEEDS REVIEW</span></td>
+            <td><div class="rowact"><span class="mini">Before/After</span><span class="mini">Re-run</span></div></td>
+          </tr>
+          <tr>
+            <td>WFC-005</td><td>Move payment methods above fold</td><td>screen-09-payment</td>
+            <td>Priya</td><td><span class="src cust">CUSTOMER</span></td><td>2026-06-08</td><td>Jun 10</td>
+            <td><span class="badge b-revert">REVERTED</span></td>
+            <td><div class="rowact"><span class="mini">Before/After</span><span class="mini">Reopen</span></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="anno"><b>Notes:</b> Status flips <b>live</b> as edits run (SSE). "Requested on" shows the <b>optional</b> date (— when blank); "Created" is the auto system stamp. Filters by <b>status</b> and <b>source</b>. Per-row <b>Run · Before/After · Accept · Revert · Reopen</b>; <b>Run all</b> + <b>Export</b> up top.
+  <div class="legend">
+    <span><span class="badge b-pending">PENDING</span></span><span><span class="badge b-prog">IN PROGRESS</span></span><span><span class="badge b-done">IMPLEMENTED</span></span><span><span class="badge b-review">NEEDS REVIEW</span></span><span><span class="badge b-fail">FAILED</span></span><span><span class="badge b-revert">REVERTED</span></span>
+  </div>
+</div>
+
+<!-- FRAME 3 -->
+<div class="frame">
+  <div class="cap"><span class="pill">Frame 3</span> Before / After review modal (Accept keeps the edit · Revert restores the original)</div>
+  <div class="body">
+    <div class="modal">
+      <div class="mcard">
+        <div class="mhead"><span class="t">WFC-001 · Recolor “Book Now” CTA</span><span class="slug">screen-01-landing</span><span class="spacer"></span><span class="mini ok">✓ Accept</span><span class="mini rv">↩ Revert</span></div>
+        <div class="cmp">
+          <div class="pane"><div class="ph"><span>Before (original)</span><span>htmlContent</span></div><div class="shot before"><div class="cta-demo">Book Now</div></div></div>
+          <div class="pane"><div class="ph"><span>After (edited variant)</span><span>meta.editedHtml</span></div><div class="shot after"><div class="cta-demo">Book Now</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="anno"><b>Notes:</b> The edit is written to a <b>non-destructive <code>edited</code> variant</b> — the original is never lost. <b>Accept</b> keeps it active (drives navigator/export); <b>Revert</b> flips the active variant back. Numbered callouts are preserved (parity guard).</div>
+
+</body>
+</html>

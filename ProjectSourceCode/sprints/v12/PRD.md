@@ -21,10 +21,14 @@ This reuses ~80% of existing machinery: the HLD Copilot stack (`BaHldThread`/`Ba
 | E | Model/provider for HTML edits | **Claude** (consistent with hi-fi generation / `HIFI_PROVIDER`) |
 | F | Requestor capture (new) | Capture **requestor name** + **source** (customer/internal) + **optional requested-on date** per change; system also stamps auto `createdAt` |
 | G | Scope of features | **All extra features included** (before/after diff, accept/revert, source tagging, actionable-vs-discussion classification, screenshot attach, run-all + per-change, parity guard, export, re-apply on regeneration, threaded comments + reopen) |
+| H | Design System access | Active **Design Tokens** (fonts/colors/radius/spacing/weights/logo) are **auto-injected** into the chat + edit context (always-on, no clicking). The Copilot shows a **read-only Design System chip/tab**; the existing header **"Design System" button links** to the `/design-system` editor for *changing* tokens. Plus optional **≤ 2 user-picked reference screens** as style exemplars. |
+| I | Delivery gate | **Wireframe-first**: build static UI **mockups** of the Copilot drawer + Change Register, get **user approval**, and only **then** write product code. |
 
 ## Goals
 
 - A **Wireframe Copilot drawer** (clone of `HldCopilot`) on the wireframes page: chat with streaming, voice input (MicButton), provider selection, a **scope chip** ("All 41 screens" / "5 selected") driven by the existing gallery checkboxes, a **References** tab, and **screenshot/region attachment** so a customer can point at the exact spot.
+- **Ground every edit in the active Design System** — fonts, colors, radius, spacing, weights, logo are **auto-injected** (no clicking) so edits stay on-brand; a **read-only Design System chip/tab** in the Copilot shows what the AI is using, and the existing header **"Design System" link** opens the editor for changing tokens.
+- Optionally reference **up to 2 existing screens** (user-picked) as style exemplars (e.g. "match `screen-03`'s header/layout") to keep screens consistent.
 - A chat turn is **classified** (discussion vs actionable) and **distilled into atomic change items**; the user reviews/edits/discards proposed items before they enter the register (no questions pollute the list).
 - A **Change Register** panel (clone of `CodeTasksPanel`): change items grouped by screen/module, **status badges**, per-change **Run** + **Run all** (stop-on-failure), **Accept/Revert**, **before/after** side-by-side diff (reuse the existing compare modal), and filters by **status** and **source**. Each item shows **requestor**, **source**, **requested-on date (optional)** + captured `createdAt`.
 - The AI **applies** a change to the target screen(s)' HTML (new `/wireframe-edit-screen`), writing an **`edited` variant** (`meta.editedHtml`, `activeVariant: 'edited'`) and **preserving numbered callouts** (parity guard). Status flips **live via SSE** as each item completes.
@@ -39,7 +43,8 @@ This reuses ~80% of existing machinery: the HLD Copilot stack (`BaHldThread`/`Ba
   - `BaWireframeChange` — the register row: `description`, `targetKind` (LOFI|HIFI), `targetScreens String[]` (slugs), `sourceMessageId?`, **`requestedBy`**, **`source` (CUSTOMER|INTERNAL)**, **`requestedOn DateTime?` (optional)**, `priority`, `status`, `beforeHtml?`/`afterHtml?` (or variant refs), `rationale?`, `appliedByRunId?`, `appliedAt?`, `createdAt`, `updatedAt`.
   - `BaWireframeChangeActivity` — immutable trail: `changeId`, `type` (SUBMITTED|EXTRACTED|IN_PROGRESS|IMPLEMENTED|FAILED|ACCEPTED|REVERTED|COMMENT|REOPENED|NEEDS_REAPPLY), `actor`, `message?`, `metadata?`, `createdAt`.
   - Enums: `BaWireframeChangeStatus`, `BaWireframeChangeSource`.
-- **ai-service (Python):** `/wireframe-chat` + `/wireframe-chat-stream` (mirror `/hld-chat[-stream]`); `/wireframe-extract-changes` (turn a chat turn + scope into an atomic change list with actionable/discussion classification + per-item target screens); `/wireframe-edit-screen` (current screen HTML + NL change + brand tokens + existing callouts → edited HTML, low temperature, callouts preserved). Provider-routed (Claude default).
+- **Design System grounding:** `DesignSystemService.resolveTokens(projectId)` + `getActive` (logo) feed the chat context and the `/wireframe-edit-screen` prompt as the **full `DesignTokens`** (fonts/colors/radius/spacing/weights), not just `{primary,surface,cta}`. Up to **2** user-picked **reference screens'** HTML are added as style exemplars (token-capped). The Copilot shows a **read-only** Design System chip/tab; editing tokens stays in the existing `/design-system` page (header link). `DesignSystemService` is already a dependency of the wireframe service — no new wiring.
+- **ai-service (Python):** `/wireframe-chat` + `/wireframe-chat-stream` (mirror `/hld-chat[-stream]`); `/wireframe-extract-changes` (turn a chat turn + scope into an atomic change list with actionable/discussion classification + per-item target screens); `/wireframe-edit-screen` (current screen HTML + NL change + **full design tokens** + **≤2 reference screens** + existing callouts → edited HTML, low temperature, callouts preserved). Provider-routed (Claude default).
 - **backend (NestJS):**
   - `WireframeCopilotService` — thread upsert, persist both turns, assemble context (current screen HTML/callouts/module + design tokens + PRD/BRD + included references), call ai-service, extract changes.
   - `WireframeChangeService` — register CRUD; `applyChange` (calls `editWireframeScreenWithAI`, writes `edited` variant, parity guard, flips status, emits SSE); `runAll` (ordered, stop-on-failure); `accept`/`revert` (toggle `activeVariant`); `addComment`/`reopen`; `exportRegister` (CSV/MD + `appendChangelog`); `flagNeedsReapply` (hook on regeneration).
@@ -80,6 +85,12 @@ This reuses ~80% of existing machinery: the HLD Copilot stack (`BaHldThread`/`Ba
 | Token cost / latency of per-screen edits | Med | Per-change edits are small (single screen); run-all is bounded-concurrency with stop-on-failure; Claude with low temp |
 | Stale register after regeneration | Med | `flagNeedsReapply` hook resets status + logs `NEEDS_REAPPLY` so trail stays honest |
 | Long audit trail growth | Low | Activity rows are compact; export to CSV/MD offloads to artifact folder |
+
+## Delivery approach (wireframe-first)
+
+**Phase 0 (gate):** before any product code, produce static, clickable **HTML mockups** of the Copilot drawer + Change Register (incl. the Design System chip/tab, reference-screen picker, and the requestor/source/optional-date capture) under `sprints/v12/wireframes/`. **The user reviews and approves the mockups; no implementation begins until then.** Phase 0 mockups are throwaway design artifacts — not wired to any backend.
+
+After approval, implementation proceeds: **PR 1** (backend foundation) → **PR 2** (frontend) → **PR 3** (references + full verify). Each PR is `tsc`-clean both apps, smoke-green, and **regression-checked** against existing wireframe/HLD features before merge.
 
 ## Success criteria
 
