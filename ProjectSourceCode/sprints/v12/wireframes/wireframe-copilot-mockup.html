@@ -166,6 +166,11 @@
         <div class="dwbar"><b>💬 Wireframe Copilot</b><span class="scope">Scope: 1 selected (screen-01)</span></div>
         <div class="tabs"><span class="tab on">Chat</span><span class="tab">Changes</span><span class="tab">References</span><span class="tab">Design System</span></div>
         <div class="dwbody">
+          <!-- Prominent, primary feedback entry point (top of drawer) -->
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+            <span class="btn primary" style="height:40px;font-size:13px;flex:1;justify-content:center;font-weight:700">📄 Upload feedback document</span>
+          </div>
+          <div style="font-size:11px;color:var(--subtle);margin-bottom:12px">PDF · DOCX · MD · TXT — or paste a review/one screen's block in the chat below. Either opens the <b>staging table (Frame 4)</b>.</div>
           <div class="ds-chip">
             <span class="k">Design System</span>
             <span><span class="sw" style="background:#0B1B2E"></span>Primary</span>
@@ -207,10 +212,7 @@
             <div class="addbar"><span class="btn primary">+ Add 2 to register</span><span class="btn">Discard</span></div>
           </div>
         </div>
-        <div style="padding:6px 12px 0;display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted)">
-          <span class="iconbtn" title="Upload feedback document (PDF/DOCX/MD/TXT) → opens the review table (Frame 4)" style="width:auto;padding:0 9px;gap:5px;font-size:11px">📄 Upload feedback</span>
-          <span>or paste a whole review / one screen's block below → opens the <b>staging table (Frame 4)</b></span>
-        </div>
+        <div style="padding:6px 12px 0;font-size:11px;color:var(--subtle)">💡 Paste a whole review or one screen's block here → opens the staging table (or use “📄 Upload feedback document” above).</div>
         <div class="composer"><textarea placeholder="Describe a change, or paste screen-wise feedback… (e.g. 'Screen 02 — (3) phone field with country selector')"></textarea><span class="iconbtn" title="Voice">🎙️</span><span class="iconbtn" style="background:var(--cta);color:#fff" title="Send">➤</span></div>
       </div>
     </div>
@@ -301,11 +303,15 @@
   <div class="body">
     <div class="reg">
       <div class="toolbar">
-        <span class="btn dark">📄 Upload feedback doc</span>
+        <span class="btn primary">📄 Upload feedback doc</span>
         <span class="btn">📋 Paste text</span>
         <span style="font-size:12px;color:var(--muted)">Parsed <b>“Updated wireframe review.pdf”</b> → 14 changes · 3 project-wide · 1 design-system · 2 unmatched</span>
         <span class="spacer"></span>
-        <span style="font-size:11px;color:var(--muted)">Batch:</span>
+        <span style="font-size:11px;color:var(--muted)">Uploaded by</span>
+        <input class="filter" style="width:110px" value="Saurabh" title="Who uploaded this file">
+        <span style="font-size:11px;color:var(--muted)">on</span>
+        <input class="filter" type="date" value="2026-06-11" title="Upload date (auto, editable)">
+        <span style="font-size:11px;color:var(--muted)">· Apply-to (batch):</span>
         <input class="filter" style="width:120px" value="Priya (Client)" title="Requestor">
         <select class="filter"><option>Customer</option><option>Internal</option></select>
         <input class="filter" type="date" value="2026-06-09" title="Requested on (optional)">
@@ -396,7 +402,7 @@
     </div>
   </div>
 </div>
-<div class="anno"><b>Notes:</b> One upload → a screen-routed, reviewable table. <b>General</b> items scope to <b>all screens</b>; the <b>Cyan #22d3ee</b> brand change is detected as <b>Design-System-level</b> → "Update token" (cascades) and/or "Recolor screens". <b>"(n)"</b> are mapped to each screen's <b>callouts</b>; <b>"later phase"</b> auto-tags <b>Deferred</b>; feedback for screens not in the set lands in <b>Unmatched</b>. Batch-set requestor + <b>Customer</b> source + optional date once for the whole import. Nothing persists until <b>Add to register</b>.</div>
+<div class="anno"><b>Notes:</b> One upload → a screen-routed, reviewable table. <b>General</b> items scope to <b>all screens</b>; the <b>Cyan #22d3ee</b> brand change is detected as <b>Design-System-level</b> → "Update token" (cascades) and/or "Recolor screens". <b>"(n)"</b> are mapped to each screen's <b>callouts</b>; <b>"later phase"</b> auto-tags <b>Deferred</b>; feedback for screens not in the set lands in <b>Unmatched</b>. Batch-set requestor + <b>Customer</b> source + optional date once for the whole import. The import records <b>who uploaded the file</b> and the <b>upload date</b> (auto, editable) — kept in the trail and shown per change. Nothing persists until <b>Add to register</b>.</div>
 
 </body>
 </html>
