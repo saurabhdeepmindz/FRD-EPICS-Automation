@@ -4,7 +4,10 @@
 
 - **PR 1 (backend):** WC-01 (models+migration) ✅ · WC-02/03/04 (ai-service) ✅ · WC-05/06/07/08/09/16/17/19/21 (services, routes, SSE, export, re-apply hook, safety, feedback ingest) ✅ — tsc green, backend boots, 34 tests pass, verified e2e on TestDemoProject then cleaned.
 - **PR 2 (frontend):** WC-10 (api client) ✅ · WC-11/22 (Copilot drawer + feedback staging table) ✅ · WC-12/13 (Change Register panel + before/after diff) ✅ · WC-18 (comments/reopen) ✅ — tsc green both apps; page renders 200. **WC-14 (screenshot-attach-to-chat) DEFERRED** to a follow-up (needs vision wiring; doc upload covers the main path).
-- **Next — PR 3:** WC-15 (references tab) · WC-20 (Playwright + regression sweep) · WC-14 (deferred) · chat-stream proxy (deferred).
+- **PR 3:** WC-15 (lean references-notes injection into chat) ✅ · WC-20 (register unit spec + full regression sweep: tsc green both apps, 36 backend tests pass, all services healthy, existing pages render) ✅.
+- **Deferred (follow-ups):** WC-14 (screenshot-to-chat vision attach) · full WC-15 references **tab** (URL/document ingestion + RAG, à la v11 Track RR) · chat-stream token proxy · Playwright E2E journey.
+
+## ✅ v12 Wireframe Copilot — core sprint COMPLETE (PR 1 backend · PR 2 frontend · PR 3 references+verify). Conversational AI + screen-routed change register with status/trail/before-after/accept-revert, feedback-document ingestion, Design-System grounding, export + re-apply hook. Verified e2e on TestDemoProject; strictly additive.
 
 > **PRD:** `sprints/v12/PRD.md`. **Decisions:** (A) project-level thread + per-message scope · (B) auto-apply to non-destructive `edited` variant + Accept/Revert · (C) hi-fi primary, lo-fi optional · (D) dedicated wireframe models · (E) Claude for HTML edits · (F) capture requestor + source + **optional** requested-on date · (G) all extra features in.
 >
