@@ -42,6 +42,12 @@ import { ClaudeAgentRunner } from './agent/claude-agent-runner.service';
 import { RunManagerService } from './agent/run-manager.service';
 import { AGENT_RUNNER } from './agent/agent-runner.interface';
 import { TextExtractionService } from '../text-extraction.service';
+import { WireframeCopilotController } from './wireframe-copilot.controller';
+import { WireframeCopilotService } from './wireframe-copilot.service';
+import { WireframeContextService } from './wireframe-context.service';
+import { WireframeEditService } from './wireframe-edit.service';
+import { WireframeChangeService } from './wireframe-change.service';
+import { WireframeChangeEventsService } from './wireframe-change-events.service';
 
 /**
  * New Pipeline Track module — Customer Discovery → PRD+FRD → HLD → Code.
@@ -59,7 +65,7 @@ import { TextExtractionService } from '../text-extraction.service';
  */
 @Module({
   imports: [AiModule, forwardRef(() => DiscoveryModule)],
-  controllers: [PipelineController, PipelineAdminController, E2eFlowController, HldExportController, HldCopilotController, HldReferencesController, HldLibraryController],
+  controllers: [PipelineController, PipelineAdminController, E2eFlowController, HldExportController, HldCopilotController, HldReferencesController, HldLibraryController, WireframeCopilotController],
   providers: [
     PipelineService,
     PdfService,
@@ -95,6 +101,11 @@ import { TextExtractionService } from '../text-extraction.service';
     { provide: AGENT_RUNNER, useExisting: ClaudeAgentRunner },
     RunManagerService,
     TextExtractionService,
+    WireframeContextService,
+    WireframeEditService,
+    WireframeChangeService,
+    WireframeChangeEventsService,
+    WireframeCopilotService,
   ],
   exports: [
     PipelineService,

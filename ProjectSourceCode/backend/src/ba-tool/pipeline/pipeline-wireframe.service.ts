@@ -10,6 +10,7 @@ import { WireframeNavigatorService, moduleKeyFromFr } from './wireframe-navigato
 import { type DesignTokens } from './design-tokens';
 import { renderLoFi } from './lofi-render';
 import { AiService } from '../../ai/ai.service';
+import { WireframeChangeService } from './wireframe-change.service';
 
 /**
  * Pipeline (PRD-sourced) wireframes (Sprint v8 · Track Z). Generates lo-fi screens
@@ -44,6 +45,8 @@ export class PipelineWireframeService {
     private readonly designSystem: DesignSystemService,
     private readonly navigator: WireframeNavigatorService,
     private readonly aiService: AiService,
+    @Inject(forwardRef(() => WireframeChangeService))
+    private readonly changes: WireframeChangeService,
   ) {}
 
   /** Z-02 — deterministic lo-fi from the latest screen map (callouts = annotations). */
@@ -137,6 +140,7 @@ export class PipelineWireframeService {
     await this.navigator.writeToDisk(projectId, 'lofi').catch((e) => this.logger.warn(`navigator (lofi) failed: ${e}`));
 
     this.logger.log(`Generated PIPELINE lo-fi for ${project.name}: ${generated.length} from map + ${preserved.length} preserved uploads`);
+    await this.changes.flagReapplyAfterRegen(projectId, 'LOFI').catch(() => undefined); // WC-17
     return { id: set.id, screens: generated.length, preservedUploads: preserved.length };
   }
 
@@ -162,6 +166,7 @@ export class PipelineWireframeService {
     });
     // v9 — (re)build the stitched index.html navigator for the hi-fi set.
     await this.navigator.writeToDisk(projectId, 'hifi').catch((e) => this.logger.warn(`navigator (hifi) failed: ${e}`));
+    await this.changes.flagReapplyAfterRegen(projectId, 'HIFI').catch(() => undefined); // WC-17
     return { id: hifi.id, screens: hifi.screens.length };
   }
 

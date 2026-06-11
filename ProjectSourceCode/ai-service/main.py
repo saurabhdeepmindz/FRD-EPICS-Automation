@@ -3535,19 +3535,33 @@ async def wireframe_edit_screen(
         reference_screens=[r.model_dump() for r in body.referenceScreens[:2]],
         callouts=body.callouts, fidelity=body.fidelity,
     )
-    parsed, model = await _wf_complete_json(
+    # Return RAW HTML (not JSON) — embedding a full HTML doc in a JSON string is
+    # fragile (truncation/escaping). Backend recomputes callout parity.
+    text, model = await _complete_text(
         provider=body.provider, settings=settings, openai_client=openai_client,
         anthropic_client=anthropic_client, system=WIREFRAME_EDIT_SYSTEM_PROMPT,
-        user=user, max_tokens=16384, temperature=0.3,
+        user=user, history=[], max_tokens=16384, temperature=0.3,
     )
-    edited = parsed.get("editedHtml", "") if isinstance(parsed, dict) else ""
-    if not edited:
+    edited = _strip_html_fences(text)
+    if "<" not in edited:
         raise HTTPException(status_code=502, detail="Wireframe editor returned no HTML")
     logger.info("Wireframe edit (%s) → %d chars", body.provider, len(edited))
-    return WireframeEditResponse(
-        editedHtml=edited, rationale=parsed.get("rationale", ""),
-        calloutsPreserved=bool(parsed.get("calloutsPreserved", True)), model=model,
-    )
+    return WireframeEditResponse(editedHtml=edited, rationale="", calloutsPreserved=True, model=model)
+
+
+def _strip_html_fences(text: str) -> str:
+    """Strip ```html / ``` fences and any prose before the first tag."""
+    s = (text or "").strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+    i = s.find("<!doctype")
+    if i == -1:
+        i = s.lower().find("<!doctype")
+    if i == -1:
+        i = s.find("<html")
+    return (s[i:] if i > 0 else s).strip()
 
 
 class WireframeParseFeedbackRequest(BaseModel):

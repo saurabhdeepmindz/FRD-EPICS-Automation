@@ -69,6 +69,7 @@ describe('PipelineWireframeService.upload — hi-fi append', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     return { service, hifiSets, hifiScreens, createCalls };

@@ -147,10 +147,9 @@ CRITICAL rules:
 given, match their component/layout patterns.
 - DO NOT renumber or drop existing numbered callouts. A new annotation may use a letter suffix on an \
 existing number (e.g. "3a"). The set of base callout numbers must be unchanged.
-- Return the COMPLETE edited HTML document — no commentary, no markdown fences.
 
-Return ONLY JSON:
-{ "editedHtml": str, "rationale": str, "calloutsPreserved": bool }"""
+Return ONLY the COMPLETE edited HTML document — starting with <!doctype html> or <html>. \
+No JSON, no markdown fences, no commentary before or after."""
 
 
 def build_wireframe_edit_user_message(

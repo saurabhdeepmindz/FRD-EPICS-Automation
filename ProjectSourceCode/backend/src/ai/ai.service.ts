@@ -298,6 +298,90 @@ export interface BaRefineSectionResponse {
   model: string;
 }
 
+// ── v12 · Track WC — Wireframe Copilot ai-service contracts ─────────────────────
+export interface WireframeScreenCtxPayload {
+  slug: string;
+  title?: string;
+  module?: string | null;
+  callouts?: unknown[];
+  html?: string;
+}
+export interface WireframeChatRequest {
+  provider?: string;
+  scope_label: string;
+  screens: WireframeScreenCtxPayload[];
+  design_tokens: Record<string, unknown>;
+  reference_screens: { slug: string; html: string }[];
+  prd_context?: string;
+  history?: { role: string; content: string }[];
+  user_message: string;
+}
+export interface WireframeChatResponse {
+  markdown: string;
+  model: string;
+}
+export interface WireframeExtractedItem {
+  description: string;
+  targetScreens?: string[];
+  scopeAll?: boolean;
+  kind?: string;
+  phase?: string;
+  priority?: string;
+  calloutRef?: string | null;
+  actionable?: boolean;
+  rationale?: string;
+}
+export interface WireframeExtractRequest {
+  provider?: string;
+  scope_label: string;
+  screens: WireframeScreenCtxPayload[];
+  user_message: string;
+  assistant_reply?: string;
+}
+export interface WireframeExtractResponse {
+  items: WireframeExtractedItem[];
+  model?: string;
+}
+export interface WireframeEditRequest {
+  provider?: string;
+  htmlContent: string;
+  changeRequest: string;
+  designTokens: Record<string, unknown>;
+  referenceScreens?: { slug: string; html: string }[];
+  callouts?: unknown[];
+  fidelity?: 'lofi' | 'hifi';
+}
+export interface WireframeEditResponse {
+  editedHtml: string;
+  rationale?: string;
+  calloutsPreserved?: boolean;
+  model?: string;
+}
+export interface WireframeParseFeedbackItem {
+  description: string;
+  calloutRef?: string | null;
+  phase?: string;
+  priority?: string;
+}
+export interface WireframeParseFeedbackScreen {
+  moduleRef?: string;
+  screenRef?: string;
+  slug?: string | null;
+  items: WireframeParseFeedbackItem[];
+}
+export interface WireframeParseFeedbackRequest {
+  provider?: string;
+  rawText: string;
+  screens: WireframeScreenCtxPayload[];
+}
+export interface WireframeParseFeedbackResponse {
+  general: WireframeParseFeedbackItem[];
+  designSystem: WireframeParseFeedbackItem[];
+  screens: WireframeParseFeedbackScreen[];
+  unmatched: { screenRef?: string; items: WireframeParseFeedbackItem[] }[];
+  model?: string;
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -629,6 +713,41 @@ export class AiService {
         );
       }
       this.logger.error('AI service unreachable for /transcribe', error);
+      throw new HttpException('AI service unavailable', 502);
+    }
+  }
+
+  // ── v12 · Track WC — Wireframe Copilot ────────────────────────────────────────
+  async wireframeChat(req: WireframeChatRequest): Promise<WireframeChatResponse> {
+    return this.postAi<WireframeChatResponse>('/wireframe-chat', req, 120_000, 'Wireframe chat error');
+  }
+
+  async wireframeExtractChanges(req: WireframeExtractRequest): Promise<WireframeExtractResponse> {
+    return this.postAi<WireframeExtractResponse>('/wireframe-extract-changes', req, 120_000, 'Wireframe change extraction error');
+  }
+
+  async wireframeEditScreen(req: WireframeEditRequest): Promise<WireframeEditResponse> {
+    return this.postAi<WireframeEditResponse>('/wireframe-edit-screen', req, 300_000, 'Wireframe edit error');
+  }
+
+  async wireframeParseFeedback(req: WireframeParseFeedbackRequest): Promise<WireframeParseFeedbackResponse> {
+    return this.postAi<WireframeParseFeedbackResponse>('/wireframe-parse-feedback', req, 180_000, 'Wireframe feedback parse error');
+  }
+
+  /** Shared POST → ai-service with the standard axios→HttpException error mapping. */
+  private async postAi<T>(path: string, body: unknown, timeout: number, errLabel: string): Promise<T> {
+    try {
+      const { data } = await axios.post<T>(`${this.aiServiceUrl}${path}`, body, { timeout });
+      return data;
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error) && error.response) {
+        this.logger.error(`AI ${path} returned ${error.response.status}`);
+        throw new HttpException(
+          (error.response.data as { detail?: string })?.detail ?? errLabel,
+          error.response.status,
+        );
+      }
+      this.logger.error(`AI service unreachable for ${path}`, error);
       throw new HttpException('AI service unavailable', 502);
     }
   }
