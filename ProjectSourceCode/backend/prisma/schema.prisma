@@ -1875,3 +1875,130 @@ model BaChangeRequest {
   @@index([projectId, status])
   @@map("ba_change_requests")
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// v12 · Track WC — Wireframe Copilot (conversational AI + change register)
+// Additive: project-scoped chat threads, feedback-document imports, and an atomic
+// change register with status + an immutable activity trail. No existing model is
+// modified. projectId is a soft scalar ref (matching BaUpstreamSync/BaCodeTask).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum BaWireframeChangeStatus {
+  PENDING
+  IN_PROGRESS
+  IMPLEMENTED
+  FAILED
+  NEEDS_REVIEW
+  REVERTED
+  DEFERRED
+}
+
+enum BaWireframeChangeSource {
+  CUSTOMER
+  INTERNAL
+}
+
+enum BaWireframeChangeActivityType {
+  SUBMITTED
+  EXTRACTED
+  IN_PROGRESS
+  IMPLEMENTED
+  FAILED
+  ACCEPTED
+  REVERTED
+  COMMENT
+  REOPENED
+  NEEDS_REAPPLY
+}
+
+// One conversation per project (top-level; per-message scope decides which screens).
+model BaWireframeCopilotThread {
+  id         String                      @id @default(uuid())
+  projectId  String
+  scopeLabel String?
+  createdAt  DateTime                    @default(now())
+  updatedAt  DateTime                    @updatedAt
+  messages   BaWireframeCopilotMessage[]
+
+  @@index([projectId])
+  @@map("ba_wireframe_copilot_threads")
+}
+
+model BaWireframeCopilotMessage {
+  id          String                   @id @default(uuid())
+  threadId    String
+  thread      BaWireframeCopilotThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role        String                   // "user" | "assistant"
+  model       String?
+  content     String                   @db.Text
+  targetScope Json?                    // { kind: "ALL"|"SELECTED", slugs: string[] }
+  attachments Json?                    // [{ kind, name, dataUri }] — screenshot/region attachments
+  createdAt   DateTime                 @default(now())
+
+  @@index([threadId])
+  @@map("ba_wireframe_copilot_messages")
+}
+
+// A feedback batch (uploaded document or pasted text) — provenance for its changes.
+model BaWireframeFeedbackImport {
+  id          String                  @id @default(uuid())
+  projectId   String
+  threadId    String?
+  fileName    String?
+  source      BaWireframeChangeSource @default(CUSTOMER)
+  uploadedBy  String?
+  uploadedAt  DateTime?               // upload date (auto-stamped at upload; editable)
+  rawText     String?                 @db.Text
+  parsedCount Int                     @default(0)
+  createdAt   DateTime                @default(now())
+
+  @@index([projectId])
+  @@map("ba_wireframe_feedback_imports")
+}
+
+// One atomic change in the register, with status + before/after refs + trail.
+model BaWireframeChange {
+  id              String                      @id @default(uuid())
+  projectId       String
+  threadId        String?
+  sourceMessageId String?
+  importId        String?                     // → BaWireframeFeedbackImport (soft ref)
+  changeCode      String                      // human-readable: WFC-001
+  description     String                      @db.Text
+  targetKind      String                      @default("HIFI")    // "LOFI" | "HIFI"
+  targetScreens   String[]                    @default([])         // screen slugs; empty + scopeAll => all
+  scopeAll        Boolean                     @default(false)
+  changeKind      String                      @default("SCREEN")   // SCREEN | ALL | DESIGN_SYSTEM | QUESTION
+  calloutRef      String?                     // e.g. "(3)" — maps to a screen callout
+  requestedBy     String?
+  source          BaWireframeChangeSource     @default(INTERNAL)
+  requestedOn     DateTime?                   // optional user-supplied "requested on" date
+  priority        String                      @default("MEDIUM")   // LOW | MEDIUM | HIGH
+  status          BaWireframeChangeStatus     @default(PENDING)
+  beforeRef       Json?                       // { slug: { variant, htmlSnapshot } } pre-edit
+  afterRef        Json?                       // post-edit snapshot(s)
+  rationale       String?                     @db.Text
+  appliedByRunId  String?
+  appliedAt       DateTime?
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  activities      BaWireframeChangeActivity[]
+
+  @@unique([projectId, changeCode])
+  @@index([projectId, status])
+  @@map("ba_wireframe_changes")
+}
+
+model BaWireframeChangeActivity {
+  id        String                        @id @default(uuid())
+  changeId  String
+  change    BaWireframeChange             @relation(fields: [changeId], references: [id], onDelete: Cascade)
+  type      BaWireframeChangeActivityType
+  actor     String?
+  message   String?                       @db.Text
+  metadata  Json?
+  createdAt DateTime                      @default(now())
+
+  @@index([changeId, createdAt])
+  @@map("ba_wireframe_change_activities")
+}

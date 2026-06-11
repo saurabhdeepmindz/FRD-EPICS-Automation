@@ -20,7 +20,7 @@
 
 ### Track A — Data model + migration (backend)
 
-- [ ] **WC-01 (DB): copilot + change-register models + migration** (P0, L)
+- [x] **WC-01 (DB): copilot + change-register models + migration** (P0, L) — ✅ done (5 tables + 3 enums in `new_prd_generator`; client regen; backend boots clean; tsc green)
   - `BaWireframeCopilotThread` (`id`, `projectId`, `scopeLabel?`, timestamps; `@@index([projectId])`).
   - `BaWireframeCopilotMessage` (`id`, `threadId`, `role` "user"|"assistant", `model?`, `content @db.Text`, `targetScope Json` `{ kind: "ALL"|"SELECTED", slugs: string[] }`, `attachments Json?`, `createdAt`; `@@index([threadId])`).
   - `BaWireframeChange` (`id`, `projectId`, `threadId?`, `sourceMessageId?`, `changeCode` e.g. `WFC-001`, `description @db.Text`, `targetKind` LOFI|HIFI, `targetScreens String[]`, **`requestedBy String?`**, **`source` CUSTOMER|INTERNAL `@default(INTERNAL)`**, **`requestedOn DateTime?`** (optional, user-supplied), `priority @default("MEDIUM")`, `status @default(PENDING)`, `beforeRef Json?`, `afterRef Json?`, `rationale @db.Text?`, `appliedByRunId?`, `appliedAt?`, `createdAt`, `updatedAt`; `@@unique([projectId, changeCode])`, `@@index([projectId, status])`).
