@@ -39,6 +39,16 @@ from prompts.hld_chat_prompts import (
     build_hld_merge_user_message,
 )
 from prompts.e2e_flow_prompts import E2E_FLOW_SYSTEM_PROMPT, build_e2e_flow_user_message
+from prompts.wireframe_chat_prompts import (
+    WIREFRAME_CHAT_SYSTEM_PROMPT,
+    build_wireframe_chat_user_message,
+    WIREFRAME_EXTRACT_SYSTEM_PROMPT,
+    build_wireframe_extract_user_message,
+    WIREFRAME_EDIT_SYSTEM_PROMPT,
+    build_wireframe_edit_user_message,
+    WIREFRAME_PARSE_FEEDBACK_SYSTEM_PROMPT,
+    build_wireframe_parse_feedback_user_message,
+)
 from prompts.reference_prompts import (
     REFERENCE_SUMMARY_SYSTEM_PROMPT,
     build_reference_summary_user_message,
@@ -3295,3 +3305,281 @@ async def hld_deployment_flows(
         raise HTTPException(status_code=502, detail="AI returned malformed deployment-flows JSON") from exc
     logger.info("Deployment flows generated for '%s' (%d diagrams)", body.product_name, len(model.get("diagrams", [])))
     return model
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v12 · Track WC — Wireframe Copilot endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class WireframeScreenCtx(BaseModel):
+    slug: str
+    title: str = ""
+    module: str | None = None
+    callouts: list[dict] = Field(default_factory=list)
+    html: str = ""
+
+
+class WireframeRefScreen(BaseModel):
+    slug: str
+    html: str = ""
+
+
+async def _wf_complete_json(
+    *,
+    provider: str,
+    settings: Settings,
+    openai_client: openai.AsyncOpenAI,
+    anthropic_client: anthropic.AsyncAnthropic,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float,
+) -> tuple[dict, str]:
+    """Provider-routed JSON completion → (parsed_dict, model). Claude default."""
+    if provider == "openai":
+        try:
+            resp = await openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=max(max_tokens, 1024),
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            )
+        except openai.AuthenticationError as exc:
+            raise HTTPException(status_code=401, detail="AI service authentication error") from exc
+        except openai.RateLimitError as exc:
+            raise HTTPException(status_code=429, detail="AI service rate limit — please retry") from exc
+        except openai.OpenAIError as exc:
+            logger.error("OpenAI error (wireframe json): %s", exc)
+            raise HTTPException(status_code=502, detail="AI service unavailable") from exc
+        raw = resp.choices[0].message.content or "{}"
+        model = settings.OPENAI_MODEL
+    else:
+        if not settings.ANTHROPIC_API_KEY:
+            raise HTTPException(status_code=400, detail="Claude (anthropic) is not configured — set ANTHROPIC_API_KEY.")
+        raw = await _claude_complete(
+            anthropic_client,
+            model=settings.ANTHROPIC_MODEL,
+            system=system,
+            user=user,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ) or "{}"
+        model = settings.ANTHROPIC_MODEL
+    try:
+        return _parse_ai_json(raw), model
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Wireframe JSON parse failed: %s — raw=%r", exc, raw[:200])
+        raise HTTPException(status_code=502, detail="Wireframe AI returned invalid JSON") from exc
+
+
+class WireframeChatRequest(BaseModel):
+    provider: str = "anthropic"
+    scope_label: str = "All wireframes"
+    screens: list[WireframeScreenCtx] = Field(default_factory=list)
+    design_tokens: dict = Field(default_factory=dict)
+    reference_screens: list[WireframeRefScreen] = Field(default_factory=list)
+    prd_context: str = ""
+    history: list[ChatTurn] = Field(default_factory=list)
+    user_message: str
+
+
+class WireframeChatResponse(BaseModel):
+    markdown: str
+    model: str
+
+
+def _wf_chat_user(body: "WireframeChatRequest") -> str:
+    return build_wireframe_chat_user_message(
+        scope_label=body.scope_label,
+        screens=[s.model_dump() for s in body.screens],
+        design_tokens=body.design_tokens,
+        reference_screens=[r.model_dump() for r in body.reference_screens[:2]],
+        prd_context=body.prd_context,
+        user_message=body.user_message,
+    )
+
+
+@app.post("/wireframe-chat", response_model=WireframeChatResponse, tags=["copilot"])
+async def wireframe_chat(
+    body: WireframeChatRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> WireframeChatResponse:
+    """Grounded UX/UI chat over one/all wireframe screens (Design-System aware)."""
+    text, model = await _complete_text(
+        provider=body.provider, settings=settings, openai_client=openai_client,
+        anthropic_client=anthropic_client, system=WIREFRAME_CHAT_SYSTEM_PROMPT,
+        user=_wf_chat_user(body), history=body.history,
+        max_tokens=settings.HLD_COPILOT_MAX_TOKENS, temperature=settings.HLD_COPILOT_TEMPERATURE,
+    )
+    logger.info("Wireframe chat (%s) %d chars · %d screens", body.provider, len(text), len(body.screens))
+    return WireframeChatResponse(markdown=text, model=model)
+
+
+@app.post("/wireframe-chat-stream", tags=["copilot"])
+async def wireframe_chat_stream(
+    body: WireframeChatRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> StreamingResponse:
+    """Streaming variant of /wireframe-chat. Emits SSE token deltas then [DONE]."""
+    system = WIREFRAME_CHAT_SYSTEM_PROMPT
+    user = _wf_chat_user(body)
+    turns = [{"role": t.role, "content": t.content} for t in body.history if t.content.strip()]
+
+    async def gen():
+        try:
+            if body.provider == "anthropic":
+                model = settings.ANTHROPIC_MODEL
+                yield _sse({"model": model})
+                async with anthropic_client.messages.stream(
+                    model=model, max_tokens=settings.HLD_COPILOT_MAX_TOKENS,
+                    temperature=settings.HLD_COPILOT_TEMPERATURE, system=system,
+                    messages=[*turns, {"role": "user", "content": user}],
+                ) as stream:
+                    async for delta in stream.text_stream:
+                        if delta:
+                            yield _sse({"delta": delta})
+            elif body.provider == "openai":
+                model = settings.OPENAI_MODEL
+                yield _sse({"model": model})
+                resp = await openai_client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": system}, *turns, {"role": "user", "content": user}],
+                    max_tokens=max(settings.HLD_COPILOT_MAX_TOKENS, 1024),
+                    temperature=settings.HLD_COPILOT_TEMPERATURE, stream=True,
+                )
+                async for chunk in resp:
+                    delta = chunk.choices[0].delta.content or "" if chunk.choices else ""
+                    if delta:
+                        yield _sse({"delta": delta})
+            else:
+                text, model = await _complete_text(
+                    provider=body.provider, settings=settings, openai_client=openai_client,
+                    anthropic_client=anthropic_client, system=system, user=user, history=body.history,
+                    max_tokens=settings.HLD_COPILOT_MAX_TOKENS, temperature=settings.HLD_COPILOT_TEMPERATURE,
+                )
+                yield _sse({"model": model})
+                yield _sse({"delta": text})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Wireframe chat stream error: %s", exc)
+            yield _sse({"error": "AI service error during streaming."})
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+class WireframeExtractRequest(BaseModel):
+    provider: str = "anthropic"
+    scope_label: str = "All wireframes"
+    screens: list[WireframeScreenCtx] = Field(default_factory=list)
+    user_message: str
+    assistant_reply: str = ""
+
+
+@app.post("/wireframe-extract-changes", tags=["copilot"])
+async def wireframe_extract_changes(
+    body: WireframeExtractRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """A chat turn → an atomic, screen-routed change list (JSON)."""
+    user = build_wireframe_extract_user_message(
+        scope_label=body.scope_label,
+        screens=[s.model_dump() for s in body.screens],
+        user_message=body.user_message, assistant_reply=body.assistant_reply,
+    )
+    parsed, model = await _wf_complete_json(
+        provider=body.provider, settings=settings, openai_client=openai_client,
+        anthropic_client=anthropic_client, system=WIREFRAME_EXTRACT_SYSTEM_PROMPT,
+        user=user, max_tokens=4096, temperature=0.2,
+    )
+    items = parsed.get("items", []) if isinstance(parsed, dict) else []
+    logger.info("Wireframe extract (%s): %d items", body.provider, len(items))
+    return {"items": items, "model": model}
+
+
+class WireframeEditRequest(BaseModel):
+    provider: str = "anthropic"
+    htmlContent: str = ""
+    changeRequest: str
+    designTokens: dict = Field(default_factory=dict)
+    referenceScreens: list[WireframeRefScreen] = Field(default_factory=list)
+    callouts: list[dict] = Field(default_factory=list)
+    fidelity: str = "hifi"
+
+
+class WireframeEditResponse(BaseModel):
+    editedHtml: str
+    rationale: str = ""
+    calloutsPreserved: bool = True
+    model: str | None = None
+
+
+@app.post("/wireframe-edit-screen", response_model=WireframeEditResponse, tags=["copilot"])
+async def wireframe_edit_screen(
+    body: WireframeEditRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> WireframeEditResponse:
+    """One screen's HTML + an NL change → edited HTML (callouts preserved)."""
+    user = build_wireframe_edit_user_message(
+        html_content=body.htmlContent, change_request=body.changeRequest,
+        design_tokens=body.designTokens,
+        reference_screens=[r.model_dump() for r in body.referenceScreens[:2]],
+        callouts=body.callouts, fidelity=body.fidelity,
+    )
+    parsed, model = await _wf_complete_json(
+        provider=body.provider, settings=settings, openai_client=openai_client,
+        anthropic_client=anthropic_client, system=WIREFRAME_EDIT_SYSTEM_PROMPT,
+        user=user, max_tokens=16384, temperature=0.3,
+    )
+    edited = parsed.get("editedHtml", "") if isinstance(parsed, dict) else ""
+    if not edited:
+        raise HTTPException(status_code=502, detail="Wireframe editor returned no HTML")
+    logger.info("Wireframe edit (%s) → %d chars", body.provider, len(edited))
+    return WireframeEditResponse(
+        editedHtml=edited, rationale=parsed.get("rationale", ""),
+        calloutsPreserved=bool(parsed.get("calloutsPreserved", True)), model=model,
+    )
+
+
+class WireframeParseFeedbackRequest(BaseModel):
+    provider: str = "anthropic"
+    rawText: str
+    screens: list[WireframeScreenCtx] = Field(default_factory=list)
+
+
+@app.post("/wireframe-parse-feedback", tags=["copilot"])
+async def wireframe_parse_feedback(
+    body: WireframeParseFeedbackRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    openai_client: Annotated[openai.AsyncOpenAI, Depends(get_openai_client)],
+    anthropic_client: Annotated[anthropic.AsyncAnthropic, Depends(get_anthropic_client)],
+) -> dict:
+    """A bulk review document → general / design-system / per-screen / unmatched (JSON)."""
+    user = build_wireframe_parse_feedback_user_message(
+        raw_text=body.rawText, screens=[s.model_dump() for s in body.screens],
+    )
+    parsed, model = await _wf_complete_json(
+        provider=body.provider, settings=settings, openai_client=openai_client,
+        anthropic_client=anthropic_client, system=WIREFRAME_PARSE_FEEDBACK_SYSTEM_PROMPT,
+        user=user, max_tokens=8192, temperature=0.2,
+    )
+    out = parsed if isinstance(parsed, dict) else {}
+    out.setdefault("general", [])
+    out.setdefault("designSystem", [])
+    out.setdefault("screens", [])
+    out.setdefault("unmatched", [])
+    out["model"] = model
+    logger.info(
+        "Wireframe parse-feedback (%s): %d general · %d ds · %d screens · %d unmatched",
+        body.provider, len(out["general"]), len(out["designSystem"]), len(out["screens"]), len(out["unmatched"]),
+    )
+    return out
