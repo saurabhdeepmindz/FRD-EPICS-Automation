@@ -25,6 +25,7 @@ Thumbs.db
 # package-lock.json
 
 # Claude local settings
+.claude/settings.json
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 

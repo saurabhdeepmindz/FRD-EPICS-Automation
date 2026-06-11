@@ -579,6 +579,14 @@ function GalleryActions({
   );
 }
 
+// Stable, pleasant accent per module label (dot color in the group header).
+const MODULE_HUES = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#0d9488', '#ca8a04', '#dc2626', '#0891b2', '#4f46e5', '#65a30d'];
+function moduleHue(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return MODULE_HUES[h % MODULE_HUES.length];
+}
+
 function Gallery({
   screens,
   emptyHint,
@@ -613,100 +621,156 @@ function Gallery({
       </Card>
     );
   }
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {onSetModule && (
-        <datalist id={moduleListId}>
-          {(modules ?? []).map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      )}
-      {screens.map((s) => {
-        const isSel = !!selected?.has(s.slug);
-        const hasAi = !!s.aiHtmlContent;
-        const active = s.activeVariant === 'ai' && hasAi ? 'ai' : 'deterministic';
-        const shownHtml = active === 'ai' ? s.aiHtmlContent : s.htmlContent;
-        return (
-          <div key={s.id} className={`border rounded-lg overflow-hidden bg-white transition ${isSel ? 'ring-2 ring-gray-900 border-gray-900' : ''}`}>
-            <div className="flex items-center gap-2 px-3 py-2 border-b bg-gray-50">
-              {selectable && (
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 cursor-pointer accent-gray-900"
-                  checked={isSel}
-                  onChange={() => onToggle?.(s.slug)}
-                  title="Select for AI lo-fi / hi-fi"
-                />
-              )}
-              <span className="text-sm font-medium text-gray-800 truncate flex-1" title={s.title}>
-                {s.title}
-              </span>
-              {s.uploaded && (
-                <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">uploaded</span>
-              )}
-            </div>
-            {/* Per-screen module mapping — type a new module or pick an existing one; blank clears it. */}
-            {onSetModule && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-white">
-                <span className="text-[10px] uppercase tracking-wide text-gray-400">Module</span>
-                <input
-                  key={s.module ?? ''}
-                  list={moduleListId}
-                  defaultValue={s.module ?? ''}
-                  placeholder="—"
-                  title="Map this screen to a module (groups it in the navigator)"
-                  className="flex-1 min-w-0 h-7 rounded border border-gray-200 px-1.5 text-[11px] text-gray-800 placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                  }}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v !== (s.module ?? '')) onSetModule(s.slug, v);
-                  }}
-                />
-              </div>
-            )}
-            {/* Variant toggle (only when an AI variant exists). Sets the active variant. */}
-            {hasAi && onSetVariant && (
-              <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-white">
-                <span className="text-[10px] uppercase tracking-wide text-gray-400 mr-1">Variant</span>
-                {(['deterministic', 'ai'] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => onSetVariant(s.slug, v)}
-                    className={`text-[11px] font-medium px-2 py-0.5 rounded ${active === v ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                    title={`Use the ${v} variant (drives navigator/export)`}
-                  >
-                    {v === 'ai' ? 'AI' : 'Deterministic'}{active === v ? ' ✓' : ''}
-                  </button>
-                ))}
-              </div>
-            )}
-            {/* Preview is click-to-open; an overlay captures the click (iframe is inert). */}
-            <button
-              type="button"
-              className="relative block w-full h-64 bg-white group"
-              onClick={() => onOpen?.(s)}
-              title="Open screen"
-            >
-              <iframe
-                title={s.title}
-                sandbox=""
-                srcDoc={shownHtml ?? '<p style="font:13px system-ui;color:#999;padding:12px">No preview</p>'}
-                className="w-full h-full bg-white pointer-events-none"
-              />
-              <span className="absolute top-2 left-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-black/60 text-white">
-                {active === 'ai' ? 'AI' : 'Deterministic'}
-              </span>
-              <span className="absolute inset-0 group-hover:bg-gray-900/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                <span className="text-xs font-medium bg-gray-900 text-white px-2 py-1 rounded">Open{hasAi ? ' / compare' : ''}</span>
-              </span>
-            </button>
+  // One card; reused by both the flat and the module-grouped layouts.
+  const renderCard = (s: PipelineWireframeScreen) => {
+    const isSel = !!selected?.has(s.slug);
+    const hasAi = !!s.aiHtmlContent;
+    const active = s.activeVariant === 'ai' && hasAi ? 'ai' : 'deterministic';
+    const shownHtml = active === 'ai' ? s.aiHtmlContent : s.htmlContent;
+    return (
+      <div key={s.id} className={`border rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-md transition ${isSel ? 'ring-2 ring-gray-900 border-gray-900' : ''}`}>
+        <div className="flex items-center gap-2 px-3 py-2 border-b bg-gray-50">
+          {selectable && (
+            <input
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer accent-gray-900"
+              checked={isSel}
+              onChange={() => onToggle?.(s.slug)}
+              title="Select for AI lo-fi / hi-fi"
+            />
+          )}
+          <span className="text-sm font-medium text-gray-800 truncate flex-1" title={s.title}>
+            {s.title}
+          </span>
+          {s.uploaded && (
+            <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">uploaded</span>
+          )}
+        </div>
+        {/* Per-screen module mapping — type a new module or pick an existing one; blank clears it. */}
+        {onSetModule && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-white">
+            <span className="text-[10px] uppercase tracking-wide text-gray-400">Module</span>
+            <input
+              key={s.module ?? ''}
+              list={moduleListId}
+              defaultValue={s.module ?? ''}
+              placeholder="—"
+              title="Map this screen to a module (groups it here and in the navigator)"
+              className="flex-1 min-w-0 h-7 rounded border border-gray-200 px-1.5 text-[11px] text-gray-800 placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-400"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              }}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                if (v !== (s.module ?? '')) onSetModule(s.slug, v);
+              }}
+            />
           </div>
-        );
-      })}
-    </div>
+        )}
+        {/* Variant toggle (only when an AI variant exists). Sets the active variant. */}
+        {hasAi && onSetVariant && (
+          <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-white">
+            <span className="text-[10px] uppercase tracking-wide text-gray-400 mr-1">Variant</span>
+            {(['deterministic', 'ai'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => onSetVariant(s.slug, v)}
+                className={`text-[11px] font-medium px-2 py-0.5 rounded ${active === v ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                title={`Use the ${v} variant (drives navigator/export)`}
+              >
+                {v === 'ai' ? 'AI' : 'Deterministic'}{active === v ? ' ✓' : ''}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* Preview is click-to-open; an overlay captures the click (iframe is inert).
+            The screen is rendered at ~2.5× then scaled down so it reads as a clean,
+            scrollbar-free thumbnail (mirrors the standalone navigator) instead of a
+            cramped full-size iframe with scroll arrows. */}
+        <button
+          type="button"
+          className="relative block w-full h-72 overflow-hidden bg-gray-50 group"
+          onClick={() => onOpen?.(s)}
+          title="Open screen"
+        >
+          <iframe
+            title={s.title}
+            sandbox=""
+            scrolling="no"
+            srcDoc={shownHtml ?? '<p style="font:13px system-ui;color:#999;padding:12px">No preview</p>'}
+            className="absolute top-0 left-0 origin-top-left border-0 bg-white pointer-events-none"
+            style={{ width: '250%', height: '250%', transform: 'scale(0.4)' }}
+          />
+          <span className="absolute top-2 left-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-black/60 text-white">
+            {active === 'ai' ? 'AI' : 'Deterministic'}
+          </span>
+          <span className="absolute inset-0 group-hover:bg-gray-900/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+            <span className="text-xs font-medium bg-gray-900 text-white px-2 py-1 rounded">Open{hasAi ? ' / compare' : ''}</span>
+          </span>
+        </button>
+      </div>
+    );
+  };
+
+  const grid = (list: PipelineWireframeScreen[]) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-8">{list.map(renderCard)}</div>
+  );
+
+  // Group by module, preserving first-seen order; untagged screens collect last
+  // under "Unassigned" so it's obvious what still needs a module.
+  const UNASSIGNED = '__unassigned__';
+  const order: string[] = [];
+  const byModule = new Map<string, PipelineWireframeScreen[]>();
+  for (const s of screens) {
+    const key = s.module?.trim() || UNASSIGNED;
+    if (!byModule.has(key)) { byModule.set(key, []); order.push(key); }
+    byModule.get(key)!.push(s);
+  }
+  // Float "Unassigned" to the end regardless of first-seen position.
+  order.sort((a, b) => (a === UNASSIGNED ? 1 : 0) - (b === UNASSIGNED ? 1 : 0));
+  const grouped = order.some((k) => k !== UNASSIGNED);
+
+  const datalist = onSetModule && (
+    <datalist id={moduleListId}>
+      {(modules ?? []).map((m) => (
+        <option key={m} value={m} />
+      ))}
+    </datalist>
+  );
+
+  // No module structure yet → keep the simple flat grid.
+  if (!grouped) {
+    return (
+      <>
+        {datalist}
+        {grid(screens)}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {datalist}
+      <div className="space-y-9">
+        {order.map((key) => {
+          const list = byModule.get(key)!;
+          const isUnassigned = key === UNASSIGNED;
+          const label = isUnassigned ? 'Unassigned' : key;
+          const color = isUnassigned ? '#9ca3af' : moduleHue(key);
+          return (
+            <section key={key}>
+              <div className="flex items-center gap-2.5 mb-3">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: color }} />
+                <h3 className={`text-sm font-semibold ${isUnassigned ? 'text-gray-500' : 'text-gray-900'}`}>{label}</h3>
+                <span className="text-xs text-gray-400 shrink-0">{list.length} screen{list.length === 1 ? '' : 's'}</span>
+                <div className="flex-1 border-t border-gray-200 ml-1" />
+              </div>
+              {grid(list)}
+            </section>
+          );
+        })}
+      </div>
+    </>
   );
 }
