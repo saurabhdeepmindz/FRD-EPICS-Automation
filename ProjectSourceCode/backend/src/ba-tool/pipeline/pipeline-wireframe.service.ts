@@ -6,7 +6,7 @@ import { WireframeExportService } from './wireframe-export.service';
 import { HifiService } from '../discovery/hifi.service';
 import type { ScreenAnnotation } from './screen-map.service';
 import { DesignSystemService } from './design-system.service';
-import { WireframeNavigatorService } from './wireframe-navigator.service';
+import { WireframeNavigatorService, moduleKeyFromFr } from './wireframe-navigator.service';
 import { type DesignTokens } from './design-tokens';
 import { renderLoFi } from './lofi-render';
 import { AiService } from '../../ai/ai.service';
@@ -146,14 +146,20 @@ export class PipelineWireframeService {
    */
   async generateHiFi(
     projectId: string,
-    opts: { limit?: number; slugs?: string[] } = {},
+    opts: { limit?: number; slugs?: string[]; module?: string } = {},
   ): Promise<{ id: string; screens: number }> {
     const set = await this.prisma.baWireframeSet.findFirst({
       where: { projectId, source: 'PIPELINE' },
       orderBy: { createdAt: 'desc' },
     });
     if (!set) throw new BadRequestException('No pipeline lo-fi wireframes yet. Generate lo-fi first.');
-    const hifi = await this.hifiService.generate({ projectId, wireframeSetId: set.id, limit: opts.limit, slugs: opts.slugs });
+    const hifi = await this.hifiService.generate({
+      projectId,
+      wireframeSetId: set.id,
+      limit: opts.limit,
+      slugs: opts.slugs,
+      moduleOverride: opts.module?.trim() || undefined,
+    });
     // v9 — (re)build the stitched index.html navigator for the hi-fi set.
     await this.navigator.writeToDisk(projectId, 'hifi').catch((e) => this.logger.warn(`navigator (hifi) failed: ${e}`));
     return { id: hifi.id, screens: hifi.screens.length };
@@ -233,8 +239,17 @@ export class PipelineWireframeService {
     return { updated, failed };
   }
 
-  /** Z-03 — ingest single/bulk uploaded wireframes (HTML/PNG/JPG/PDF/SVG) into a PIPELINE set. */
-  async upload(projectId: string, files: UploadFile[], kind: 'lofi' | 'hifi'): Promise<{ added: number; rejected: string[] }> {
+  /**
+   * Z-03 — ingest single/bulk uploaded wireframes (HTML/PNG/JPG/PDF/SVG) into a
+   * PIPELINE set. An optional `module` tags the whole batch so the navigator
+   * groups them (else they fall under "Uploaded").
+   */
+  async upload(
+    projectId: string,
+    files: UploadFile[],
+    kind: 'lofi' | 'hifi',
+    module?: string,
+  ): Promise<{ added: number; rejected: string[] }> {
     const project = await this.prisma.baProject.findUnique({ where: { id: projectId }, select: { name: true } });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
     if (!files?.length) throw new BadRequestException('No files uploaded.');
@@ -250,6 +265,8 @@ export class PipelineWireframeService {
     });
     if (!accepted.length) throw new BadRequestException(`No supported files. Rejected: ${rejected.join('; ')}`);
 
+    const mod = module?.trim() || undefined;
+
     if (kind === 'lofi') {
       const set = await this.ensurePipelineLoFiSet(projectId, project.name);
       const start = await this.prisma.baWireframeScreen.count({ where: { setId: set.id } });
@@ -259,23 +276,25 @@ export class PipelineWireframeService {
           slug: this.slug(f.originalname), title: f.originalname,
           callouts: [] as unknown as Prisma.InputJsonValue,
           htmlContent: this.fileToHtml(f),
-          meta: { uploaded: true, originalName: f.originalname } as unknown as Prisma.InputJsonValue,
+          meta: { uploaded: true, originalName: f.originalname, ...(mod ? { module: mod } : {}) } as unknown as Prisma.InputJsonValue,
         })),
       });
       await this.mirrorUploads(project.name, '03-Wireframes-LoFi', accepted);
       return { added: accepted.length, rejected };
     }
 
-    // hi-fi upload needs a parent lo-fi PIPELINE set
+    // hi-fi upload appends to the LATEST hi-fi set for this lo-fi parent (mirrors
+    // the lo-fi branch above), creating one only when none exists. Previously each
+    // upload spawned a brand-new BaHifiSet, and since the gallery reads only the
+    // newest set, a second upload silently hid the earlier hi-fi screens.
     const lofi = await this.ensurePipelineLoFiSet(projectId, project.name);
-    const hset = await this.prisma.baHifiSet.create({
-      data: { projectId, wireframeSetId: lofi.id, brandTokensSnapshot: { ...DEFAULT_BRAND, productName: project.name } as Prisma.InputJsonValue, status: 'DRAFT' },
-    });
+    const hset = await this.ensurePipelineHifiSet(projectId, project.name, lofi.id);
+    const start = await this.prisma.baHifiScreen.count({ where: { setId: hset.id } });
     await this.prisma.baHifiScreen.createMany({
       data: accepted.map((f, i) => ({
-        setId: hset.id, sequenceNum: i + 1, slug: this.slug(f.originalname), title: f.originalname,
+        setId: hset.id, sequenceNum: start + i + 1, slug: this.slug(f.originalname), title: f.originalname,
         htmlContent: this.fileToHtml(f), callouts: [] as unknown as Prisma.InputJsonValue,
-        meta: { uploaded: true, originalName: f.originalname } as unknown as Prisma.InputJsonValue,
+        meta: { uploaded: true, originalName: f.originalname, ...(mod ? { module: mod } : {}) } as unknown as Prisma.InputJsonValue,
       })),
     });
     await this.mirrorUploads(project.name, '04-Wireframes-HiFi', accepted);
@@ -298,21 +317,26 @@ export class PipelineWireframeService {
       : null;
     return {
       lofi: (lofiSet?.screens ?? []).map((s) => {
-        const meta = (s.meta as { uploaded?: boolean; aiHtml?: string; activeVariant?: string } | null) ?? {};
+        const meta = (s.meta as { uploaded?: boolean; aiHtml?: string; activeVariant?: string; module?: string } | null) ?? {};
         return {
           id: s.id, slug: s.slug, title: s.title,
           htmlContent: s.htmlContent, // deterministic — always preserved
           aiHtmlContent: meta.aiHtml ?? null, // AI variant (HH-01), or null
           activeVariant: (meta.activeVariant === 'ai' ? 'ai' : 'deterministic') as 'ai' | 'deterministic',
           uploaded: !!meta.uploaded,
+          module: meta.module ?? null,
         };
       }),
-      hifi: (hifiSet?.screens ?? []).map((s) => ({
-        id: s.id, slug: s.slug, title: s.title, htmlContent: s.htmlContent,
-        aiHtmlContent: null as string | null,
-        activeVariant: 'deterministic' as const,
-        uploaded: !!(s.meta as { uploaded?: boolean } | null)?.uploaded,
-      })),
+      hifi: (hifiSet?.screens ?? []).map((s) => {
+        const meta = (s.meta as { uploaded?: boolean; module?: string } | null) ?? {};
+        return {
+          id: s.id, slug: s.slug, title: s.title, htmlContent: s.htmlContent,
+          aiHtmlContent: null as string | null,
+          activeVariant: 'deterministic' as const,
+          uploaded: !!meta.uploaded,
+          module: meta.module ?? null,
+        };
+      }),
     };
   }
 
@@ -336,6 +360,87 @@ export class PipelineWireframeService {
     // Keep the navigator/zip in sync with the active variant.
     await this.navigator.writeToDisk(projectId, 'lofi').catch(() => undefined);
     return { slug, activeVariant: variant };
+  }
+
+  /**
+   * Existing module labels for the combobox: explicit `meta.module` already set
+   * on any lo-fi/hi-fi screen, plus labels derived from §6 FR-IDs. Lets the BA
+   * reuse a module name (so uploads merge with generated screens) or type a new one.
+   */
+  async listModules(projectId: string): Promise<string[]> {
+    const lofiSet = await this.prisma.baWireframeSet.findFirst({
+      where: { projectId, source: 'PIPELINE' },
+      orderBy: { createdAt: 'desc' },
+      include: { screens: { select: { meta: true } } },
+    });
+    const labels = new Set<string>();
+    const add = (meta: unknown) => {
+      const m = (meta as { module?: string; frRefs?: string[] } | null) ?? {};
+      if (typeof m.module === 'string' && m.module.trim()) labels.add(m.module.trim());
+      for (const fr of m.frRefs ?? []) {
+        const k = moduleKeyFromFr(fr);
+        if (k) labels.add(k.charAt(0).toUpperCase() + k.slice(1).toLowerCase());
+      }
+    };
+    for (const s of lofiSet?.screens ?? []) add(s.meta);
+    if (lofiSet) {
+      const hifiSet = await this.prisma.baHifiSet.findFirst({
+        where: { projectId, wireframeSetId: lofiSet.id },
+        orderBy: { createdAt: 'desc' },
+        include: { screens: { select: { meta: true } } },
+      });
+      for (const s of hifiSet?.screens ?? []) add(s.meta);
+    }
+    return [...labels].sort((a, b) => a.localeCompare(b));
+  }
+
+  /**
+   * Map a single already-ingested screen to a module (or clear it when blank).
+   * Covers screens uploaded before a module was assigned, or re-grouping.
+   */
+  async setScreenModule(
+    projectId: string,
+    kind: 'lofi' | 'hifi',
+    slug: string,
+    module: string | null,
+  ): Promise<{ slug: string; module: string | null }> {
+    const lofiSet = await this.prisma.baWireframeSet.findFirst({
+      where: { projectId, source: 'PIPELINE' },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!lofiSet) throw new BadRequestException('No pipeline wireframes yet.');
+    const value = module && module.trim() ? module.trim() : null;
+
+    if (kind === 'lofi') {
+      const screen = await this.prisma.baWireframeScreen.findFirst({ where: { setId: lofiSet.id, slug } });
+      if (!screen) throw new NotFoundException(`Lo-fi screen "${slug}" not found`);
+      await this.prisma.baWireframeScreen.update({
+        where: { id: screen.id },
+        data: { meta: this.withModule(screen.meta, value) },
+      });
+    } else {
+      const hifiSet = await this.prisma.baHifiSet.findFirst({
+        where: { projectId, wireframeSetId: lofiSet.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!hifiSet) throw new BadRequestException('No hi-fi set yet.');
+      const screen = await this.prisma.baHifiScreen.findFirst({ where: { setId: hifiSet.id, slug } });
+      if (!screen) throw new NotFoundException(`Hi-fi screen "${slug}" not found`);
+      await this.prisma.baHifiScreen.update({
+        where: { id: screen.id },
+        data: { meta: this.withModule(screen.meta, value) },
+      });
+    }
+    await this.navigator.writeToDisk(projectId, kind).catch(() => undefined);
+    return { slug, module: value };
+  }
+
+  /** Immutably set/clear `module` on a screen's JSON meta. */
+  private withModule(meta: unknown, value: string | null): Prisma.InputJsonValue {
+    const base = { ...((meta as Record<string, unknown> | null) ?? {}) };
+    if (value) base.module = value;
+    else delete base.module;
+    return base as Prisma.InputJsonValue;
   }
 
   /** Reflect wireframes the customer uploaded in the Inputs section. */
@@ -363,6 +468,26 @@ export class PipelineWireframeService {
     return this.prisma.baWireframeSet.create({
       data: {
         projectId, source: 'PIPELINE', approachNoteVersionId: null,
+        brandTokensSnapshot: { ...DEFAULT_BRAND, productName: projectName } as Prisma.InputJsonValue,
+        status: 'DRAFT',
+      },
+    });
+  }
+
+  /**
+   * Latest hi-fi set for this lo-fi parent, or a new DRAFT one. Mirrors
+   * `ensurePipelineLoFiSet` so hi-fi uploads append to the set the gallery
+   * already shows instead of spawning a newer set that hides the rest.
+   */
+  private async ensurePipelineHifiSet(projectId: string, projectName: string, wireframeSetId: string) {
+    const existing = await this.prisma.baHifiSet.findFirst({
+      where: { projectId, wireframeSetId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) return existing;
+    return this.prisma.baHifiSet.create({
+      data: {
+        projectId, wireframeSetId,
         brandTokensSnapshot: { ...DEFAULT_BRAND, productName: projectName } as Prisma.InputJsonValue,
         status: 'DRAFT',
       },

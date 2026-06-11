@@ -2014,6 +2014,7 @@ export interface PipelineWireframeScreen {
   aiHtmlContent?: string | null; // AI variant (HH-01), or null
   activeVariant?: 'deterministic' | 'ai';
   uploaded: boolean;
+  module?: string | null; // navigator grouping label, or null
 }
 
 export interface PipelineWireframes {
@@ -2080,11 +2081,11 @@ export async function regenerateLoFiWithAI(
 /** Generate hi-fi for the whole set, or only the selected lo-fi screen slugs. */
 export async function generateHiFiWireframes(
   projectId: string,
-  opts: { slugs?: string[]; limit?: number } = {},
+  opts: { slugs?: string[]; limit?: number; module?: string } = {},
 ): Promise<{ id: string; screens: number }> {
   const { data } = await api.post<ApiEnvelope<{ id: string; screens: number }>>(
     `/ba/projects/${projectId}/wireframes/generate-hifi`,
-    { slugs: opts.slugs, limit: opts.limit },
+    { slugs: opts.slugs, limit: opts.limit, module: opts.module },
     { timeout: 600_000 },
   );
   return data.data;
@@ -2094,13 +2095,35 @@ export async function uploadWireframes(
   projectId: string,
   files: File[],
   kind: 'lofi' | 'hifi',
+  module?: string,
 ): Promise<{ added: number; rejected: string[] }> {
   const form = new FormData();
   files.forEach((f) => form.append('files', f));
+  const q = module && module.trim() ? `&module=${encodeURIComponent(module.trim())}` : '';
   const { data } = await api.post<ApiEnvelope<{ added: number; rejected: string[] }>>(
-    `/ba/projects/${projectId}/wireframes/upload?kind=${kind}`,
+    `/ba/projects/${projectId}/wireframes/upload?kind=${kind}${q}`,
     form,
     { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120_000 },
+  );
+  return data.data;
+}
+
+/** Existing module labels (explicit + FR-derived) to seed the module combobox. */
+export async function listWireframeModules(projectId: string): Promise<string[]> {
+  const { data } = await api.get<ApiEnvelope<string[]>>(`/ba/projects/${projectId}/wireframes/modules`);
+  return data.data;
+}
+
+/** Map a single already-ingested screen to a module (blank string clears it). */
+export async function setWireframeScreenModule(
+  projectId: string,
+  slug: string,
+  kind: 'lofi' | 'hifi',
+  module: string,
+): Promise<{ slug: string; module: string | null }> {
+  const { data } = await api.post<ApiEnvelope<{ slug: string; module: string | null }>>(
+    `/ba/projects/${projectId}/wireframes/screen-module`,
+    { slug, kind, module },
   );
   return data.data;
 }

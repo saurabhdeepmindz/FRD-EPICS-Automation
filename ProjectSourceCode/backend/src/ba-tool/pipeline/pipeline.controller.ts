@@ -363,7 +363,7 @@ export class PipelineController {
   @Post('wireframes/generate-hifi')
   async generateHiFiWireframes(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { slugs?: string[]; limit?: number } = {},
+    @Body() body: { slugs?: string[]; limit?: number; module?: string } = {},
     @Query('limit') limit?: string,
   ) {
     const q = limit ? Number(limit) : undefined;
@@ -371,6 +371,7 @@ export class PipelineController {
     const data = await this.pipelineWireframes.generateHiFi(id, {
       slugs: Array.isArray(body.slugs) && body.slugs.length ? body.slugs : undefined,
       limit: n,
+      module: typeof body.module === 'string' ? body.module : undefined,
     });
     return { success: true, data };
   }
@@ -407,11 +408,36 @@ export class PipelineController {
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFiles() files: Express.Multer.File[],
     @Query('kind') kind?: string,
+    @Query('module') module?: string,
   ) {
     const data = await this.pipelineWireframes.upload(
       id,
       (files ?? []).map((f) => ({ originalname: f.originalname, buffer: f.buffer, mimetype: f.mimetype })),
       kind === 'hifi' ? 'hifi' : 'lofi',
+      typeof module === 'string' ? module : undefined,
+    );
+    return { success: true, data };
+  }
+
+  /** Existing module labels (explicit + FR-derived) to seed the upload/assign combobox. */
+  @Get('wireframes/modules')
+  async listWireframeModules(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.pipelineWireframes.listModules(id);
+    return { success: true, data };
+  }
+
+  /** Map a single already-ingested screen to a module (blank clears it). */
+  @Post('wireframes/screen-module')
+  async setWireframeScreenModule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { slug?: string; kind?: string; module?: string | null },
+  ) {
+    if (!body?.slug) throw new BadRequestException('slug is required.');
+    const data = await this.pipelineWireframes.setScreenModule(
+      id,
+      body.kind === 'hifi' ? 'hifi' : 'lofi',
+      body.slug,
+      typeof body.module === 'string' ? body.module : null,
     );
     return { success: true, data };
   }

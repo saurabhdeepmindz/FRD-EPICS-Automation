@@ -32,6 +32,8 @@ import {
   regenerateLoFiWithAI,
   setLoFiVariant,
   uploadWireframes,
+  listWireframeModules,
+  setWireframeScreenModule,
   getWireframeNavigator,
   wireframeZipUrl,
   type ScreenMap,
@@ -56,6 +58,7 @@ export default function WireframesPage() {
   const [map, setMap] = useState<ScreenMap | null>(null);
   const [wf, setWf] = useState<PipelineWireframes>({ lofi: [], hifi: [] });
   const [customer, setCustomer] = useState<CustomerWireframeRef[]>([]);
+  const [modules, setModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<null | 'lofi' | 'hifi' | 'ai-lofi'>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,14 +77,16 @@ export default function WireframesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [m, w, c] = await Promise.all([
+      const [m, w, c, mods] = await Promise.all([
         getScreenMap(projectId),
         getPipelineWireframes(projectId),
         getCustomerWireframes(projectId),
+        listWireframeModules(projectId).catch(() => [] as string[]),
       ]);
       setMap(m);
       setWf(w);
       setCustomer(c);
+      setModules(mods);
     } finally {
       setLoading(false);
     }
@@ -98,9 +103,16 @@ export default function WireframesPage() {
     setActiveStage(wf.hifi.length ? 'hifi' : wf.lofi.length ? 'lofi' : 'mapping');
   }, [loading, wf]);
 
-  const refreshWf = async () => setWf(await getPipelineWireframes(projectId));
+  const refreshWf = async () => {
+    setWf(await getPipelineWireframes(projectId));
+    try {
+      setModules(await listWireframeModules(projectId));
+    } catch {
+      /* keep current module suggestions */
+    }
+  };
 
-  const onGenerate = async (kind: 'lofi' | 'hifi') => {
+  const onGenerate = async (kind: 'lofi' | 'hifi', module?: string) => {
     setBusy(kind);
     setError(null);
     try {
@@ -108,8 +120,9 @@ export default function WireframesPage() {
         await generateLoFiWireframes(projectId);
       } else {
         // Hi-fi for the selected lo-fi screens, or the whole set if none picked.
+        // An optional module overrides the inherited lo-fi grouping.
         const slugs = selected.size ? [...selected] : undefined;
-        await generateHiFiWireframes(projectId, { slugs });
+        await generateHiFiWireframes(projectId, { slugs, module });
       }
       await refreshWf();
       setActiveStage(kind); // jump to the stage we just produced
@@ -150,12 +163,22 @@ export default function WireframesPage() {
     }
   };
 
-  const onUpload = async (files: FileList | null, kind: 'lofi' | 'hifi') => {
+  const onUpload = async (files: FileList | null, kind: 'lofi' | 'hifi', module?: string) => {
     if (!files?.length) return;
     setError(null);
     try {
-      const res = await uploadWireframes(projectId, Array.from(files), kind);
+      const res = await uploadWireframes(projectId, Array.from(files), kind, module);
       if (res.rejected.length) setError(`Skipped: ${res.rejected.join('; ')}`);
+      await refreshWf();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const onSetModule = async (slug: string, kind: 'lofi' | 'hifi', module: string) => {
+    setError(null);
+    try {
+      await setWireframeScreenModule(projectId, slug, kind, module);
       await refreshWf();
     } catch (err) {
       setError(errMsg(err));
@@ -260,7 +283,7 @@ export default function WireframesPage() {
                             AI lo-fi{selected.size ? ` (${selected.size})` : ''}
                           </Button>
                         )}
-                        <GalleryActions kind="lofi" busy={busy === 'lofi'} hasMap={!!map} onGenerate={() => onGenerate('lofi')} onUpload={(fl) => onUpload(fl, 'lofi')} />
+                        <GalleryActions kind="lofi" busy={busy === 'lofi'} hasMap={!!map} modules={modules} onGenerate={() => onGenerate('lofi')} onUpload={(fl, mod) => onUpload(fl, 'lofi', mod)} />
                       </div>
                     }
                   >
@@ -281,6 +304,9 @@ export default function WireframesPage() {
                       onToggle={toggleSelected}
                       onOpen={setModalScreen}
                       onSetVariant={onSetVariant}
+                      kind="lofi"
+                      modules={modules}
+                      onSetModule={(slug, mod) => onSetModule(slug, 'lofi', mod)}
                     />
                   </Panel>
                 )
@@ -301,12 +327,20 @@ export default function WireframesPage() {
                         busy={busy === 'hifi'}
                         hasMap={wf.lofi.length > 0}
                         generateLabel={selected.size ? `Generate hi-fi (${selected.size})` : 'Generate from lo-fi'}
-                        onGenerate={() => onGenerate('hifi')}
-                        onUpload={(fl) => onUpload(fl, 'hifi')}
+                        modules={modules}
+                        onGenerate={(mod) => onGenerate('hifi', mod)}
+                        onUpload={(fl, mod) => onUpload(fl, 'hifi', mod)}
                       />
                     }
                   >
-                    <Gallery screens={wf.hifi} emptyHint="Generate hi-fi from the lo-fi set, or upload files." onOpen={setModalScreen} />
+                    <Gallery
+                      screens={wf.hifi}
+                      emptyHint="Generate hi-fi from the lo-fi set, or upload files."
+                      onOpen={setModalScreen}
+                      kind="hifi"
+                      modules={modules}
+                      onSetModule={(slug, mod) => onSetModule(slug, 'hifi', mod)}
+                    />
                   </Panel>
                 )
               )}
@@ -487,6 +521,7 @@ function GalleryActions({
   busy,
   hasMap,
   generateLabel = 'Generate',
+  modules,
   onGenerate,
   onUpload,
 }: {
@@ -494,13 +529,34 @@ function GalleryActions({
   busy: boolean;
   hasMap: boolean;
   generateLabel?: string;
-  onGenerate: () => void;
-  onUpload: (files: FileList | null) => void;
+  modules: string[];
+  onGenerate: (module?: string) => void;
+  onUpload: (files: FileList | null, module?: string) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
+  const [moduleInput, setModuleInput] = useState('');
+  const listId = `wf-modules-actions-${kind}`;
+  const mod = () => moduleInput.trim() || undefined;
   return (
     <div className="flex items-center gap-2 shrink-0">
-      <Button size="sm" onClick={onGenerate} disabled={busy || !hasMap} title={hasMap ? '' : 'Complete the previous step first'}>
+      <input
+        list={listId}
+        value={moduleInput}
+        onChange={(e) => setModuleInput(e.target.value)}
+        placeholder="Module (optional)"
+        title={
+          kind === 'hifi'
+            ? 'Applies to uploaded files and overrides the module on screens generated now'
+            : 'Module for the next upload (groups screens in the navigator)'
+        }
+        className="h-8 w-36 rounded-md border border-gray-300 px-2 text-xs text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-400"
+      />
+      <datalist id={listId}>
+        {modules.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+      <Button size="sm" onClick={() => onGenerate(mod())} disabled={busy || !hasMap} title={hasMap ? '' : 'Complete the previous step first'}>
         {busy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
         {generateLabel}
       </Button>
@@ -514,7 +570,7 @@ function GalleryActions({
         accept={UPLOAD_ACCEPT}
         className="hidden"
         onChange={(e) => {
-          onUpload(e.target.files);
+          onUpload(e.target.files, mod());
           e.target.value = '';
         }}
         data-kind={kind}
@@ -531,6 +587,9 @@ function Gallery({
   onToggle,
   onOpen,
   onSetVariant,
+  kind,
+  modules,
+  onSetModule,
 }: {
   screens: PipelineWireframeScreen[];
   emptyHint: string;
@@ -539,7 +598,11 @@ function Gallery({
   onToggle?: (slug: string) => void;
   onOpen?: (screen: PipelineWireframeScreen) => void;
   onSetVariant?: (slug: string, variant: 'deterministic' | 'ai') => void;
+  kind?: 'lofi' | 'hifi';
+  modules?: string[];
+  onSetModule?: (slug: string, module: string) => void;
 }) {
+  const moduleListId = `wf-modules-gallery-${kind ?? 'x'}`;
   if (!screens.length) {
     return (
       <Card>
@@ -552,6 +615,13 @@ function Gallery({
   }
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {onSetModule && (
+        <datalist id={moduleListId}>
+          {(modules ?? []).map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      )}
       {screens.map((s) => {
         const isSel = !!selected?.has(s.slug);
         const hasAi = !!s.aiHtmlContent;
@@ -576,6 +646,27 @@ function Gallery({
                 <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">uploaded</span>
               )}
             </div>
+            {/* Per-screen module mapping — type a new module or pick an existing one; blank clears it. */}
+            {onSetModule && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-white">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400">Module</span>
+                <input
+                  key={s.module ?? ''}
+                  list={moduleListId}
+                  defaultValue={s.module ?? ''}
+                  placeholder="—"
+                  title="Map this screen to a module (groups it in the navigator)"
+                  className="flex-1 min-w-0 h-7 rounded border border-gray-200 px-1.5 text-[11px] text-gray-800 placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-400"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  }}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v !== (s.module ?? '')) onSetModule(s.slug, v);
+                  }}
+                />
+              </div>
+            )}
             {/* Variant toggle (only when an AI variant exists). Sets the active variant. */}
             {hasAi && onSetVariant && (
               <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-white">

@@ -39,6 +39,26 @@ function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
+/**
+ * Resolve a screen's module bucket. Precedence: an explicit `meta.module`
+ * label (set at upload, hi-fi generation, or via per-screen mapping) wins;
+ * else derive from the first §6 FR-ID in `meta.frRefs`; else fall back to
+ * "Uploaded"/"General". Returns a stable grouping key + a display label.
+ */
+export function moduleFromMeta(
+  meta: { frRefs?: string[]; uploaded?: boolean; module?: string } | null | undefined,
+): { key: string; label: string } {
+  const m = meta ?? {};
+  const explicit = typeof m.module === 'string' ? m.module.trim() : '';
+  if (explicit) {
+    const key = explicit.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'MODULE';
+    return { key, label: explicit };
+  }
+  const derived = (m.frRefs ?? []).map(moduleKeyFromFr).find(Boolean);
+  if (derived) return { key: derived, label: titleCase(derived) };
+  return m.uploaded ? { key: 'UPLOADED', label: 'Uploaded' } : { key: 'GENERAL', label: 'General' };
+}
+
 @Injectable()
 export class WireframeNavigatorService {
   private readonly logger = new Logger(WireframeNavigatorService.name);
@@ -117,15 +137,15 @@ export class WireframeNavigatorService {
     }
 
     return rows.map((s) => {
-      const meta = (s.meta as { frRefs?: string[]; uploaded?: boolean } | null) ?? {};
-      const key = (meta.frRefs ?? []).map(moduleKeyFromFr).find(Boolean) ?? (meta.uploaded ? 'UPLOADED' : 'GENERAL');
+      const meta = (s.meta as { frRefs?: string[]; uploaded?: boolean; module?: string } | null) ?? {};
+      const mod = moduleFromMeta(meta);
       return {
         slug: s.slug,
         title: s.title,
         htmlContent: s.htmlContent,
         uploaded: !!meta.uploaded,
-        moduleKey: key as string,
-        moduleLabel: key === 'UPLOADED' ? 'Uploaded' : key === 'GENERAL' ? 'General' : titleCase(key as string),
+        moduleKey: mod.key,
+        moduleLabel: mod.label,
       };
     });
   }
@@ -157,8 +177,13 @@ export class WireframeNavigatorService {
         const color = moduleColor(tokens, key, i);
         const cards = list
           .map(
-            (s) => `<a class="card" href="${esc(s.slug)}.html" target="_blank" rel="noopener">
-  <div class="thumb"><iframe src="${esc(s.slug)}.html" scrolling="no" tabindex="-1"></iframe>${s.uploaded ? '<span class="up">uploaded</span>' : ''}</div>
+            // Embed each screen inline via `srcdoc` so the navigator is fully
+            // self-contained — it renders identically whether opened live (the
+            // frontend pipes this HTML into an about:blank window via
+            // document.write), saved to disk, or unzipped. A relative `src`
+            // would resolve against the opener's origin and 404.
+            (s) => `<a class="card" role="button" tabindex="0">
+  <div class="thumb"><iframe srcdoc="${esc(s.htmlContent)}" scrolling="no" tabindex="-1"></iframe>${s.uploaded ? '<span class="up">uploaded</span>' : ''}</div>
   <div class="cb"><div class="ct-name">${esc(s.title)}</div><div class="ct-slug">${esc(s.slug)}</div></div>
 </a>`,
           )
@@ -206,7 +231,7 @@ body{font-family:var(--ui-font);background:var(--bg-page);color:var(--text-prima
 .sec-head h2{font-size:1.05rem;color:var(--brand-primary)}
 .sec-head .cnt{margin-left:auto;font-size:.72rem;color:var(--text-muted)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
-.card{background:var(--brand-surface);border:1px solid var(--border);border-radius:var(--radius-card);overflow:hidden;text-decoration:none;color:var(--text-primary);box-shadow:var(--elevation);transition:transform .12s,box-shadow .12s}
+.card{background:var(--brand-surface);border:1px solid var(--border);border-radius:var(--radius-card);overflow:hidden;text-decoration:none;color:var(--text-primary);box-shadow:var(--elevation);transition:transform .12s,box-shadow .12s;cursor:pointer}
 .card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.12)}
 .thumb{height:170px;overflow:hidden;position:relative;background:var(--bg-soft);border-bottom:1px solid var(--border)}
 .thumb iframe{width:250%;height:425px;border:0;transform:scale(.4);transform-origin:top left;pointer-events:none}
@@ -246,6 +271,16 @@ body{font-family:var(--ui-font);background:var(--bg-page);color:var(--text-prima
     secs.forEach(function(s){s.hidden = !(mod==='__all'||s.dataset.mod===mod);});
   }
   nodes.forEach(function(n){n.addEventListener('click',function(){filterMod(n.dataset.mod);});});
+  // Open the full screen in a new tab from the card's own inline content —
+  // self-contained, no relative URL to 404 on.
+  [].slice.call(document.querySelectorAll('.card')).forEach(function(card){
+    card.addEventListener('click',function(){
+      var fr=card.querySelector('iframe');
+      var doc=fr?fr.getAttribute('srcdoc'):'';
+      var w=window.open('','_blank');
+      if(w){w.document.open();w.document.write(doc||'');w.document.close();}
+    });
+  });
   document.getElementById('q').addEventListener('input',function(e){
     var q=e.target.value.toLowerCase();
     secs.forEach(function(s){

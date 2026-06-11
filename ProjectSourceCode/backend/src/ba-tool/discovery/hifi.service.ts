@@ -29,6 +29,12 @@ interface GenerateHifiOptions {
   limit?: number;
   /** Selection mode — only generate hi-fi for the lo-fi screens with these slugs. */
   slugs?: string[];
+  /**
+   * Override the module label on every generated hi-fi screen. When omitted,
+   * each screen inherits its parent lo-fi screen's module/frRefs so the
+   * navigator groups hi-fi exactly like lo-fi.
+   */
+  moduleOverride?: string;
 }
 
 /**
@@ -163,6 +169,23 @@ export class HifiService {
 
     const parity = this.validateParity(sourceScreens, ai.screens, ai.syntheticDataNotes);
 
+    // Carry the parent lo-fi screen's module/frRefs onto each hi-fi screen so the
+    // navigator groups hi-fi exactly like lo-fi. An explicit moduleOverride wins.
+    const override = opts.moduleOverride?.trim() || undefined;
+    const lofiMetaBySlug = new Map<string, { frRefs?: string[]; module?: string }>(
+      sourceScreens.map(
+        (s) => [s.slug, ((s.meta as { frRefs?: string[]; module?: string } | null) ?? {})] as [string, { frRefs?: string[]; module?: string }],
+      ),
+    );
+    const hifiScreenMeta = (slug: string): Record<string, unknown> => {
+      const src = lofiMetaBySlug.get(slug) ?? {};
+      const m: Record<string, unknown> = {};
+      if (src.frRefs?.length) m.frRefs = src.frRefs;
+      const mod = override ?? src.module;
+      if (mod) m.module = mod;
+      return m;
+    };
+
     const result = await this.prisma.$transaction(async (tx) => {
       const set = await tx.baHifiSet.create({
         data: {
@@ -198,7 +221,7 @@ export class HifiService {
             htmlContent: s.htmlContent ?? '',
             callouts: ((s.callouts ?? []) as unknown) as never,
             parityStatus: (perScreen ?? null) as never,
-            meta: {} as never,
+            meta: hifiScreenMeta(s.slug) as never,
           },
         });
       }
